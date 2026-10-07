@@ -144,16 +144,23 @@ function clipOf(element: Element | null, viewport: Box, cache: Map<Element, Box>
 }
 
 /**
- * The part of the viewport where an element's content shows: its padding box
- * (a text field clips its text there), cut by every ancestor that clips what
- * overflows it.
+ * The part of the viewport where an element's content shows: cut by every
+ * ancestor that clips what overflows it, and by its own padding box if it
+ * clips too (a text field always does). An inline element, or one whose
+ * overflow is visible, shows its content past its box.
  */
 export function visibleBoxOf(element: Element): Box {
   const document = element.ownerDocument
   const viewport = { left: 0, top: 0, width: document.documentElement.clientWidth, height: document.documentElement.clientHeight }
+  const outer = clipOf(element.parentElement, viewport, new Map())
+  const style = windowOf(element).getComputedStyle(element)
+  const clips =
+    element.matches("input, textarea") ||
+    (!/^(inline|contents)$/.test(style.display) && (style.overflowX !== "visible" || style.overflowY !== "visible"))
+  if (!clips) return outer
   const rect = element.getBoundingClientRect()
   const own = { left: rect.left + element.clientLeft, top: rect.top + element.clientTop, width: element.clientWidth, height: element.clientHeight }
-  return intersect(clipOf(element.parentElement, viewport, new Map()), own)
+  return intersect(outer, own)
 }
 
 /**

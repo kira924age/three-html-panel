@@ -356,6 +356,21 @@ describe("the caret, cut to what shows", () => {
     expect(visibleBoxOf(text)).toEqual({ left: 2, top: 32, width: 218, height: 128 })
   })
 
+  it("cuts an editable's caret by its own box only where it clips: not an inline one (overflow does not apply), nor one that lets text overflow", () => {
+    document.body.innerHTML = `
+      <div id="page" style="overflow-x: hidden; overflow-y: hidden">
+        <span id="inline" contenteditable="true" style="display: inline; overflow-x: hidden; overflow-y: hidden">Untitled</span>
+        <div id="spills" contenteditable="true" style="display: block; height: 20px">long text</div>
+        <div id="scrolls" contenteditable="true" style="display: block; overflow-x: auto; overflow-y: auto">long text</div>
+      </div>`
+    box(document.querySelector("#page")!, 0, 0, 400, 300)
+    for (const id of ["inline", "spills", "scrolls"]) box(document.querySelector(`#${id}`)!, 10, 10, id === "inline" ? 0 : 100, id === "inline" ? 0 : 20)
+    const page = { left: 0, top: 0, width: 400, height: 300 }
+    expect(visibleBoxOf(document.querySelector("#inline")!)).toEqual(page)
+    expect(visibleBoxOf(document.querySelector("#spills")!)).toEqual(page)
+    expect(visibleBoxOf(document.querySelector("#scrolls")!)).toEqual({ left: 10, top: 10, width: 100, height: 20 })
+  })
+
   it("hides the caret of a field whose line a box above it hides", () => {
     document.body.innerHTML = `<div id="note" style="overflow-x: hidden; overflow-y: hidden"><input id="name" value="hello"></div>`
     const note = document.querySelector("#note")!

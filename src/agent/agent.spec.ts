@@ -250,7 +250,8 @@ describe("connecting", () => {
   })
 
   it("reports an editable's caret only where it shows, cut to the editable", async () => {
-    document.body.innerHTML = `<div id="editor" contenteditable="true">hello</div>`
+    // A box that scrolls its text: what overflows it is hidden.
+    document.body.innerHTML = `<div id="editor" contenteditable="true" style="overflow-x: auto; overflow-y: auto">hello</div>`
     const editor = document.querySelector<HTMLElement>("#editor")!
     editor.getBoundingClientRect = () => new DOMRect(10, 20, 200, 40)
     Object.defineProperties(editor, { clientWidth: { value: 200 }, clientHeight: { value: 40 } })
