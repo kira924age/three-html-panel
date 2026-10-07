@@ -149,7 +149,10 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
   /** What drove the pointer last: the IME is placed at the caret only for a mouse. */
   private lastInput: PointerInput = "mouse"
   private keyboardTimer = 0
-  /** Pointer inputs sent to the current document, and the count a tap's answer must have reached. */
+  /**
+   * Presses and releases sent to the current document, and the count a tap's
+   * answer must have reached. Not moves or leaves: the page answers a release.
+   */
   private pointersSent = 0
   private tapAnswerAt: number | null = null
   /** Where the IME was last placed, to place it again only when it moves. */
@@ -365,7 +368,7 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
 
   pointer(kind: PointerKind, uv: Vector2 | null = null, shiftKey = false, input: PointerInput = "mouse"): void {
     if (kind === "down") this.lastInput = input
-    this.pointersSent++
+    if (kind === "down" || kind === "up") this.pointersSent++
     // Only presses and releases (the user acting on this panel) open the window, not hovering.
     if (kind === "down" || kind === "up") this.userActionUntil = performance.now() + USER_ACTION_MS
     const { x, y } = uv ? this.toPage(uv) : { x: 0, y: 0 }

@@ -160,7 +160,10 @@ describe("connecting", () => {
     await vi.waitFor(() => expect(editing().at(-1)).toMatchObject({ editing: false, pointers: 2 }))
     const before = editing().length
     host.postMessage({ type: "pointer", kind: "down", x: 5, y: 5, input: "touch" })
-    host.postMessage({ type: "pointer", kind: "up", x: 5, y: 5, input: "touch" })
+    host.postMessage({ type: "pointer", kind: "move", x: 6, y: 6, input: "touch" })
+    host.postMessage({ type: "pointer", kind: "up", x: 6, y: 6, input: "touch" })
+    // Moves and leaves are not counted: only presses and releases.
+    host.postMessage({ type: "pointer", kind: "leave", x: 0, y: 0 })
     await vi.waitFor(() => expect(editing().at(-1)).toMatchObject({ editing: false, pointers: 4 }))
     expect(editing().length).toBeGreaterThan(before)
     delete (document as { elementFromPoint?: unknown }).elementFromPoint

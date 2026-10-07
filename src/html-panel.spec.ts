@@ -248,6 +248,18 @@ describe("the panel's iframe", () => {
         port.close()
       })
 
+      it("takes the answer to the release, whatever moves and leaves came after it", async () => {
+        const { panel, port, release, field } = await tapped()
+        // PanelPointer ends a touch's hover right after its release.
+        panel.pointer("leave")
+        panel.pointer("move", field, false, "touch")
+        panel.focusForTyping(field)
+        port.postMessage(answer(false, 2))
+        await delivered()
+        expect(release).toHaveBeenCalledWith(panel)
+        port.close()
+      })
+
       it("does not take an earlier report for the answer", async () => {
         const { panel, port, release, field } = await tapped()
         panel.focusForTyping(field)

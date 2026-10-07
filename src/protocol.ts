@@ -84,9 +84,9 @@ export interface EditingMessage {
   /** The text selected in the field, for the host to copy when the user asks to. */
   selectedText: string
   /**
-   * How many pointer inputs the agent has handled for this document. A report
-   * follows every release, so the host can tell the page's answer to a tap from
-   * an earlier report.
+   * How many presses and releases (pointer down and up) the agent has handled
+   * for this document. A report follows every release, so the host can tell
+   * the page's answer to a tap from an earlier report.
    */
   pointers: number
 }
