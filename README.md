@@ -135,7 +135,8 @@ Paths are under `src/`; the agent's are under `src/agent/`.
 | The image does not see the page's CSS | Collect all rules; keep only matching `@media`; re-fetch cross-origin stylesheets with CORS (with `Accept: text/css`, or Vite's dev server answers with JS) | `agent/capture/css.ts` |
 | `:hover`, `:focus` never match in an image | Mark elements with attributes and rewrite the selectors | `agent/capture/css.ts`, `agent/capture/snapshot.ts` |
 | Form state, scroll position are not in the markup | Copy `value`/`checked`, shift children of scrolled boxes | `agent/capture/snapshot.ts` |
-| CSS animations restart at 0s on every decode | Stop them in the image and bake the current values into inline styles | `agent/capture/snapshot.ts` |
+| CSS animations restart at 0s on every decode, and stall when the browser holds back the iframe's rendering (up to a second in Chrome) | Stop them in the image; bake animations that end as they will end (a fill-forwards one's last keyframe), and only endless or paused ones as they are now | `agent/capture/snapshot.ts` |
+| `requestAnimationFrame` stalls with the iframe's rendering | Replace it with a timer before the page's scripts run | `agent/animation-frames.ts` |
 | Images inside the SVG are not loaded | Inline them as data URLs | `agent/capture/images.ts` |
 | Synthetic events lack default actions | Hover/enter/leave, pointer capture, click vs drag, dblclick, wheel scroll | `agent/input/input.ts` |
 | Synthetic keys do not edit text | Caret moves, Shift selection, words (`Intl.Segmenter`), visual lines for Up/Down, deletion, the platform's bindings (macOS: Option/Cmd and the Emacs keys; elsewhere: Ctrl) | `agent/input/editing.ts` |
@@ -151,7 +152,7 @@ Paths are under `src/`; the agent's are under `src/agent/`.
 ## Limitations
 
 - The page has to load the agent; pages you cannot change need a server or proxy that adds it.
-- Chrome can still hold back the page's animation clock for up to about a second (the iframe is transparent and behind the canvas), so a CSS animation sometimes starts late. This happened with the same-origin version too.
+- A CSS animation or transition that ends is shown at its end right away, without its motion: the iframe's animation clock can stall for up to a second in Chrome, and showing its progress would keep a fade-in transparent that long. Endless animations are shown as the clock has them.
 - Only what CSS and the DOM describe is drawn: no `<video>`, no cross-origin iframes inside the page, no native widgets such as `<select>` popups, and `::before`/`::after` animations stay frozen.
 - Text inside a scroll container that is not wrapped in an element does not scroll.
 - No IME composition preview: the text appears when composition ends.

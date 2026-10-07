@@ -51,6 +51,13 @@ describe("starting", () => {
     expect(parent.postMessage).not.toHaveBeenCalled()
   })
 
+  it("replaces requestAnimationFrame when it starts, so a held-back iframe does not stall the page", () => {
+    const original = window.requestAnimationFrame
+    start()
+    expect(window.requestAnimationFrame).not.toBe(original)
+    window.requestAnimationFrame = original
+  })
+
   it("does not start outside a frame", () => {
     expect(startAgent({ hostOrigin: HOST, parent: window })).toBeNull()
   })

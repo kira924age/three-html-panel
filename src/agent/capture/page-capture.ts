@@ -13,7 +13,7 @@ import type { Caret, Frame, FrameWindow, PanelInput } from "../../types"
 import { DocumentCss } from "./css"
 import { ImageInliner } from "./images"
 import { RenderPacer } from "./pacer"
-import { buildFrameSvg, snapshotDocument } from "./snapshot"
+import { buildFrameSvg, isSampledLive, snapshotDocument } from "./snapshot"
 
 /** Events after which the page may look different. */
 const INVALIDATING_EVENTS = [
@@ -125,9 +125,13 @@ export class PageCapture {
     }, wait)
   }
 
-  private hasRunningAnimations(): boolean {
+  /** Animations copied as they are now (see collectAnimatedValues in snapshot.ts); the others end on a fixed value. */
+  private hasLiveAnimations(): boolean {
     const { document } = this
-    return typeof document.getAnimations === "function" && document.getAnimations().some(a => a.playState === "running")
+    return (
+      typeof document.getAnimations === "function" &&
+      document.getAnimations().some(animation => animation.playState === "running" && isSampledLive(animation))
+    )
   }
 
   private render(): void {
@@ -161,7 +165,7 @@ export class PageCapture {
       this.notBefore = performance.now() + this.pacer.record(performance.now() - started)
     }
     // Keep sampling while something is animating, so the panel shows it moving.
-    if (this.dirty || this.hasRunningAnimations()) this.invalidate()
+    if (this.dirty || this.hasLiveAnimations()) this.invalidate()
   }
 
   private reportCursor(): void {

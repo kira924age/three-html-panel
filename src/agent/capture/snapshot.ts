@@ -8,7 +8,8 @@
 // - scroll positions are not rendered by foreignObject at all, and the real
 //   scrollbars would not show them either: they are replaced (scrollbars.ts)
 // - interaction states (:hover, :focus) are expressed as attributes, see css.ts
-// - running animations are frozen at their current values
+// - animations are frozen: finite ones as they will end, the others as they are
+//   now (see collectAnimatedValues)
 // - images and canvases must be embedded as data URLs
 //
 // The copy is built in an inert document, so <img> elements in it never start
@@ -45,26 +46,73 @@ const toKebabCase = (property: string) =>
 
 const KEYFRAME_META_KEYS = new Set(["offset", "computedOffset", "easing", "composite"])
 
+/** Whether `animation` is a CSS transition. Checked by shape: the page is another realm in tests. */
+const isTransition = (animation: Animation) => "transitionProperty" in animation
+
 /**
- * The properties each element currently has animated, keyed by element.
- * Pseudo-element animations cannot be copied into an inline style and are left out.
+ * Which end of its keyframes (0 or 1) a finite animation stops at, from its
+ * direction and iteration count; null if it does not stop at an end (infinite,
+ * or a fractional count such as 1.5).
  */
-function collectAnimatedProperties(document: Document, window: FrameWindow): Map<Element, Set<string>> {
-  const result = new Map<Element, Set<string>>()
+export function endOffsetOf(timing: EffectTiming): 0 | 1 | null {
+  const iterations = timing.iterations ?? 1
+  if (!Number.isInteger(iterations) || iterations < 1) return null
+  const last = iterations - 1
+  const reversed =
+    timing.direction === "reverse" ||
+    (timing.direction === "alternate" && last % 2 === 1) ||
+    (timing.direction === "alternate-reverse" && last % 2 === 0)
+  return reversed ? 0 : 1
+}
+
+/** Whether an animation's value is copied as it is now, so the panel must keep sampling it. */
+export function isSampledLive(animation: Animation): boolean {
+  if (isTransition(animation)) return false
+  const effect = animation.effect as KeyframeEffect | null
+  return animation.playState === "paused" || endOffsetOf(effect?.getTiming?.() ?? {}) === null
+}
+
+/**
+ * The animated values to bake into each element's copy: property (kebab-case)
+ * to value, where null means the live document's value now.
+ *
+ * Browsers can hold back rendering in the panel's iframe (to them it is a
+ * cross-origin frame the user never touches), for up to a second in Chrome,
+ * and animations do not advance meanwhile. Copying their values now would show
+ * a fade-in still transparent long after it should have ended. So animations
+ * that end are copied as they will be at the end:
+ * - transitions, and animations that do not fill forwards, end on the element's
+ *   own style, which the image shows anyway: nothing is baked
+ * - animations that fill forwards (or both) end on their last keyframe
+ * - animations that repeat forever, and paused ones, are copied as they are now
+ * Pseudo-element animations cannot go into an inline style and are left out.
+ */
+function collectAnimatedValues(document: Document): Map<Element, Map<string, string | null>> {
+  const result = new Map<Element, Map<string, string | null>>()
   if (typeof document.getAnimations !== "function") return result
   for (const animation of document.getAnimations()) {
-    const effect = animation.effect
-    if (!(effect instanceof window.KeyframeEffect) || !effect.target || effect.pseudoElement) continue
-    let properties = result.get(effect.target)
-    if (!properties) result.set(effect.target, (properties = new Set()))
-    for (const keyframe of effect.getKeyframes()) {
-      for (const key of Object.keys(keyframe)) {
-        if (!KEYFRAME_META_KEYS.has(key)) properties.add(toKebabCase(key))
+    const effect = animation.effect as KeyframeEffect | null
+    if (!effect?.target || effect.pseudoElement || typeof effect.getKeyframes !== "function") continue
+    if (isTransition(animation)) continue
+    let values = result.get(effect.target)
+    if (!values) result.set(effect.target, (values = new Map()))
+    const keyframes = effect.getKeyframes()
+
+    if (isSampledLive(animation)) {
+      for (const keyframe of keyframes) {
+        for (const key of Object.keys(keyframe)) if (!KEYFRAME_META_KEYS.has(key)) values.set(toKebabCase(key), null)
       }
+      continue
     }
-    // CSS transitions report their property here rather than in the keyframes.
-    if (typeof window.CSSTransition !== "undefined" && animation instanceof window.CSSTransition) {
-      properties.add(animation.transitionProperty)
+    const timing = effect.getTiming()
+    if (timing.fill !== "forwards" && timing.fill !== "both") continue
+    // A property missing from the end keyframe ends on the element's own style.
+    const endOffset = endOffsetOf(timing)
+    for (const keyframe of keyframes) {
+      if (keyframe.computedOffset !== endOffset) continue
+      for (const [key, value] of Object.entries(keyframe)) {
+        if (!KEYFRAME_META_KEYS.has(key) && typeof value === "string") values.set(toKebabCase(key), value)
+      }
     }
   }
   return result
@@ -74,7 +122,7 @@ class Snapshotter {
   // A separate document without a browsing context, so the copies never load anything.
   private readonly inert = globalThis.document.implementation.createHTMLDocument("")
   private readonly window: FrameWindow
-  private readonly animated: Map<Element, Set<string>>
+  private readonly animated: Map<Element, Map<string, string | null>>
   private readonly focusWithin = new Set<Element>()
   /** Scrollbars to draw over the copy. */
   readonly scrollbars: Scrollbar[] = []
@@ -84,7 +132,7 @@ class Snapshotter {
     private readonly options: SnapshotOptions
   ) {
     this.window = document.defaultView as FrameWindow
-    this.animated = collectAnimatedProperties(document, this.window)
+    this.animated = collectAnimatedValues(document)
     for (let element = options.focused; element; element = element.parentElement) this.focusWithin.add(element)
   }
 
@@ -182,12 +230,12 @@ class Snapshotter {
   }
 
   private copyAnimatedValues(element: Element, copy: Element): void {
-    const properties = this.animated.get(element)
-    if (!properties || !(copy instanceof HTMLElement || copy instanceof SVGElement)) return
+    const values = this.animated.get(element)
+    if (!values?.size || !(copy instanceof HTMLElement || copy instanceof SVGElement)) return
     const computed = this.window.getComputedStyle(element)
-    for (const property of properties) {
-      const value = computed.getPropertyValue(property)
-      if (value) copy.style.setProperty(property, value, "important")
+    for (const [property, value] of values) {
+      const baked = value ?? computed.getPropertyValue(property)
+      if (baked) copy.style.setProperty(property, baked, "important")
     }
   }
 
