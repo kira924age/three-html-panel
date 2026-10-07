@@ -10,6 +10,7 @@
 // goes through the MessagePort the host hands over.
 
 import { PROTOCOL_VERSION, parseConnect, parseHostMessage, type PageMessage, type ReadyMessage } from "../protocol"
+import { emulateAnimationFrames } from "./animation-frames"
 import { PageCapture } from "./capture/page-capture"
 import { HOST_MESSAGE_EVENT, PAGE_MESSAGE_EVENT } from "./page"
 
@@ -54,6 +55,8 @@ export class PanelAgent {
     private readonly parent: Window,
     private readonly hostOrigin: string
   ) {
+    // Before the page's scripts, like the capture's focus and pointer capture.
+    emulateAnimationFrames(window as Window & typeof globalThis)
     this.capture = new PageCapture(window.document, {
       onFrame: frame => this.post({ type: "frame", seq: this.seq++, ...frame }),
       onEditing: (editing, caret) => this.post({ type: "editing", editing, caret }),

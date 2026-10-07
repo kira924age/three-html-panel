@@ -11,7 +11,7 @@
 // - @media is evaluated again inside the image, against the image's own
 //   environment. Only the rules that match in the page right now are kept.
 // - Animations restart from 0s every time the image is decoded, so they are
-//   stopped here. The snapshot bakes their current values into inline styles.
+//   stopped here. The snapshot bakes their values into inline styles.
 
 import type { FrameWindow } from "../../types"
 
