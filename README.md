@@ -119,7 +119,7 @@ panel.postMessage("scene-click")
 
 1. The agent posts `{ type: "ready", version }` to `window.parent`, addressed to the host origin.
 2. The host accepts it only if `event.source` is the panel's iframe (`iframe.contentWindow`) and `event.origin` is the panel URL's origin, or `"null"` with `sandbox: true`. It creates a `MessageChannel` and posts `{ type: "connect", version }` with one port to the iframe, addressed to the panel URL's origin, or with `sandbox: true` to `"*"`: an opaque origin cannot be named. Posted to `contentWindow`, it still only reaches the document now in that iframe.
-3. From then on, only the port is used: `frame` (seq, width, height, svg), `editing` (editing, caret) and `cursor` (a CSS cursor keyword) from the page; `pointer` (with `shiftKey`), `wheel`, `key`, `text`, `blur` from the host; `app` both ways.
+3. From then on, only the port is used: `frame` (seq, width, height, svg), `editing` (editing, caret) and `cursor` (a CSS cursor keyword) from the page; `pointer` (with `shiftKey`), `wheel`, `key`, `text`, `composition` (text being composed with an IME, and its caret), `blur` from the host; `app` both ways.
 4. After every `load` of the iframe, the host sends `ping` and starts the timeout; the agent answers `pong`. Only the agent of the document now loaded can answer (an unloaded document's port is dead), so this tells whether the new document has an agent. The order of `ready` and `load` cannot tell: `ready` sometimes arrives after `load`.
 
 Every document the iframe loads (a reload, a navigation) says `ready` again and gets a new port; the old one is closed. The host drops frames whose `seq` does not grow, whose size differs from the iframe's or exceeds 4096 px, or whose SVG is over 16 MB, carets that are not finite numbers with a short color string, and cursors that are not plain keywords (a `url()` cursor would have the host load whatever the page names). See `src/protocol.ts`.
@@ -146,6 +146,7 @@ Paths are under `src/`; the agent's are under `src/agent/`.
 | The host's cursor does not follow the page | The agent reports the cursor under the pointer (the text cursor over text, too); the host sets it on the canvas | `agent/input/input.ts`, `panel-pointer.ts` |
 | Focus in an iframe is lost whenever the host takes focus back | Virtual focus: `focus()`, `blur()`, `document.activeElement` are replaced in the page; keys go through a hidden field in the host | `agent/input/input.ts`, `panel-keyboard.ts` |
 | No caret is drawn in an image | Measure it with a mirror element; draw a thin plane over the panel | `agent/input/caret.ts`, `html-panel.ts` |
+| IME composition happens in the host's hidden field, not in the page | Send the composed text to the agent, which shows it in the image only (never in the page's value), underlined, with the caret in it; move the hidden field to the caret on screen, so the candidate window opens beside it | `panel-keyboard.ts`, `html-panel.ts`, `agent/capture/snapshot.ts` |
 | Iframes off screen are throttled, and `requestAnimationFrame` can stall even on screen | Keep the iframe in the viewport, transparent and behind the canvas; schedule captures with timers | `html-panel.ts`, `agent/capture/page-capture.ts` |
 | Heavy pages | Space captures so they take about 25% of the time | `agent/capture/pacer.ts` |
 
@@ -155,7 +156,6 @@ Paths are under `src/`; the agent's are under `src/agent/`.
 - A CSS animation or transition that ends is shown at its end right away, without its motion: the iframe's animation clock can stall for up to a second in Chrome, and showing its progress would keep a fade-in transparent that long. Endless animations are shown as the clock has them.
 - Only what CSS and the DOM describe is drawn: no `<video>`, no cross-origin iframes inside the page, no native widgets such as `<select>` popups, and `::before`/`::after` animations stay frozen.
 - Text inside a scroll container that is not wrapped in an element does not scroll.
-- No IME composition preview: the text appears when composition ends.
 - `contenteditable` editing is not implemented.
 - Copy and cut from a panel's text field do not work: the host's hidden field, which takes the keys, does not have the selected text. Pasting does.
 - A text field scrolled by part of a line leaves that line out of the image until it is scrolled fully into view.

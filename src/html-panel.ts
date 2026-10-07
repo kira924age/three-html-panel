@@ -23,8 +23,10 @@ import {
   PlaneGeometry,
   Vector2,
   Vector3,
+  type Camera,
   type Object3DEventMap,
-  type Ray
+  type Ray,
+  type WebGLRenderer
 } from "three"
 import { FrameRenderer } from "./frame-renderer"
 import { PanelConnection } from "./panel-connection"
@@ -112,6 +114,11 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
   private readonly onError: (error: Error) => void
   private readonly connection: PanelConnection
   private editing = false
+  /** The caret the page reported last, in its CSS pixels, for placing the IME. */
+  private caretBox: Caret | null = null
+  /** Where the IME was last placed, to place it again only when it moves. */
+  private imePlacement = ""
+  private readonly scratch = new Vector3()
   /** Until when a sandboxed page may take the keyboard: shortly after the user pressed the panel. */
   private keyboardGrantUntil = -Infinity
 
@@ -234,13 +241,17 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
       editing = false
       caret = null
     }
-    if (editing && !this.editing) this.keyboard.focus(this)
+    if (editing && !this.editing) {
+      this.imePlacement = ""
+      this.keyboard.focus(this)
+    }
     if (!editing && this.editing) this.keyboard.release(this)
     this.editing = editing
     this.updateCaret(caret)
   }
 
   private updateCaret(caret: Caret | null): void {
+    this.caretBox = caret
     const color = caret ? splitAlpha(caret.color) : null
     // A transparent caret (caret-color: transparent) is how a page hides it.
     if (color?.alpha === 0) caret = null
@@ -317,6 +328,38 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
   sendKey(event: KeyboardEvent): void {
     const { key, shiftKey, ctrlKey, altKey, metaKey } = event
     this.send({ type: "key", key, shiftKey, ctrlKey, altKey, metaKey })
+  }
+
+  sendComposition(text: string, cursor: number): void {
+    this.send({ type: "composition", text, cursor })
+  }
+
+  /**
+   * Before the panel is drawn, while the keyboard types into it: moves the
+   * keyboard's hidden field to where the caret is on screen, so that the IME's
+   * candidate window opens next to it.
+   */
+  override onBeforeRender(renderer: WebGLRenderer, _scene: unknown, camera: Camera): void {
+    const caret = this.caretBox
+    if (!caret || !this.keyboard.isTarget(this)) return
+    const top = this.toClient(caret.x, caret.y, renderer.domElement, camera)
+    const bottom = this.toClient(caret.x, caret.y + caret.height, renderer.domElement, camera)
+    // Behind the camera: leave the field where it was.
+    if (!top || !bottom) return
+    const placement = { x: Math.round(top.x), y: Math.round(top.y), height: Math.round(Math.abs(bottom.y - top.y)) }
+    const key = `${placement.x},${placement.y},${placement.height}`
+    if (key === this.imePlacement) return
+    this.imePlacement = key
+    this.keyboard.placeIme(placement)
+  }
+
+  /** A point of the page (CSS pixels) on screen (client pixels of the canvas's page), or null behind the camera. */
+  private toClient(x: number, y: number, canvas: HTMLCanvasElement, camera: Camera): { x: number; y: number } | null {
+    const point = this.scratch.set((x / this.pageWidth - 0.5) * this.worldWidth, (0.5 - y / this.pageHeight) * this.worldHeight, 0)
+    this.localToWorld(point).project(camera)
+    if (point.z < -1 || point.z > 1) return null
+    const rect = canvas.getBoundingClientRect()
+    return { x: rect.left + ((point.x + 1) / 2) * rect.width, y: rect.top + ((1 - point.y) / 2) * rect.height }
   }
 
   sendText(text: string): void {

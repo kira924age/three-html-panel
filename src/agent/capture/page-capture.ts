@@ -7,7 +7,7 @@
 // as it is created, but only takes snapshots once the agent is connected to
 // the host (start()).
 
-import { isTextField, measureCaret, measureSelection } from "../input/caret"
+import { composedValue, isTextField, measureCaret, measureComposition, measureSelection } from "../input/caret"
 import { InputSynthesizer } from "../input/input"
 import type { Caret, Frame, FrameWindow, PanelInput } from "../../types"
 import { DocumentCss } from "./css"
@@ -143,7 +143,18 @@ export class PageCapture {
       const width = this.window.innerWidth
       const height = this.window.innerHeight
       const focused = this.input.focused
-      const selection = isTextField(focused) ? this.measure(() => measureSelection(focused)) : []
+      const composing = this.input.composition
+      // While composing, the selection is what the composition replaces: not drawn.
+      const selection = isTextField(focused) && !composing ? this.measure(() => measureSelection(focused)) : []
+      const composition =
+        isTextField(focused) && composing
+          ? {
+              field: focused,
+              value: composedValue(focused, composing).value,
+              boxes: this.measure(() => measureComposition(focused, composing)),
+              color: this.window.getComputedStyle(focused).color
+            }
+          : null
       // The page's ::selection color, if it sets one.
       const selectionColor = isTextField(focused)
         ? this.window.getComputedStyle(focused, "::selection").backgroundColor
@@ -155,6 +166,7 @@ export class PageCapture {
         focused,
         selection,
         selectionColor,
+        composition,
         scrollbar: this.input.scrollbarState,
         inlineImage: url => this.images.get(url)
       }))
@@ -178,7 +190,7 @@ export class PageCapture {
   private reportEditing(): void {
     const focused = this.input.focused
     const editing = isTextField(focused)
-    const caret = editing ? this.measure(() => measureCaret(focused)) : null
+    const caret = editing ? this.measure(() => measureCaret(focused, this.input.composition)) : null
     const key = JSON.stringify([editing, caret])
     if (key === this.lastEditing) return
     this.lastEditing = key

@@ -176,6 +176,12 @@ export function parseHostMessage(data: unknown): HostMessage | null {
     }
     case "text":
       return isShortString(data.text, MAX_TEXT_LENGTH) ? { type: "text", text: data.text } : null
+    case "composition": {
+      const { text, cursor } = data
+      if (typeof text !== "string" || text.length > MAX_TEXT_LENGTH) return null
+      if (!Number.isSafeInteger(cursor) || (cursor as number) < 0 || (cursor as number) > text.length) return null
+      return { type: "composition", text, cursor: cursor as number }
+    }
     case "blur":
       return { type: "blur" }
     case "ping":

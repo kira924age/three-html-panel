@@ -58,12 +58,69 @@ describe("a panel iframe that takes focus", () => {
 
   it("gives it to the hidden field while a panel is being typed into", () => {
     keyboard.register(frame, { sandboxed: true })
-    const target: KeyboardTarget = { sendKey: () => {}, sendText: () => {}, blurFromHost: () => {} }
+    const target: KeyboardTarget = { sendKey: () => {}, sendText: () => {}, sendComposition: () => {}, blurFromHost: () => {} }
     keyboard.focus(target)
     pageTakesFocus()
     const active = document.activeElement
     expect(active).not.toBe(frame)
     expect(active?.tagName).toBe("TEXTAREA")
     keyboard.release(target)
+  })
+})
+
+describe("IME composition", () => {
+  const field = () => document.querySelector<HTMLTextAreaElement>("textarea[aria-hidden]")!
+  let target: KeyboardTarget & { calls: unknown[][] }
+
+  beforeEach(() => {
+    vi.useRealTimers()
+    const calls: unknown[][] = []
+    target = {
+      calls,
+      sendKey: () => {},
+      sendText: text => calls.push(["text", text]),
+      sendComposition: (text, cursor) => calls.push(["composition", text, cursor]),
+      blurFromHost: () => {}
+    }
+    keyboard.focus(target)
+  })
+
+  afterEach(() => keyboard.release(target))
+
+  /** The IME updates the field while composing. */
+  function compose(text: string, cursor = text.length): void {
+    field().value = text
+    field().setSelectionRange(cursor, cursor)
+    field().dispatchEvent(new InputEvent("input", { isComposing: true }))
+  }
+
+  it("sends what is being composed, then ends it before sending the committed text", () => {
+    compose("に")
+    compose("にほ")
+    compose("にほ", 1)
+    field().value = "日本"
+    field().dispatchEvent(new Event("compositionend"))
+    expect(target.calls).toEqual([
+      ["composition", "に", 1],
+      ["composition", "にほ", 2],
+      ["composition", "にほ", 1],
+      ["composition", "", 0],
+      ["text", "日本"]
+    ])
+  })
+
+  it("ends the composition when keys stop going to the target", () => {
+    compose("に")
+    keyboard.release(target)
+    expect(target.calls.at(-1)).toEqual(["composition", "", 0])
+  })
+
+  it("places the hidden field at the caret, and back in the corner when released", () => {
+    keyboard.placeIme({ x: 120, y: 80, height: 20 })
+    expect(field().style.left).toBe("120px")
+    expect(field().style.top).toBe("80px")
+    expect(field().style.lineHeight).toBe("20px")
+    keyboard.release(target)
+    expect(field().style.left).toBe("0px")
   })
 })

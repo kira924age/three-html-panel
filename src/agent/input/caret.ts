@@ -83,12 +83,32 @@ function withMirror<T>(field: TextField, measure: (mirror: HTMLDivElement) => T)
 /** An <input> (one line) rather than a <textarea>. */
 const isSingleLine = (field: TextField): field is HTMLInputElement => field.tagName === "INPUT"
 
-const displayText = (field: TextField) =>
-  isSingleLine(field) && field.type === "password" ? "•".repeat(field.value.length) : field.value
+const displayText = (field: TextField, value = field.value) =>
+  isSingleLine(field) && field.type === "password" ? "•".repeat(value.length) : value
 
-/** Where a caret would be at `index`, in the page's CSS pixels, whether or not it is in view. */
-export function caretAt(field: TextField, index: number): { x: number; y: number; height: number } {
-  const text = displayText(field)
+/** Text being composed with an IME, not yet in the field's value. `cursor` is its caret, within `text`. */
+export interface Composition {
+  text: string
+  cursor: number
+}
+
+/**
+ * The field's value as it shows while composing: the composition in place of
+ * the selection (which the IME replaces), and where the composition starts.
+ */
+export function composedValue(field: TextField, composition: Composition): { value: string; start: number } {
+  const length = field.value.length
+  const start = field.selectionStart ?? length
+  const end = field.selectionEnd ?? length
+  return { value: field.value.slice(0, start) + composition.text + field.value.slice(end), start }
+}
+
+/**
+ * Where a caret would be at `index`, in the page's CSS pixels, whether or not it
+ * is in view. `value` stands in for the field's value (while composing).
+ */
+export function caretAt(field: TextField, index: number, value?: string): { x: number; y: number; height: number } {
+  const text = displayText(field, value)
   return withMirror(field, mirror => {
     const marker = placeMarker(field, mirror, text, index)
     const rect = field.getBoundingClientRect()
@@ -121,11 +141,18 @@ function placeMarker(field: TextField, mirror: HTMLDivElement, text: string, ind
 /**
  * Where the caret of a focused text field is, in the page's CSS pixels. None
  * while text is selected (browsers do not draw the caret then either), or when
- * the caret is scrolled out of view.
+ * the caret is scrolled out of view. While composing, it is the IME's caret.
  */
-export function measureCaret(field: TextField): Caret | null {
-  if (field.selectionStart !== field.selectionEnd) return null
-  const { x, y, height } = caretAt(field, field.selectionEnd ?? field.value.length)
+export function measureCaret(field: TextField, composition?: Composition | null): Caret | null {
+  let caret: { x: number; y: number; height: number }
+  if (composition) {
+    const { value, start } = composedValue(field, composition)
+    caret = caretAt(field, start + composition.cursor, value)
+  } else {
+    if (field.selectionStart !== field.selectionEnd) return null
+    caret = caretAt(field, field.selectionEnd ?? field.value.length)
+  }
+  const { x, y, height } = caret
   const rect = field.getBoundingClientRect()
   if (x < rect.left - 1 || x > rect.right + 1 || y + height < rect.top || y > rect.bottom) return null
   const computed = windowOf(field).getComputedStyle(field)
@@ -214,7 +241,18 @@ export function measureSelection(field: TextField): Box[] {
   const start = field.selectionStart
   const end = field.selectionEnd
   if (start === null || end === null || start === end) return []
-  const text = displayText(field)
+  return measureRange(field, start, end, displayText(field))
+}
+
+/** The rectangles the text being composed covers, one per line, like measureSelection. */
+export function measureComposition(field: TextField, composition: Composition): Box[] {
+  if (composition.text === "") return []
+  const { value, start } = composedValue(field, composition)
+  return measureRange(field, start, start + composition.text.length, displayText(field, value))
+}
+
+/** The rectangles [start, end) of `text`, laid out as in the field, cover. */
+function measureRange(field: TextField, start: number, end: number, text: string): Box[] {
   return withMirror(field, mirror => {
     const document = field.ownerDocument
     mirror.textContent = text.slice(0, start)

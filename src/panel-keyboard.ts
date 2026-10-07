@@ -17,6 +17,8 @@
 export interface KeyboardTarget {
   sendKey(event: KeyboardEvent): void
   sendText(text: string): void
+  /** Text being composed with the IME, and its caret within it; "" when composition ends. */
+  sendComposition(text: string, cursor: number): void
   /** Focus left the panel from the host side (the user clicked elsewhere). */
   blurFromHost(): void
 }
@@ -45,6 +47,8 @@ export class PanelKeyboard {
   /** Panel iframes, and whether each is sandboxed (its page is not trusted). */
   private readonly frames = new Map<HTMLIFrameElement, { sandboxed: boolean }>()
   private target: KeyboardTarget | null = null
+  /** The target that was last sent composed text, until it is told composition ended. */
+  private composingFor: KeyboardTarget | null = null
   private lastHostFocus: HTMLElement | null = null
 
   constructor(container: HTMLElement = document.body) {
@@ -54,6 +58,9 @@ export class PanelKeyboard {
     field.autocomplete = "off"
     field.spellcheck = false
     field.setAttribute("autocapitalize", "off")
+    // One line, so that the caret (and the IME's candidate window, which
+    // follows it) moves along the line rather than down a 1px-wide column.
+    field.setAttribute("wrap", "off")
     Object.assign(field.style, {
       position: "fixed",
       left: "0",
@@ -68,9 +75,13 @@ export class PanelKeyboard {
 
     field.addEventListener("keydown", this.onKeyDown)
     field.addEventListener("input", event => {
-      if (!(event as InputEvent).isComposing) this.flush()
+      if ((event as InputEvent).isComposing) this.sendComposition()
+      else this.flush()
     })
-    field.addEventListener("compositionend", () => this.flush())
+    field.addEventListener("compositionend", () => {
+      this.endComposition()
+      this.flush()
+    })
     field.addEventListener("blur", () => setTimeout(this.checkFocus, 0))
 
     document.addEventListener(
@@ -112,6 +123,7 @@ export class PanelKeyboard {
 
   /** Starts sending keys to `target`. */
   focus(target: KeyboardTarget): void {
+    if (target !== this.target) this.endComposition()
     this.target = target
     this.field.value = ""
     if (document.activeElement !== this.field) this.field.focus({ preventScroll: true })
@@ -125,7 +137,9 @@ export class PanelKeyboard {
   /** Stops sending keys to `target`, if it is the current one. */
   release(target: KeyboardTarget): void {
     if (this.target !== target) return
+    this.endComposition()
     this.target = null
+    this.placeIme(null)
     if (document.activeElement === this.field) this.field.blur()
   }
 
@@ -137,6 +151,44 @@ export class PanelKeyboard {
       event.preventDefault()
       this.target.sendKey(event)
     }
+  }
+
+  /**
+   * Moves the hidden field to where the target's caret is on screen (client
+   * pixels), so that the IME shows its candidate window next to it rather than
+   * in a corner of the page. Null puts it back in the corner.
+   */
+  placeIme(caret: { x: number; y: number; height: number } | null): void {
+    const style = this.field.style
+    if (!caret) {
+      Object.assign(style, { left: "0", top: "0", height: "1px", fontSize: "", lineHeight: "" })
+      return
+    }
+    const height = Math.max(1, caret.height)
+    Object.assign(style, {
+      left: `${caret.x}px`,
+      top: `${caret.y}px`,
+      height: `${height}px`,
+      // The candidate window goes below the line: make the line as tall as the caret.
+      fontSize: `${Math.max(1, height * 0.8)}px`,
+      lineHeight: `${height}px`
+    })
+  }
+
+  /** Sends what is being composed: the field holds only that (committed text is flushed out). */
+  private sendComposition(): void {
+    const target = this.target
+    if (!target) return
+    const text = this.field.value
+    const cursor = Math.min(text.length, this.field.selectionEnd ?? text.length)
+    this.composingFor = target
+    target.sendComposition(text, cursor)
+  }
+
+  private endComposition(): void {
+    const target = this.composingFor
+    this.composingFor = null
+    target?.sendComposition("", 0)
   }
 
   private flush(): void {

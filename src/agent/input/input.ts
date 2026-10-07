@@ -19,7 +19,7 @@
 // Events are constructed from the page's own window, so that they belong to
 // the page's realm like events the browser would dispatch there.
 
-import { caretAt, indexFromPoint, isTextField, revealIndex, verticalIndex, type TextField } from "./caret"
+import { caretAt, indexFromPoint, isTextField, revealIndex, verticalIndex, type Composition, type TextField } from "./caret"
 import { editAction, lineEnd, lineStart, wordAt } from "./editing"
 import { contains, hitBox, maxScroll, scrollbarAt, scrollbarsOf, thumbTravel, type Axis, type Scrollbar } from "./scrollbars"
 import type { FrameWindow, PanelInput } from "../../types"
@@ -176,6 +176,8 @@ export class InputSynthesizer {
   private pointer: { x: number; y: number } | null = null
   /** Text being selected by dragging: the field, and the range the press selected (a word on a double press). */
   private textDrag: { field: TextField; unit: "char" | "word" | "line"; start: number; end: number } | null = null
+  /** Text being composed with the host's IME in the focused field (not in its value yet). */
+  private composing: { field: TextField; composition: Composition } | null = null
   /** The horizontal position Up/Down keep to, while they keep moving the caret. */
   private goal: { field: TextField; index: number; x: number } | null = null
   /**
@@ -220,8 +222,15 @@ export class InputSynthesizer {
         this.key(input)
         break
       case "text":
+        this.composing = null
         this.text(input.text)
         break
+      case "composition": {
+        const field = this.focused
+        this.composing =
+          input.text !== "" && isTextField(field) ? { field, composition: { text: input.text, cursor: input.cursor } } : null
+        break
+      }
       case "blur":
         this.focus.set(null)
         break
@@ -232,6 +241,13 @@ export class InputSynthesizer {
   /** The focused element, if any. */
   get focused(): Element | null {
     return this.focus.current
+  }
+
+  /** What is being composed in the focused field, if anything. Ends when focus moves on. */
+  get composition(): Composition | null {
+    const composing = this.composing
+    if (!composing || composing.field !== this.focused) return null
+    return composing.composition
   }
 
   /**
