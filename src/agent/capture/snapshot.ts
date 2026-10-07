@@ -10,7 +10,8 @@
 // - interaction states (:hover, :focus) are expressed as attributes, see css.ts
 // - animations are frozen: finite ones as they will end, the others as they are
 //   now (see collectAnimatedValues)
-// - images and canvases must be embedded as data URLs
+// - images and canvases must be embedded as data URLs, and a video as its
+//   current frame
 //
 // The copy is built in an inert document, so <img> elements in it never start
 // loading anything.
@@ -20,6 +21,7 @@
 import type { Box, FrameWindow } from "../../types"
 import { scrolledText } from "../input/caret"
 import { scrollbarsOf, type Scrollbar } from "../input/scrollbars"
+import type { PopupView } from "../input/select-popup"
 import { ACTIVE_ATTRIBUTE, FOCUS_ATTRIBUTE, FOCUS_WITHIN_ATTRIBUTE, HOVER_ATTRIBUTE } from "./css"
 
 /** Elements that do not contribute to what is on screen. <style> is collected separately. */
@@ -43,9 +45,22 @@ export interface SnapshotOptions {
    * boxes the composed text covers, underlined.
    */
   composition?: { field: Element; value: string; boxes: readonly Box[]; color: string } | null
+  /**
+   * Text being composed with an IME in a contenteditable element: shown, in the
+   * copy only, where the selection starts (in place of the selected text when
+   * that is within one text node), underlined.
+   */
+  inlineComposition?: { node: Node; offset: number; endOffset: number; text: string } | null
   /** The scrollbar being hovered or pressed, drawn darker. */
   scrollbar?: { element: Element; axis: "x" | "y"; state: "hover" | "active" } | null
+  /** The open list of a <select>, drawn over everything. */
+  selectPopup?: PopupView | null
 }
+
+/** A video's attributes that mean nothing on the image that stands for it. */
+const VIDEO_ATTRIBUTES = new Set(["src", "poster", "controls", "autoplay", "loop", "muted", "preload", "playsinline", "crossorigin"])
+/** A video frame is drawn at most this many times its size on the page (the panel's pixel ratio is not known here). */
+const VIDEO_SCALE = 2
 
 const toKebabCase = (property: string) =>
   property.startsWith("--") ? property : property.replace(/[A-Z]/g, letter => `-${letter.toLowerCase()}`)
@@ -143,12 +158,17 @@ class Snapshotter {
   }
 
   copy(live: Node): Node | null {
-    if (live.nodeType === Node.TEXT_NODE) return this.inert.importNode(live, false)
+    if (live.nodeType === Node.TEXT_NODE) {
+      const composition = this.options.inlineComposition
+      if (composition?.node === live) return this.composedText(live as Text, composition)
+      return this.inert.importNode(live, false)
+    }
     if (live.nodeType !== Node.ELEMENT_NODE) return null
     const element = live as Element
     if (SKIPPED_ELEMENTS.has(element.tagName) || this.options.ignored?.has(element)) return null
 
     if (element instanceof this.window.HTMLCanvasElement) return this.copyCanvas(element)
+    if (element instanceof this.window.HTMLVideoElement) return this.copyVideo(element)
 
     const copy = this.inert.importNode(element, false) as Element
     this.copyFormState(element, copy)
@@ -160,10 +180,15 @@ class Snapshotter {
     if (element.tagName === "HEAD") return copy
 
     const children = element.tagName === "TEXTAREA" ? [] : Array.from(element.childNodes)
-    for (const child of children) {
+    // Composed text between two children (an empty line of an editable, say).
+    const composition = this.options.inlineComposition
+    const composedAt = composition?.node === element ? composition.offset : -1
+    children.forEach((child, index) => {
+      if (index === composedAt) copy.appendChild(this.composedSpan(composition!.text))
       const childCopy = this.copy(child)
       if (childCopy) copy.appendChild(childCopy)
-    }
+    })
+    if (composedAt === children.length) copy.appendChild(this.composedSpan(composition!.text))
     this.copyScroll(element, copy)
     this.hideScrollbars(element, copy)
     return copy
@@ -234,6 +259,61 @@ class Snapshotter {
     image.style.width = `${width}px`
     image.style.height = `${height}px`
     return image
+  }
+
+  private composedSpan(text: string): Element {
+    const span = this.inert.createElement("span")
+    span.setAttribute("style", "text-decoration: underline")
+    span.textContent = text
+    return span
+  }
+
+  /** A text node with the composed text in it, in place of what the composition replaces. */
+  private composedText(text: Text, composition: NonNullable<SnapshotOptions["inlineComposition"]>): Node {
+    const fragment = this.inert.createDocumentFragment()
+    fragment.append(text.data.slice(0, composition.offset), this.composedSpan(composition.text), text.data.slice(composition.endOffset))
+    return fragment
+  }
+
+  /** A video, as an image of the frame it shows (its poster before it plays). */
+  private copyVideo(video: HTMLVideoElement): Node {
+    const image = this.inert.createElement("img")
+    for (const attribute of Array.from(video.attributes)) {
+      if (!VIDEO_ATTRIBUTES.has(attribute.name)) image.setAttribute(attribute.name, attribute.value)
+    }
+    const showsPoster = video.poster !== "" && video.paused && video.currentTime === 0
+    const poster = video.poster ? this.options.inlineImage(video.poster) : null
+    const source = showsPoster ? (poster ?? this.videoFrame(video)) : (this.videoFrame(video) ?? poster)
+    if (source) image.setAttribute("src", source)
+    const { width, height } = video.getBoundingClientRect()
+    const computed = this.window.getComputedStyle(video)
+    image.style.setProperty("box-sizing", "border-box")
+    image.style.setProperty("width", `${width}px`)
+    image.style.setProperty("height", `${height}px`)
+    // A video letterboxes its frame by default; an image would stretch it.
+    image.style.setProperty("object-fit", computed.objectFit)
+    image.style.setProperty("object-position", computed.objectPosition)
+    this.copyInteractionState(video, image)
+    return image
+  }
+
+  /** The frame a video shows now, as a data URL; null before it has one, or if it cannot be read (cross-origin). */
+  private videoFrame(video: HTMLVideoElement): string | null {
+    if (video.readyState < 2 || !video.videoWidth || !video.videoHeight) return null
+    const { width } = video.getBoundingClientRect()
+    const scale = Math.min(1, (VIDEO_SCALE * Math.max(1, width)) / video.videoWidth)
+    const canvas = this.document.createElement("canvas")
+    canvas.width = Math.max(1, Math.round(video.videoWidth * scale))
+    canvas.height = Math.max(1, Math.round(video.videoHeight * scale))
+    const context = canvas.getContext("2d")
+    if (!context) return null
+    try {
+      context.drawImage(video, 0, 0, canvas.width, canvas.height)
+      return canvas.toDataURL("image/jpeg", 0.85)
+    } catch {
+      // A video from another origin without CORS taints the canvas.
+      return null
+    }
   }
 
   private copyInteractionState(element: Element, copy: Element): void {
@@ -327,6 +407,36 @@ function drawScrollbars(root: HTMLElement, bars: readonly Scrollbar[], state: Sn
   }
 }
 
+const POPUP_HIGHLIGHT = "rgb(30 110 220)"
+
+/** Draws the open list of a <select>, as a fixed box over everything. */
+function drawSelectPopup(root: HTMLElement, view: PopupView): void {
+  const document = root.ownerDocument
+  const list = document.createElement("div")
+  const { left, top, width, height } = view.box
+  list.setAttribute(
+    "style",
+    `position:fixed;left:${left}px;top:${top}px;width:${width}px;height:${height}px;box-sizing:border-box;` +
+      "margin:0;padding:0;border:1px solid rgb(118 118 118);background:#fff;color:#000;overflow:hidden;" +
+      "box-shadow:0 2px 8px rgb(0 0 0 / 25%);pointer-events:none;z-index:2147483647;text-align:left;" +
+      `font:${view.font};line-height:${view.itemHeight}px;letter-spacing:normal;text-transform:none`
+  )
+  for (const item of view.items) {
+    const row = document.createElement("div")
+    const indent = item.grouped ? 20 : 8
+    const color = item.highlighted ? "#fff" : item.disabled && item.index >= 0 ? "rgb(128 128 128)" : "#000"
+    const background = item.highlighted ? POPUP_HIGHLIGHT : item.selected ? "rgb(0 0 0 / 8%)" : "transparent"
+    row.setAttribute(
+      "style",
+      `height:${view.itemHeight}px;padding:0 8px 0 ${indent}px;margin:0;white-space:pre;overflow:hidden;` +
+        `text-overflow:ellipsis;color:${color};background:${background};font-weight:${item.index < 0 ? "bold" : "normal"}`
+    )
+    row.textContent = item.label
+    list.appendChild(row)
+  }
+  root.appendChild(list)
+}
+
 /** Serializes the page as XHTML (an <html> element with the XHTML namespace). */
 export function snapshotDocument(document: Document, options: SnapshotOptions): string {
   const snapshotter = new Snapshotter(document, options)
@@ -349,6 +459,7 @@ export function snapshotDocument(document: Document, options: SnapshotOptions): 
     }
   }
   drawScrollbars(root, snapshotter.scrollbars, options.scrollbar)
+  if (options.selectPopup) drawSelectPopup(root, options.selectPopup)
   return new XMLSerializer().serializeToString(root)
 }
 

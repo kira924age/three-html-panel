@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Reader</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <h1>Reader</h1>
+    <p class="lead">
+      An ordinary page. Drag over this text to select it, double-click a word, or triple-click a paragraph, then copy it
+      with the usual shortcut. テキストの選択とコピーもできます。
+    </p>
+    <section class="row">
+      <label>
+        Font
+        <select id="font">
+          <optgroup label="Sans">
+            <option value="system-ui">System</option>
+            <option value="Helvetica, Arial">Helvetica</option>
+          </optgroup>
+          <optgroup label="Serif">
+            <option value="Georgia">Georgia</option>
+            <option value="'Times New Roman'">Times</option>
+          </optgroup>
+          <option value="ui-monospace, Menlo, monospace">Monospace</option>
+          <option disabled>Comic (unavailable)</option>
+        </select>
+      </label>
+      <label>
+        Size
+        <select id="size">
+          <option value="14px">Small</option>
+          <option value="17px" selected>Medium</option>
+          <option value="21px">Large</option>
+        </select>
+      </label>
+    </section>
+    <div id="editor" class="editor" contenteditable="true">
+      <p>This box is <b>contenteditable</b>. Click in it and type; Enter starts a new paragraph.</p>
+      <p>Try <i>⌘B</i> / <i>Ctrl+B</i> for bold, and undo with ⌘Z / Ctrl+Z. 日本語も入力できます。</p>
+    </div>
+    <p class="status" id="status">Words: 0</p>
+    <section class="media">
+      <video id="video" muted loop playsinline></video>
+      <div class="media-controls">
+        <button id="play" type="button">Play</button>
+        <span class="note">A video, drawn frame by frame.</span>
+      </div>
+    </section>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

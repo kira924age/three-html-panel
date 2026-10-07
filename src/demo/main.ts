@@ -42,9 +42,9 @@ scene.add(new AmbientLight(0xffffff, 1.2), sun)
 scene.add(new GridHelper(20, 20, 0x3a4150, 0x2a303b))
 
 const camera = new PerspectiveCamera(55, innerWidth / innerHeight, 0.05, 100)
-camera.position.set(0, 1.4, 2.8)
+camera.position.set(-0.35, 1.4, 3.6)
 const controls = new OrbitControls(camera, renderer.domElement)
-controls.target.set(0.15, 1.2, 0)
+controls.target.set(-0.35, 1.2, 0)
 controls.enableDamping = true
 controls.update()
 
@@ -53,8 +53,8 @@ controls.update()
 const panelBase: string = import.meta.env.VITE_PANEL_ORIGIN || location.href
 const pageUrl = (path: string) => new URL(path, panelBase)
 
-// Both pages run sandboxed (their server sends the same sandbox, see
-// vite.panels.config.ts): neither can reach the scene's cookies, storage or
+// All pages run sandboxed (their server sends the same sandbox, see
+// vite.panels.config.ts): none can reach the scene's cookies, storage or
 // document, nor take its keyboard.
 const notes = new HtmlPanel({ url: pageUrl("panels/notes/"), width: 960, height: 640, size: 1.6, sandbox: true })
 notes.position.set(-0.75, 1.45, 0)
@@ -74,7 +74,12 @@ const sceneControls = new HtmlPanel({
 sceneControls.position.set(1.15, 1.4, 0.1)
 sceneControls.rotation.y = -0.5
 
-const panels = [notes, sceneControls]
+// A page with text to select, drop-down lists, rich text editing and a video.
+const reader = new HtmlPanel({ url: pageUrl("panels/reader/"), width: 720, height: 720, size: 1.1, sandbox: true })
+reader.position.set(-2.25, 1.45, 0.45)
+reader.rotation.y = 0.65
+
+const panels = [notes, sceneControls, reader]
 scene.add(...panels)
 new PanelPointer(camera, renderer.domElement, () => panels)
 

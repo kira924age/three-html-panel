@@ -89,6 +89,7 @@ export default defineConfig(({ mode }) => {
           main: resolve(import.meta.dirname, "index.html"),
           notes: resolve(import.meta.dirname, "panels/notes/index.html"),
           controls: resolve(import.meta.dirname, "panels/controls/index.html"),
+          reader: resolve(import.meta.dirname, "panels/reader/index.html"),
           agent: resolve(import.meta.dirname, "src/agent/entry.ts")
         },
         output: {

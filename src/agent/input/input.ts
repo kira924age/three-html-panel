@@ -13,6 +13,9 @@
 //   selecting text by dragging, double click (word) and triple click (line)
 // - click and dblclick, only when the pointer did not move in between
 // - wheel scrolling, and text editing in <input>/<textarea> (editing.ts)
+// - selecting the page's text by dragging, and editing contenteditable
+//   elements (selection.ts, contenteditable.ts)
+// - the list of a drop-down <select> (select-popup.ts)
 // - scrolling by dragging a finger or a VR controller, as touch does (pan.ts)
 // - scrollbars: dragging the thumb, paging by pressing (and holding) the
 //   track (the scrollbars in the image are the agent's own, see scrollbars.ts)
@@ -21,10 +24,14 @@
 // the page's realm like events the browser would dispatch there.
 
 import { caretAt, indexFromPoint, isTextField, revealIndex, verticalIndex, type Composition, type TextField } from "./caret"
+import { contentAction } from "./contenteditable"
 import { editAction, lineEnd, lineStart, wordAt } from "./editing"
 import { EditHistory, type FieldState } from "./history"
 import { PAN_START_DISTANCE, panAxes, type PanAxes } from "./pan"
 import { contains, hitBox, maxScroll, scrollbarAt, scrollbarsOf, thumbTravel, type Axis, type Scrollbar } from "./scrollbars"
+import { SelectPopup, adjacentOption, chooseOption, isDropDown, type PopupView } from "./select-popup"
+import { blockAround, comparePoints, editingHostOf, pointAt, selectedRange, selectedText, wordAround, type Point } from "./selection"
+import { MAX_TEXT_LENGTH } from "../../protocol"
 import type { FrameWindow, PanelInput, PointerInput } from "../../types"
 
 const POINTER_ID = 1
@@ -42,7 +49,10 @@ const PAGE_REPEAT_INTERVAL_MS = 60
 const APPLE_PLATFORM = /mac|iphone|ipad|ipod/i
 
 const FOCUSABLE_SELECTOR =
-  'input, textarea, select, button, a[href], [tabindex], [contenteditable=""], [contenteditable="true"]'
+  'input, textarea, select, button, a[href], [tabindex], [contenteditable=""], [contenteditable="true"], [contenteditable="plaintext-only"]'
+
+/** A focused element that is a contenteditable element's root (its editing host). */
+const isEditingHost = (element: Element | null): element is HTMLElement => element !== null && editingHostOf(element) === element
 
 function ancestors(element: Element | null): Element[] {
   const chain: Element[] = []
@@ -141,6 +151,11 @@ export class VirtualFocus {
     }
     // A blur handler may have moved focus somewhere else already.
     if (element && this.element === element) {
+      // An editable that gets focus gets the caret too, at its start, unless it has it already.
+      if (isEditingHost(element)) {
+        const selection = this.window.getSelection()
+        if (selection && !(selection.rangeCount > 0 && element.contains(selection.anchorNode))) selection.collapse(element, 0)
+      }
       element.dispatchEvent(new FocusEvent("focus", { relatedTarget: previous }))
       element.dispatchEvent(new FocusEvent("focusin", { bubbles: true, composed: true, relatedTarget: previous }))
     }
@@ -179,6 +194,8 @@ interface Press {
    * press ends without moving.
    */
   deferred: { detail: number; shiftKey: boolean } | null
+  /** The press opened a <select>'s list: releasing it over an option after dragging there chooses it. */
+  openedPopup?: boolean
 }
 
 /**
@@ -207,8 +224,21 @@ export class InputSynthesizer {
   private pointer: { x: number; y: number } | null = null
   /** Text being selected by dragging: the field, and the range the press selected (a word on a double press). */
   private textDrag: { field: TextField; unit: "char" | "word" | "line"; start: number; end: number } | null = null
-  /** Text being composed with the host's IME in the focused field (not in its value yet). */
-  private composing: { field: TextField; composition: Composition } | null = null
+  /** The page's text being selected by dragging: the range the press selected, and by which unit it grows. */
+  private documentDrag: { unit: "char" | "word" | "line"; start: Point; end: Point } | null = null
+  /** Text being composed with the host's IME in the focused field or editable (not in it yet). */
+  private composing: { field: Element; composition: Composition } | null = null
+  /** The open list of a drop-down <select>, and whether a press began in it. */
+  private popup: SelectPopup | null = null
+  private popupPress = false
+  /**
+   * The page's selection as the user's last press, drag or key left it. A
+   * selection the page's own script makes is not the user's: it does not take
+   * the keys, and it stays when the host takes them back.
+   */
+  private userSelection: { anchor: Node | null; anchorOffset: number; focus: Node | null; focusOffset: number } | null = null
+  /** Set while execCommand() runs: its own beforeinput (WebKit sends one) is not the page's to see twice. */
+  private runningCommand = false
   private readonly history = new EditHistory()
   /** The horizontal position Up/Down keep to, while they keep moving the caret. */
   private goal: { field: TextField; index: number; x: number } | null = null
@@ -236,6 +266,14 @@ export class InputSynthesizer {
     this.window = document.defaultView as FrameWindow
     this.patchPointerCapture()
     this.focus = new VirtualFocus(document, options.onChange)
+    // Added before the page's scripts run, so it comes before their listeners.
+    this.window.addEventListener(
+      "beforeinput",
+      event => {
+        if (this.runningCommand) event.stopImmediatePropagation()
+      },
+      true
+    )
   }
 
   handle(input: PanelInput): void {
@@ -269,14 +307,22 @@ export class InputSynthesizer {
         break
       case "composition": {
         const field = this.focused
-        this.composing =
-          input.text !== "" && isTextField(field) ? { field, composition: { text: input.text, cursor: input.cursor } } : null
+        const editable = isTextField(field) || isEditingHost(field)
+        this.composing = input.text !== "" && field && editable ? { field, composition: { text: input.text, cursor: input.cursor } } : null
         break
       }
       case "blur":
+        // The host took the keys back: nothing in the page keeps them, nor a selection the user made.
         this.focus.set(null)
+        if (this.isUserSelection()) this.window.getSelection()?.removeAllRanges()
+        this.userSelection = null
         break
     }
+    // Whatever the selection is right after the user's input is theirs (the page's
+    // handlers for it included, such as selecting a code block on a click).
+    if (input.type !== "blur" && (input.type !== "pointer" || input.kind !== "move" || this.press)) this.rememberSelection()
+    // The list closes when its <select> loses focus (or leaves the page).
+    if (this.popup && (this.focused !== this.popup.select || !this.popup.select.isConnected)) this.popup = null
     this.options.onChange()
   }
 
@@ -291,9 +337,49 @@ export class InputSynthesizer {
    */
   get selectedText(): string {
     const field = this.focused
-    if (!isTextField(field) || (field.tagName === "INPUT" && (field as HTMLInputElement).type === "password")) return ""
+    if (!isTextField(field)) {
+      const range = selectedRange(this.window)
+      return range ? selectedText(this.window, range, MAX_TEXT_LENGTH) : ""
+    }
+    if (field.tagName === "INPUT" && (field as HTMLInputElement).type === "password") return ""
     const { selectionStart, selectionEnd } = field
     return selectionStart === null || selectionEnd === null ? "" : field.value.slice(selectionStart, selectionEnd)
+  }
+
+  /** Whether some of the page's text is selected (outside text fields): the keys go to the page, to copy it. */
+  get hasSelection(): boolean {
+    return !isTextField(this.focused) && selectedRange(this.window) !== null && this.isUserSelection()
+  }
+
+  private rememberSelection(): void {
+    const selection = this.window.getSelection()
+    this.userSelection = selection
+      ? {
+          anchor: selection.anchorNode,
+          anchorOffset: selection.anchorOffset,
+          focus: selection.focusNode,
+          focusOffset: selection.focusOffset
+        }
+      : null
+  }
+
+  /** Whether the page's selection is still the one the user's input left. */
+  private isUserSelection(): boolean {
+    const selection = this.window.getSelection()
+    const user = this.userSelection
+    return (
+      selection !== null &&
+      user !== null &&
+      selection.anchorNode === user.anchor &&
+      selection.anchorOffset === user.anchorOffset &&
+      selection.focusNode === user.focus &&
+      selection.focusOffset === user.focusOffset
+    )
+  }
+
+  /** The open list of a <select>, to draw. */
+  get popupView(): PopupView | null {
+    return this.popup?.view ?? null
   }
 
   /** What is being composed in the focused field, if anything. Ends when focus moves on. */
@@ -309,8 +395,9 @@ export class InputSynthesizer {
    */
   get cursor(): string {
     if (this.scrollbarPress || this.hoveredScrollbar) return "default"
+    if (this.popup && this.pointer && (this.popupPress || this.popup.contains(this.pointer.x, this.pointer.y))) return "default"
     // While selecting text, the text cursor stays wherever the pointer goes.
-    if (this.textDrag) return "text"
+    if (this.textDrag || this.documentDrag) return "text"
     const target = this.captureTarget?.isConnected ? this.captureTarget : this.hoverTarget
     if (!target?.isConnected) return ""
     // The computed value lists url() images before a keyword to fall back on; only the keyword is used.
@@ -392,18 +479,73 @@ export class InputSynthesizer {
 
   /** Focuses what a press landed on, the way mousedown does. `count` is 2 for a double press, and so on. */
   private focusAt(target: Element, x: number, y: number, count: number, shiftKey: boolean): void {
+    // Anywhere in an editable (a link in it too), the editable is what gets focus.
+    const host = editingHostOf(target)
     // Pressing a <label> focuses its control.
-    const focusable = target.closest(FOCUSABLE_SELECTOR) ?? target.closest("label")?.control ?? null
+    const focusable = host ?? target.closest(FOCUSABLE_SELECTOR) ?? target.closest("label")?.control ?? null
     if (focusable && this.focus.isFocusable(focusable)) {
       const wasFocused = this.focus.current === focusable
       this.focus.set(focusable)
       // Untrusted mousedown does not move the caret; place it where the press was
       // (unless the press was on a label, which only focuses the field).
       if (isTextField(focusable) && focusable.contains(target)) {
+        // The selection moves into the field.
+        this.window.getSelection()?.removeAllRanges()
         this.pressText(focusable, x, y, count, shiftKey && wasFocused)
+      } else if (focusable === host) {
+        this.pressDocument(x, y, count, shiftKey && wasFocused)
       }
     } else {
       this.focus.set(null)
+      this.pressDocument(x, y, count, shiftKey)
+    }
+  }
+
+  /**
+   * A press on the page's text (or in an editable): places the caret (a
+   * collapsed selection), or selects a word (double) or a block (triple), or
+   * extends the selection (Shift). Dragging then extends it.
+   */
+  private pressDocument(x: number, y: number, count: number, extend: boolean): void {
+    const selection = this.window.getSelection()
+    if (!selection) return
+    const point = pointAt(this.document, x, y)
+    if (!point) {
+      // Nothing to select there (or user-select: none): a press elsewhere still drops the selection.
+      if (!extend) selection.removeAllRanges()
+      return
+    }
+    let start = point
+    let end = point
+    let unit: "char" | "word" | "line" = "char"
+    if (extend && selection.anchorNode) {
+      start = end = { node: selection.anchorNode, offset: selection.anchorOffset }
+    } else if (count === 2) {
+      ;[start, end] = wordAround(point)
+      unit = "word"
+    } else if (count >= 3) {
+      ;[start, end] = blockAround(point)
+      unit = "line"
+    }
+    this.documentDrag = { unit, start, end }
+    if (extend) this.dragDocument(x, y)
+    else selection.setBaseAndExtent(start.node, start.offset, end.node, end.offset)
+  }
+
+  /** Extends the page's selection being dragged to the point, by the unit the press chose. */
+  private dragDocument(x: number, y: number): void {
+    const { unit, start, end } = this.documentDrag!
+    const selection = this.window.getSelection()
+    const point = pointAt(this.document, x, y)
+    if (!selection || !point) return
+    // A selection begun in an editable stays in it.
+    const host = editingHostOf(start.node)
+    if (host && !host.contains(point.node)) return
+    const [from, to] = unit === "char" ? [point, point] : unit === "word" ? wordAround(point) : blockAround(point)
+    if (comparePoints(from, start) < 0) selection.setBaseAndExtent(end.node, end.offset, from.node, from.offset)
+    else {
+      const focus = comparePoints(to, end) < 0 ? end : to
+      selection.setBaseAndExtent(start.node, start.offset, focus.node, focus.offset)
     }
   }
 
@@ -532,6 +674,16 @@ export class InputSynthesizer {
     this.pointer = { x, y }
     this.pointerInput = input
     this.pan = null
+    // The list of a <select> is not the page either. A press elsewhere only closes it.
+    if (this.popup) {
+      if (this.popup.contains(x, y)) {
+        this.popupPress = true
+        this.popup.hover(x, y)
+      } else {
+        this.popup = null
+      }
+      return
+    }
     // Like a real scrollbar, pressing one is not a press on the page.
     const bar = scrollbarAt(this.document, x, y)
     if (bar) {
@@ -564,8 +716,13 @@ export class InputSynthesizer {
   }
 
   private mouseDown(target: Element, x: number, y: number, detail: number, shiftKey: boolean): void {
-    if (target.dispatchEvent(this.mouseEvent("mousedown", { ...this.pointerInit(x, y, 1), detail, shiftKey }))) {
-      this.focusAt(target, x, y, detail, shiftKey)
+    if (!target.dispatchEvent(this.mouseEvent("mousedown", { ...this.pointerInit(x, y, 1), detail, shiftKey }))) return
+    this.focusAt(target, x, y, detail, shiftKey)
+    // A press on a drop-down <select> opens its list (the page can prevent it by cancelling mousedown).
+    const select = target.closest("select")
+    if (isDropDown(select) && this.focused === select) {
+      this.popup = new SelectPopup(select)
+      if (this.press) this.press.openedPopup = true
     }
   }
 
@@ -573,6 +730,13 @@ export class InputSynthesizer {
     this.pointer = { x, y }
     if (this.scrollbarPress) {
       this.dragScrollbar(x, y)
+      return
+    }
+    // Over the list of a <select> (or dragging in it), the page gets nothing.
+    if (this.popup && (this.popupPress || this.popup.contains(x, y))) {
+      this.popup.hover(x, y)
+      this.hoveredScrollbar = null
+      this.updateHover(null, x, y)
       return
     }
     // Once the page captures the pointer, the drag is the page's.
@@ -589,6 +753,7 @@ export class InputSynthesizer {
     destination.dispatchEvent(this.pointerEvent("pointermove", init))
     if (!press || (press.mouseEvents && !press.deferred)) destination.dispatchEvent(this.mouseEvent("mousemove", init))
     if (press && this.textDrag?.field.isConnected) this.dragText(x, y)
+    else if (press && this.documentDrag) this.dragDocument(x, y)
   }
 
   private pointerUp(x: number, y: number): void {
@@ -597,7 +762,13 @@ export class InputSynthesizer {
       window.clearTimeout(this.pageTimer)
       return
     }
+    if (this.popupPress) {
+      this.popupPress = false
+      this.chooseAt(x, y)
+      return
+    }
     this.textDrag = null
+    this.documentDrag = null
     const pan = this.pan
     this.pan = null
     // A drag that scrolled already ended for the page (pointercancel): no pointerup, no click.
@@ -607,8 +778,16 @@ export class InputSynthesizer {
       this.updateHover(this.hitTest(x, y), x, y)
       return
     }
-    const target = this.hitTest(x, y)
     const press = this.press
+    // Pressed on a <select> and released over its list: the release is the list's.
+    if (this.popup && press?.openedPopup && this.popup.contains(x, y)) {
+      this.press = null
+      this.active.clear()
+      // Dragged from the select to an option: that option is chosen, as in browsers.
+      this.chooseAt(x, y)
+      return
+    }
+    const target = this.hitTest(x, y)
     const destination = this.captureTarget?.isConnected ? this.captureTarget : target
     const init = this.pointerInit(x, y, 0)
     destination.dispatchEvent(this.pointerEvent("pointerup", init))
@@ -619,6 +798,7 @@ export class InputSynthesizer {
       mouseEvents = !press.moved
       if (mouseEvents) this.mouseDown(press.target, press.x, press.y, deferred.detail, deferred.shiftKey)
       this.textDrag = null
+      this.documentDrag = null
     }
     if (mouseEvents) destination.dispatchEvent(this.mouseEvent("mouseup", init))
     if (this.captureTarget) {
@@ -642,6 +822,78 @@ export class InputSynthesizer {
       this.lastClick = null
     } else {
       this.lastClick = { time: now, x, y }
+    }
+  }
+
+  // --- The list of a <select> ------------------------------------------------
+
+  /** Chooses the option at a point of the open list, and closes it; outside an option, it stays open. */
+  private chooseAt(x: number, y: number): void {
+    const popup = this.popup
+    const item = popup?.itemAt(x, y) ?? null
+    if (!popup || !popup.choosable(item)) return
+    this.popup = null
+    chooseOption(popup.select, popup.items[item]!.index)
+  }
+
+  /** The keys while the list is open, which go to it rather than the page. False to handle the key as usual. */
+  private popupKey(popup: SelectPopup, input: Extract<PanelInput, { type: "key" }>): boolean {
+    const many = popup.items.length
+    switch (input.key) {
+      case "ArrowDown":
+      case "ArrowUp":
+        popup.step(input.key === "ArrowDown" ? 1 : -1)
+        return true
+      case "PageDown":
+      case "PageUp":
+        popup.step(input.key === "PageDown" ? 10 : -10)
+        return true
+      case "Home":
+      case "End":
+        popup.step(input.key === "End" ? many : -many)
+        return true
+      case "Enter":
+      case " ":
+        this.popup = null
+        if (popup.choosable(popup.highlighted)) chooseOption(popup.select, popup.items[popup.highlighted]!.index)
+        return true
+      case "Escape":
+        this.popup = null
+        return true
+      case "Tab":
+        // Closes the list, and moves focus as usual.
+        this.popup = null
+        return false
+      default:
+        return true
+    }
+  }
+
+  /** The keys on a focused drop-down <select> whose list is closed. */
+  private selectKey(select: HTMLSelectElement, input: Extract<PanelInput, { type: "key" }>): void {
+    const { key, altKey, ctrlKey, metaKey } = input
+    if (key === " " || key === "F4" || (altKey && (key === "ArrowDown" || key === "ArrowUp"))) {
+      this.popup = new SelectPopup(select)
+      return
+    }
+    if (ctrlKey || metaKey || altKey) return
+    const direction = key === "ArrowDown" ? 1 : key === "ArrowUp" ? -1 : key === "Home" ? "first" : key === "End" ? "last" : null
+    if (direction === null) return
+    const index = adjacentOption(select, direction)
+    if (index !== null) chooseOption(select, index)
+  }
+
+  /** Typing on a focused <select> picks the next option that starts with the text. */
+  private selectTypeAhead(select: HTMLSelectElement, text: string): void {
+    const options = Array.from(select.options)
+    const prefix = text.toLowerCase()
+    for (let offset = 1; offset <= options.length; offset++) {
+      const index = (select.selectedIndex + offset + options.length) % options.length
+      const option = options[index]!
+      if (!option.disabled && !option.hidden && (option.label || option.text).trim().toLowerCase().startsWith(prefix)) {
+        chooseOption(select, index)
+        return
+      }
     }
   }
 
@@ -679,6 +931,7 @@ export class InputSynthesizer {
       // Browsers send pointercancel when a touch turns into a scroll.
       pan.active = true
       this.textDrag = null
+      this.documentDrag = null
       pan.target.dispatchEvent(this.pointerEvent("pointercancel", this.pointerInit(x, y, 0)))
     }
     pan.scroller.scrollBy(pan.axes.x ? pan.last.x - x : 0, pan.axes.y ? pan.last.y - y : 0)
@@ -749,6 +1002,14 @@ export class InputSynthesizer {
   }
 
   private wheel(x: number, y: number, deltaX: number, deltaY: number): void {
+    if (this.popup) {
+      if (this.popup.contains(x, y)) {
+        this.popup.scrollBy(deltaY)
+        return
+      }
+      // Scrolling the page moves the select away from its list: browsers close it.
+      this.popup = null
+    }
     const target = this.hitTest(x, y)
     const event = new this.window.WheelEvent("wheel", { ...this.pointerInit(x, y, 0), deltaX, deltaY, deltaMode: 0 })
     if (!target.dispatchEvent(event)) return
@@ -764,6 +1025,7 @@ export class InputSynthesizer {
   // --- Keyboard --------------------------------------------------------------
 
   private key(input: Extract<PanelInput, { type: "key" }>): void {
+    if (this.popup && this.popupKey(this.popup, input)) return
     const target = this.focused ?? this.document.body
     const init: KeyboardEventInit = {
       key: input.key,
@@ -790,8 +1052,17 @@ export class InputSynthesizer {
       this.moveFocus(input.shiftKey ? -1 : 1)
       return
     }
+    if (isDropDown(target)) {
+      this.selectKey(target, input)
+      return
+    }
+    if (isEditingHost(target)) {
+      this.contentKey(target, input)
+      return
+    }
     if (!isTextField(target)) {
       if (plain) this.activate(target, input.key)
+      this.documentKey(input)
       return
     }
 
@@ -813,6 +1084,84 @@ export class InputSynthesizer {
     else if (action.type === "edit") this.editText(field, action.text, action.start, action.end, action.inputType)
     else if (action.type === "undo" || action.type === "redo") this.undo(field, action.type)
     else field.form?.requestSubmit()
+  }
+
+  /** A key in a contenteditable element: the browser edits, at the page's selection (see contenteditable.ts). */
+  private contentKey(host: HTMLElement, input: Extract<PanelInput, { type: "key" }>): void {
+    const selection = this.window.getSelection()
+    if (!selection) return
+    this.keepSelectionIn(host, selection)
+    const action = contentAction(input, this.isApple(), selection.isCollapsed)
+    if (!action) return
+    switch (action.type) {
+      case "modify":
+        selection.modify(action.alter, action.direction, action.granularity)
+        return
+      case "collapse":
+        if (action.toStart) selection.collapseToStart()
+        else selection.collapseToEnd()
+        return
+      case "selectAll":
+        selection.selectAllChildren(host)
+        return
+      case "command": {
+        const { extend } = action
+        // Deleting a word or to the line's end: what goes is selected first.
+        const before = selection.getRangeAt(0).cloneRange()
+        if (extend && selection.isCollapsed) selection.modify("extend", extend.direction, extend.granularity)
+        if (!this.editContent(host, action.inputType, action.command)) {
+          selection.removeAllRanges()
+          selection.addRange(before)
+        }
+      }
+    }
+  }
+
+  /** Keys with no element focused: select all, and Shift with the arrows extends the page's selection. */
+  private documentKey(input: Extract<PanelInput, { type: "key" }>): void {
+    const selection = this.window.getSelection()
+    if (!selection) return
+    const action = contentAction(input, this.isApple(), selection.isCollapsed)
+    if (action?.type === "selectAll") selection.selectAllChildren(this.document.body)
+    else if (action?.type === "modify" && action.alter === "extend" && selection.rangeCount > 0) {
+      selection.modify("extend", action.direction, action.granularity)
+    }
+  }
+
+  /** Puts the selection at the end of an editable when it is not in it (the page moved it away). */
+  private keepSelectionIn(host: HTMLElement, selection: Selection): void {
+    if (selection.rangeCount > 0 && host.contains(selection.anchorNode) && host.contains(selection.focusNode)) return
+    selection.selectAllChildren(host)
+    selection.collapseToEnd()
+  }
+
+  /**
+   * Edits an editable at the selection with a browser command, after a
+   * beforeinput the page can cancel (the browser itself sends none with a
+   * command, except WebKit, whose own is held back). False if nothing was done.
+   */
+  private editContent(host: HTMLElement, inputType: string, command: string, data: string | null = null): boolean {
+    const { InputEvent } = this.window
+    const before = new InputEvent("beforeinput", { bubbles: true, cancelable: true, composed: true, inputType, data })
+    if (!host.dispatchEvent(before)) return false
+    this.runningCommand = true
+    let done = false
+    try {
+      done = this.document.execCommand(command, false, data ?? undefined)
+    } finally {
+      this.runningCommand = false
+    }
+    if (done || inputType !== "insertText" || data === null) return done
+    // No command (a browser without it): insert the text by hand.
+    const selection = this.window.getSelection()
+    if (!selection || selection.rangeCount === 0) return false
+    const range = selection.getRangeAt(0)
+    range.deleteContents()
+    const text = this.document.createTextNode(data)
+    range.insertNode(text)
+    selection.collapse(text, text.length)
+    host.dispatchEvent(new InputEvent("input", { bubbles: true, composed: true, inputType, data }))
+    return true
   }
 
   /** The default actions of keys on buttons, links, checkboxes and radio buttons. */
@@ -911,6 +1260,10 @@ export class InputSynthesizer {
   /** The host's field cut the selected text to the clipboard: take it out of the page's field too. */
   private cut(): void {
     const field = this.focused
+    if (isEditingHost(field)) {
+      if (selectedRange(this.window)) this.editContent(field, "deleteByCut", "delete")
+      return
+    }
     if (!isTextField(field)) return
     const { start, end } = this.stateOf(field)
     if (start !== end) this.editText(field, "", start, end, "deleteByCut")
@@ -934,12 +1287,27 @@ export class InputSynthesizer {
   private text(text: string): void {
     const target = this.focused
     // A space is typed, not a key, as far as the host can tell. On a checkbox or a
-    // button it is the key that toggles or presses it.
-    if (text === " " && target && !isTextField(target)) {
+    // button it is the key that toggles or presses it (and opens a <select>'s list).
+    if (text === " " && target && !isTextField(target) && !isEditingHost(target)) {
       this.key({ type: "key", key: " ", shiftKey: false, ctrlKey: false, altKey: false, metaKey: false })
       return
     }
-    if (!isTextField(target) || text === "") return
+    if (text === "") return
+    if (this.popup) {
+      this.popup.typeAhead(text)
+      return
+    }
+    if (isDropDown(target)) {
+      this.selectTypeAhead(target, text)
+      return
+    }
+    if (isEditingHost(target)) {
+      const selection = this.window.getSelection()
+      if (selection) this.keepSelectionIn(target, selection)
+      this.editContent(target, "insertText", "insertText", text)
+      return
+    }
+    if (!isTextField(target)) return
     const length = target.value.length
     this.editText(target, text, target.selectionStart ?? length, target.selectionEnd ?? length, "insertText")
   }
