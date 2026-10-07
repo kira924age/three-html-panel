@@ -181,6 +181,17 @@ interface Press {
   deferred: { detail: number; shiftKey: boolean } | null
 }
 
+/**
+ * Whether a press moved too far to be a click. A held-back finger or controller
+ * press is a tap for as long as it does not scroll: until it moves
+ * PAN_START_DISTANCE along an axis.
+ */
+function movedOff(press: Press, x: number, y: number): boolean {
+  const dx = Math.abs(x - press.x)
+  const dy = Math.abs(y - press.y)
+  return press.deferred ? Math.max(dx, dy) >= PAN_START_DISTANCE : Math.hypot(dx, dy) > CLICK_SLOP
+}
+
 export class InputSynthesizer {
   readonly hovered = new Set<Element>()
   readonly active = new Set<Element>()
@@ -567,7 +578,7 @@ export class InputSynthesizer {
     const target = this.hitTest(x, y)
     this.updateHover(target, x, y)
     const press = this.press
-    if (press && Math.hypot(x - press.x, y - press.y) > CLICK_SLOP) press.moved = true
+    if (press && movedOff(press, x, y)) press.moved = true
 
     const destination = this.captureTarget?.isConnected ? this.captureTarget : target
     const init = this.pointerInit(x, y, press ? 1 : 0)

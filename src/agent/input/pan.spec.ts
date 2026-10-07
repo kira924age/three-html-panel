@@ -146,6 +146,16 @@ describe("dragging to scroll", () => {
       expect(input.focused).toBe(button)
     })
 
+    it("takes a press that moved less than it takes to scroll for a tap", () => {
+      // 7px both ways: over the click slop, short of scrolling.
+      pointer("down", 60)
+      input.handle({ type: "pointer", kind: "move", x: 57, y: 53, input: "touch" })
+      input.handle({ type: "pointer", kind: "up", x: 57, y: 53, input: "touch" })
+      expect(box.scrollTop).toBe(0)
+      expect(log).toEqual(["pointerdown", "pointerup", "mousedown", "mouseup", "click"])
+      expect(input.focused).toBe(button)
+    })
+
     it("gives a drag the page captured no mouse events", () => {
       pointer("down", 60)
       button.setPointerCapture(1)
