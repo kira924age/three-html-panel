@@ -160,6 +160,8 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
   private readonly scratch = new Vector3()
   /** Until when the page may act on the user's behalf: shortly after the user acted on the panel. */
   private userActionUntil = -Infinity
+  /** A press on the panel is held (between down and up): dragging is acting on it too. */
+  private pressing = false
 
   constructor(options: HtmlPanelOptions) {
     const url = new URL(options.url, location.href)
@@ -369,8 +371,12 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
   pointer(kind: PointerKind, uv: Vector2 | null = null, shiftKey = false, input: PointerInput = "mouse"): void {
     if (kind === "down") this.lastInput = input
     if (kind === "down" || kind === "up") this.pointersSent++
-    // Only presses and releases (the user acting on this panel) open the window, not hovering.
-    if (kind === "down" || kind === "up") this.userActionUntil = performance.now() + USER_ACTION_MS
+    // Only presses, releases and drags (the user acting on this panel) open the
+    // window, not hovering: a slow drag selecting text may take the keys at any point.
+    const dragging = kind === "move" && this.pressing
+    if (kind === "down" || kind === "up" || dragging) this.userActionUntil = performance.now() + USER_ACTION_MS
+    if (kind === "down") this.pressing = true
+    else if (kind === "up") this.pressing = false
     const { x, y } = uv ? this.toPage(uv) : { x: 0, y: 0 }
     this.send({ type: "pointer", kind, x, y, shiftKey, input })
   }

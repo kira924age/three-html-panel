@@ -29,7 +29,7 @@ A panel is either trusted or not, and `HtmlPanel`'s `sandbox` option says which.
 **`sandbox: true`: for pages you do not trust.** The iframe gets `sandbox="allow-scripts allow-forms allow-popups"`, before its `src` is set, and never `allow-same-origin` (with it, a page on the host's origin could reach into the host and remove its own sandbox) nor `allow-popups-to-escape-sandbox`; there is no way to add them. The page then runs on an opaque origin (`self.origin` is `"null"`): it cannot read the host's cookies, storage, tokens or document, and its own `document.cookie` and `localStorage` throw `SecurityError`. It also cannot take the keyboard:
 
 - if the page moves real focus into its iframe (`window.focus()`, a label's click, …), the host gives it back at once to where it was, or else blurs the iframe;
-- if the page focuses one of its text fields (or its agent claims so), the host only moves the keyboard to the panel within a second of the user pressing that panel; otherwise it tells the page to let go.
+- if the page focuses one of its text fields (or its agent claims so), the host only moves the keyboard to the panel within a second of the user pressing, releasing or dragging in that panel (selecting text by dragging can take a while); otherwise it tells the page to let go.
 
 A page that keeps taking focus can still catch a key typed in the instant before focus is back (in our tests, with a page taking focus every 30 ms: about 1 key in 60 lost in Chrome, none in Playwright's Firefox and WebKit builds). The host cannot stop a page from trying.
 
