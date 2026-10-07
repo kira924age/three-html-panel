@@ -1,4 +1,5 @@
 export { HtmlPanel, type HtmlPanelOptions } from "./html-panel"
 export { PanelPointer } from "./panel-pointer"
 export { PanelKeyboard, getSharedKeyboard } from "./panel-keyboard"
+export { PROTOCOL_VERSION } from "./protocol"
 export type { Caret, PanelInput, PointerKind } from "./types"

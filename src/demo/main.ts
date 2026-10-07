@@ -18,7 +18,7 @@ import {
 } from "three"
 import { OrbitControls } from "three/addons/controls/OrbitControls.js"
 import { HtmlPanel, PanelPointer } from "../index"
-import { SCENE_CLICK, SCENE_CONTROL, type SceneControl } from "./scene-events"
+import { SCENE_CLICK, parseSceneControl, type SceneControl } from "./scene-events"
 
 const renderer = new WebGLRenderer({ antialias: true })
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2))
@@ -39,13 +39,25 @@ controls.target.set(0.15, 1.2, 0)
 controls.enableDamping = true
 controls.update()
 
-const pageUrl = (path: string) => new URL(path, location.href)
+// The panel pages are served from another origin in development (see
+// vite.panels.config.ts), and next to the scene in a build.
+const panelBase: string = import.meta.env.VITE_PANEL_ORIGIN || location.href
+const pageUrl = (path: string) => new URL(path, panelBase)
 
 const notes = new HtmlPanel({ url: pageUrl("panels/notes/"), width: 960, height: 640, size: 1.6 })
 notes.position.set(-0.75, 1.45, 0)
 notes.rotation.y = 0.3
 
-const sceneControls = new HtmlPanel({ url: pageUrl("panels/controls/"), width: 480, height: 640, size: 1.0 })
+const sceneControls = new HtmlPanel({
+  url: pageUrl("panels/controls/"),
+  width: 480,
+  height: 640,
+  size: 1.0,
+  onMessage: data => {
+    const control = parseSceneControl(data)
+    if (control) applyControl(control)
+  }
+})
 sceneControls.position.set(1.15, 1.4, 0.1)
 sceneControls.rotation.y = -0.5
 
@@ -66,13 +78,12 @@ let spin = true
 
 const caption = document.querySelector<HTMLElement>("#caption")!
 
-addEventListener(SCENE_CONTROL, event => {
-  const control = (event as CustomEvent<SceneControl>).detail
+function applyControl(control: SceneControl): void {
   if (control.shape) object.geometry = geometries[control.shape]
   if (control.color) object.material.color.set(control.color)
   if (control.spin !== undefined) spin = control.spin
   if (control.caption !== undefined) caption.textContent = control.caption
-})
+}
 
 // Clicking the object tells the controls page.
 const raycaster = new Raycaster()
@@ -84,7 +95,7 @@ renderer.domElement.addEventListener("click", event => {
   )
   raycaster.setFromCamera(ndc, camera)
   if (raycaster.intersectObject(object).length > 0) {
-    sceneControls.iframe.contentWindow?.dispatchEvent(new CustomEvent(SCENE_CLICK))
+    sceneControls.postMessage(SCENE_CLICK)
   }
 })
 

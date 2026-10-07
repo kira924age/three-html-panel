@@ -2,7 +2,7 @@
   "name": "three-html-panel",
   "version": "0.0.0",
   "private": true,
-  "description": "Render sandboxed web pages as interactive panels in a three.js scene",
+  "description": "Render web pages, from any origin, as interactive panels in a three.js scene",
   "license": "MIT",
   "type": "module",
   "packageManager": "pnpm@11.23.0",

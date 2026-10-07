@@ -1,14 +1,15 @@
-// Watches a page loaded in the panel's iframe and turns it into SVG frames
-// whenever it changes. Also routes input into the page and reports whether a
-// text field has focus, and where its caret is.
+// Watches the panel page and turns it into SVG frames whenever it changes.
+// Also routes input into the page and reports whether a text field has focus,
+// and where its caret is.
 //
-// The page is same-origin, so all of this runs in the host and reads the
-// page's document directly. One PageCapture lives as long as one document; a
-// navigation in the iframe replaces it.
+// This runs inside the page, as part of the agent, and lives as long as the
+// document. It installs the page's virtual focus and pointer capture as soon
+// as it is created, but only takes snapshots once the agent is connected to
+// the host (start()).
 
 import { isTextField, measureCaret } from "../input/caret"
 import { InputSynthesizer } from "../input/input"
-import type { Caret, FrameWindow, PanelInput } from "../types"
+import type { Caret, Frame, FrameWindow, PanelInput } from "../../types"
 import { DocumentCss } from "./css"
 import { ImageInliner } from "./images"
 import { RenderPacer } from "./pacer"
@@ -31,12 +32,6 @@ const INVALIDATING_EVENTS = [
   "resize"
 ]
 
-export interface Frame {
-  svg: string
-  width: number
-  height: number
-}
-
 export interface PageCaptureOptions {
   onFrame: (frame: Frame) => void
   onEditing: (editing: boolean, caret: Caret | null) => void
@@ -53,6 +48,7 @@ export class PageCapture {
   private timer = 0
   private notBefore = 0
   private lastEditing = ""
+  private started = false
   private disposed = false
 
   constructor(
@@ -74,6 +70,16 @@ export class PageCapture {
       this.css.invalidate()
       this.invalidate()
     })
+  }
+
+  /**
+   * Starts sending frames, or sends everything again: a frame and the editing
+   * state, as if seen for the first time (after a new connection).
+   */
+  start(): void {
+    this.started = true
+    this.lastEditing = ""
+    this.css.invalidate()
     this.invalidate()
   }
 
@@ -106,7 +112,7 @@ export class PageCapture {
   // iframe they consider not on screen (this one is transparent and behind the
   // host's canvas). Taking the snapshot forces style and layout anyway.
   private schedule(): void {
-    if (this.disposed || this.timer) return
+    if (!this.started || this.disposed || this.timer) return
     const wait = Math.max(0, this.notBefore - performance.now())
     this.timer = window.setTimeout(() => {
       this.timer = 0

@@ -8,9 +8,10 @@
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "noEmit": true,
+    "allowImportingTsExtensions": true,
     "isolatedModules": true,
     "verbatimModuleSyntax": true,
     "skipLibCheck": true
   },
-  "include": ["src", "panels", "vite.config.ts"]
+  "include": ["src", "panels", "vite.config.ts", "vite.panels.config.ts"]
 }
