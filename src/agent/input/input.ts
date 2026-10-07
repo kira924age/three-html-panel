@@ -1,5 +1,5 @@
-// Turns the host's pointer, wheel and keyboard input into DOM events in the
-// panel page.
+// Turns the host's pointer, wheel and keyboard input, received by the agent,
+// into DOM events in the panel page.
 //
 // The panel iframe never receives real input (the host keeps it at
 // pointer-events: none and does not let it hold focus), so everything here is
@@ -17,7 +17,7 @@
 // the page's realm like events the browser would dispatch there.
 
 import { indexFromPoint, isTextField, type TextField } from "./caret"
-import type { FrameWindow, PanelInput } from "../types"
+import type { FrameWindow, PanelInput } from "../../types"
 
 const POINTER_ID = 1
 /** Movement (CSS px) after which a press is a drag, not a click. */
@@ -40,7 +40,7 @@ function commonAncestor(a: Element, b: Element): Element | null {
 }
 
 /**
- * Focus inside the panel, kept by the host instead of the browser.
+ * Focus inside the panel, kept by the agent instead of the browser.
  *
  * Real focus cannot work here. The host keeps keyboard focus for itself, and
  * when focus moves out of an iframe, browsers blur the element focused inside
@@ -72,8 +72,8 @@ export class VirtualFocus {
       if (self.element === this) self.set(null)
     }
 
-    // The page's scripts ran before this was installed and may have focused
-    // something for real already: take it over.
+    // The agent should run before the page's scripts. If it was loaded later,
+    // something may have been focused for real already: take it over.
     const realActive = document.activeElement
     Object.defineProperty(document, "activeElement", {
       configurable: true,

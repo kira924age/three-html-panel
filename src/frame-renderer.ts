@@ -4,7 +4,7 @@
 // it, which is the only way to rasterize HTML into a canvas today.
 
 import { CanvasTexture, LinearFilter, LinearMipmapLinearFilter, SRGBColorSpace } from "three"
-import type { Frame } from "./capture/page-capture"
+import type { Frame } from "./types"
 
 export interface FrameRendererOptions {
   /** The page size in CSS pixels. Frames of any other size are dropped. */

@@ -5,7 +5,7 @@
 // <div> that copies the field's text styles and contains the text, split so
 // the position of each character can be read from the layout.
 
-import type { Caret, FrameWindow } from "../types"
+import type { Caret, FrameWindow } from "../../types"
 
 export type TextField = HTMLInputElement | HTMLTextAreaElement
 

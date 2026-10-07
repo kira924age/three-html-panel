@@ -13,7 +13,7 @@
 // - Animations restart from 0s every time the image is decoded, so they are
 //   stopped here. The snapshot bakes their current values into inline styles.
 
-import type { FrameWindow } from "../types"
+import type { FrameWindow } from "../../types"
 
 export const HOVER_ATTRIBUTE = "data-thp-hover"
 export const ACTIVE_ATTRIBUTE = "data-thp-active"

@@ -13,10 +13,9 @@
 // The copy is built in an inert document, so <img> elements in it never start
 // loading anything.
 //
-// The live elements belong to the iframe's realm; the copies belong to the
-// host's. Type checks on live elements therefore use the iframe's window.
+// Type checks on live elements use the page's window (see FrameWindow).
 
-import type { FrameWindow } from "../types"
+import type { FrameWindow } from "../../types"
 import { ACTIVE_ATTRIBUTE, FOCUS_ATTRIBUTE, FOCUS_WITHIN_ATTRIBUTE, HOVER_ATTRIBUTE } from "./css"
 
 /** Elements that do not contribute to what is on screen. <style> is collected separately. */
@@ -63,7 +62,7 @@ function collectAnimatedProperties(document: Document, window: FrameWindow): Map
 }
 
 class Snapshotter {
-  // Created in the host, so the copies are host elements that never load anything.
+  // A separate document without a browsing context, so the copies never load anything.
   private readonly inert = globalThis.document.implementation.createHTMLDocument("")
   private readonly window: FrameWindow
   private readonly animated: Map<Element, Set<string>>

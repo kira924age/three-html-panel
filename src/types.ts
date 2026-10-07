@@ -1,7 +1,7 @@
 /**
- * The window of the panel's iframe. It is a separate realm: its elements are
- * instances of its own HTMLElement, CSSStyleRule and so on, not the host's, so
- * type checks and constructors must come from this object.
+ * The window of a document the agent works on. Type checks and constructors
+ * come from this object rather than the globals, so the code would also work
+ * on a document from another realm (an iframe's).
  */
 export type FrameWindow = Window & typeof globalThis
 
@@ -29,4 +29,11 @@ export interface Caret {
   y: number
   height: number
   color: string
+}
+
+/** A snapshot of the panel page as SVG, sized in CSS pixels. */
+export interface Frame {
+  svg: string
+  width: number
+  height: number
 }

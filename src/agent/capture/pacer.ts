@@ -1,7 +1,7 @@
 // Decides how long to wait between frames.
 //
-// Turning the page into an SVG and decoding it on the host takes time on the
-// main thread. Waiting a multiple of the time the last frame took keeps the
+// Turning the page into an SVG takes time on the page's main thread, which a
+// same-site page shares with the host, and the host then decodes it. Waiting a multiple of the time the last frame took keeps the
 // share of time spent on panels roughly constant: a heavy page simply updates
 // less often instead of dragging the whole scene down.
 

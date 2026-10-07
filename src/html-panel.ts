@@ -1,22 +1,24 @@
 // A web page shown as an interactive panel in a three.js scene.
 //
-// The page is loaded into a same-origin iframe, which gives it its own
-// document, URL and globals: an existing app (a SPA with its own router and
-// CSS) can be placed in 3D without changes and without clashing with the host.
-// The host reads the iframe's document directly to capture it, and dispatches
-// events into it.
+// The page is loaded into an iframe, which gives it its own document, URL and
+// globals: an existing app (a SPA with its own router and CSS) can be placed in
+// 3D without clashing with the host. The page loads the agent (agent/entry.ts),
+// which captures it and replays input in it; the host only exchanges messages
+// with the agent (panel-connection.ts) and never reads the page's document, so
+// the page can be on another origin.
 //
-// Same-origin means the page runs with the host's privileges. Only show pages
-// you trust, from URLs you choose, never from user input or synced room state.
+// The iframe is not sandboxed. Only show pages you trust, from URLs you choose,
+// never from user input or synced room state.
 
 import { BackSide, DoubleSide, Mesh, MeshBasicMaterial, Plane, PlaneGeometry, Vector2, Vector3, type Ray } from "three"
-import { PageCapture } from "./capture/page-capture"
 import { FrameRenderer } from "./frame-renderer"
+import { PanelConnection } from "./panel-connection"
 import { getSharedKeyboard, type KeyboardTarget, type PanelKeyboard } from "./panel-keyboard"
-import type { Caret, PanelInput, PointerKind } from "./types"
+import { MAX_PAGE_LENGTH, type HostMessage } from "./protocol"
+import type { Caret, PointerKind } from "./types"
 
 export interface HtmlPanelOptions {
-  /** The page to show. It must be on the host's origin. */
+  /** The page to show. It must load the agent with this page's origin as its host origin. */
   url: string | URL
   /** The page's layout width in CSS pixels. */
   width?: number
@@ -31,6 +33,10 @@ export interface HtmlPanelOptions {
   /** Where the iframe lives in the host document. */
   container?: HTMLElement
   keyboard?: PanelKeyboard
+  /** How long to wait for the page's agent before giving up, in milliseconds. */
+  readyTimeout?: number
+  /** Data the page sent with `sendToHost()` (agent/page.ts). Check it before use. */
+  onMessage?: (data: unknown) => void
   onError?: (error: Error) => void
 }
 
@@ -38,6 +44,8 @@ const CARET_BLINK_MS = 530
 
 export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial> implements KeyboardTarget {
   readonly iframe = document.createElement("iframe")
+  /** The origin the page is expected on; messages from anywhere else are ignored. */
+  readonly origin: string
   readonly pageWidth: number
   readonly pageHeight: number
   readonly worldWidth: number
@@ -49,17 +57,22 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial> implements
   private readonly caret: Mesh<PlaneGeometry, MeshBasicMaterial>
   private readonly caretTimer: number
   private readonly onError: (error: Error) => void
-  private capture: PageCapture | null = null
+  private readonly connection: PanelConnection
   private editing = false
 
   constructor(options: HtmlPanelOptions) {
     const url = new URL(options.url, location.href)
-    if (url.origin !== location.origin) {
-      // A cross-origin document cannot be read, so it could not be captured.
-      throw new Error(`HtmlPanel only shows pages on ${location.origin}: ${url.href}`)
+    if (url.origin === "null") {
+      // data:, blob: and the like have no origin to check messages against.
+      throw new Error(`HtmlPanel needs a page with an origin: ${url.href}`)
     }
     const pageWidth = options.width ?? 800
     const pageHeight = options.height ?? 600
+    for (const length of [pageWidth, pageHeight]) {
+      if (!Number.isInteger(length) || length <= 0 || length > MAX_PAGE_LENGTH) {
+        throw new Error(`HtmlPanel page sizes must be whole numbers from 1 to ${MAX_PAGE_LENGTH}`)
+      }
+    }
     const size = options.size ?? 1
     const scale = size / Math.max(pageWidth, pageHeight)
     const renderer = new FrameRenderer({
@@ -73,6 +86,7 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial> implements
       new MeshBasicMaterial({ map: renderer.texture, toneMapped: false })
     )
     this.renderer = renderer
+    this.origin = url.origin
     this.pageWidth = pageWidth
     this.pageHeight = pageHeight
     this.worldWidth = pageWidth * scale
@@ -95,6 +109,22 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial> implements
       if (this.editing && this.caret.userData.hasCaret) this.caret.visible = !this.caret.visible
     }, CARET_BLINK_MS)
 
+    this.connection = new PanelConnection({
+      iframe: this.iframe,
+      origin: this.origin,
+      width: pageWidth,
+      height: pageHeight,
+      readyTimeout: options.readyTimeout,
+      onConnect: () => this.setEditing(false, null),
+      onFrame: frame => this.renderer.submit(frame),
+      onEditing: (editing, caret) => this.setEditing(editing, caret),
+      onMessage: data => options.onMessage?.(data),
+      onError: error => {
+        this.renderer.clear()
+        this.setEditing(false, null)
+        this.onError(error)
+      }
+    })
     this.openFrame(url, options.container ?? document.body)
   }
 
@@ -118,29 +148,9 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial> implements
       zIndex: "-1",
       colorScheme: "light"
     })
-    // Every document the iframe loads (the first one, a reload, a navigation)
-    // gets its own capture.
-    iframe.addEventListener("load", this.onFrameLoad)
     this.keyboard.register(iframe)
     iframe.src = url.href
     container.appendChild(iframe)
-  }
-
-  private readonly onFrameLoad = () => {
-    this.capture?.dispose()
-    this.capture = null
-    this.setEditing(false, null)
-    const document = this.iframe.contentDocument
-    if (!document) {
-      // Navigated to another origin: nothing can be read any more.
-      this.renderer.clear()
-      this.onError(new Error("the panel navigated to a page that cannot be read"))
-      return
-    }
-    this.capture = new PageCapture(document, {
-      onFrame: frame => this.renderer.submit(frame),
-      onEditing: (editing, caret) => this.setEditing(editing, caret)
-    })
   }
 
   private setEditing(editing: boolean, caret: Caret | null): void {
@@ -165,8 +175,17 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial> implements
     this.caret.material.color.setStyle(caret.color)
   }
 
-  private send(input: PanelInput): void {
-    this.capture?.handle(input)
+  private send(message: HostMessage): void {
+    this.connection.send(message)
+  }
+
+  /**
+   * Sends data to the page, which receives it with `onHostMessage()`
+   * (agent/page.ts). It must be structured-cloneable. Dropped while no agent
+   * is connected.
+   */
+  postMessage(data: unknown): void {
+    this.send({ type: "app", data })
   }
 
   // --- Input -----------------------------------------------------------------
@@ -221,9 +240,8 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial> implements
   }
 
   dispose(): void {
-    this.iframe.removeEventListener("load", this.onFrameLoad)
     window.clearInterval(this.caretTimer)
-    this.capture?.dispose()
+    this.connection.dispose()
     this.keyboard.release(this)
     this.keyboard.unregister(this.iframe)
     this.iframe.remove()

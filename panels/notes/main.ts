@@ -130,9 +130,9 @@ app.querySelector(".help-button")!.addEventListener("click", () => {
   help.innerHTML = `
     <h2>What you are looking at</h2>
     <ul>
-      <li>This page runs in an iframe on the same origin as the 3D scene.</li>
-      <li>The scene copies its DOM into an SVG and draws that into a texture.</li>
-      <li>Your clicks and keys are synthesized as DOM events inside the page.</li>
+      <li>This page runs in an iframe on another origin than the 3D scene.</li>
+      <li>A script in the page copies its DOM into an SVG and posts it to the scene, which draws it into a texture.</li>
+      <li>Your clicks and keys are posted to the page and synthesized as DOM events there.</li>
     </ul>
   `
   stage.appendChild(help)
