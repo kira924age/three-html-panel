@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { MAX_PAGE_LENGTH, MAX_SVG_LENGTH, parseHostMessage, parsePageMessage, parseReady } from "./protocol"
+import { MAX_PAGE_LENGTH, MAX_SVG_LENGTH, parseHostMessage, parseOpenableUrl, parsePageMessage, parseReady } from "./protocol"
 
 const limits = { width: 800, height: 600, lastSeq: 4 }
 const frame = (fields: Record<string, unknown> = {}) => ({
@@ -82,6 +82,17 @@ describe("parsePageMessage", () => {
     for (const bad of [null, undefined, "frame", 1, [], { type: "unknown" }, { type: "ready", version: 1 }]) {
       expect(parsePageMessage(bad, limits)).toBeNull()
     }
+  })
+})
+
+describe("parseOpenableUrl", () => {
+  it("accepts absolute http(s) URLs only", () => {
+    expect(parseOpenableUrl("https://example.com/a?b#c")).toBe("https://example.com/a?b#c")
+    expect(parseOpenableUrl("http://localhost:5174/")).toBe("http://localhost:5174/")
+    for (const bad of ["javascript:alert(1)", "data:text/html,<p>", "file:///etc/passwd", "/relative", "", 1, null]) {
+      expect(parseOpenableUrl(bad)).toBeNull()
+    }
+    expect(parseOpenableUrl("https://example.com/" + "x".repeat(9000))).toBeNull()
   })
 })
 

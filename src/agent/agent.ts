@@ -12,6 +12,7 @@
 import { PROTOCOL_VERSION, parseConnect, parseHostMessage, type PageMessage, type ReadyMessage } from "../protocol"
 import { emulateAnimationFrames } from "./animation-frames"
 import { PageCapture } from "./capture/page-capture"
+import { interceptLinks } from "./links"
 import { HOST_MESSAGE_EVENT, PAGE_MESSAGE_EVENT } from "./page"
 
 export const HOST_ORIGIN_ATTRIBUTE = "data-host-origin"
@@ -46,6 +47,7 @@ export interface AgentOptions {
 
 export class PanelAgent {
   private readonly capture: PageCapture
+  private readonly stopLinks: () => void
   private port: MessagePort | null = null
   private seq = 0
   private disposed = false
@@ -57,6 +59,7 @@ export class PanelAgent {
   ) {
     // Before the page's scripts, like the capture's focus and pointer capture.
     emulateAnimationFrames(window as Window & typeof globalThis)
+    this.stopLinks = interceptLinks(window as Window & typeof globalThis, url => this.post({ type: "open", url }))
     this.capture = new PageCapture(window.document, {
       onFrame: frame => this.post({ type: "frame", seq: this.seq++, ...frame }),
       onEditing: (editing, caret, selectedText) => this.post({ type: "editing", editing, caret, selectedText }),
@@ -78,6 +81,7 @@ export class PanelAgent {
     this.window.removeEventListener("message", this.onWindowMessage)
     this.window.removeEventListener(PAGE_MESSAGE_EVENT, this.onPageMessage)
     this.capture.dispose()
+    this.stopLinks()
     this.closePort()
   }
 

@@ -1,36 +1,74 @@
 import { resolve } from "node:path"
 import { createServer, defineConfig, loadEnv, preview, type Plugin, type PreviewServer, type ViteDevServer } from "vite"
-import { AGENT_BUILD_FILE, injectPanelAgent } from "./vite.panels.config.ts"
+import { AGENT_BUILD_FILE, injectPanelAgent, panelServerConfig } from "./vite.panels.config.ts"
 
-/** Closes `other` before `server`, so that a restarted server does not find the other's port taken. */
-function closeWith(server: { close(): Promise<void> }, other: () => { close(): Promise<void> } | null): void {
+type PanelServer = ViteDevServer | PreviewServer
+
+/**
+ * The one panel server of this process. Vite reloads this file when it
+ * restarts the scene's server (a config or .env change; a branch switch makes
+ * several at once), so this lives on globalThis rather than in the module.
+ * Every start and stop waits for the one before: a new panel server starts only
+ * once the previous one has let go of the port.
+ */
+interface PanelSlot {
+  server: PanelServer | null
+  queue: Promise<unknown>
+}
+const slot: PanelSlot = ((globalThis as { [key: symbol]: PanelSlot })[Symbol.for("three-html-panel:panel-server")] ??= {
+  server: null,
+  queue: Promise.resolve()
+})
+
+function inTurn<T>(run: () => Promise<T>): Promise<T> {
+  const turn = slot.queue.then(run)
+  slot.queue = turn.catch(() => {})
+  return turn
+}
+
+/** Replaces the panel server with the one `start` creates. */
+function replacePanelServer(start: () => Promise<PanelServer>): Promise<PanelServer> {
+  return inTurn(async () => {
+    await slot.server?.close()
+    slot.server = null
+    slot.server = await start()
+    return slot.server
+  })
+}
+
+/** Stops the panel server along with `server` (for good, or before Vite restarts it). */
+function closePanelServerWith(server: { close(): Promise<void> }, panels: PanelServer): void {
   const close = server.close.bind(server)
   server.close = async () => {
-    await other()?.close()
+    await inTurn(async () => {
+      // A restart may have replaced it already; then that one stays.
+      if (slot.server !== panels) return
+      await panels.close()
+      slot.server = null
+    })
     return close()
   }
 }
 
 /** Starts the panel pages' server (another origin) together with this one, for `pnpm dev` and `pnpm preview`. */
 function panelServer(): Plugin {
-  let panels: ViteDevServer | PreviewServer | null = null
-  const configFile = resolve(import.meta.dirname, "vite.panels.config.ts")
   return {
     name: "three-html-panel:panel-server",
     apply: "serve",
     async configureServer(server) {
-      const dev = await createServer({ configFile, mode: server.config.mode })
-      panels = dev
-      await dev.listen()
-      server.config.logger.info(`  panel pages: ${dev.resolvedUrls?.local[0] ?? "?"}panels/`)
-      // Vite closes the server before restarting it (after a config change).
-      closeWith(server, () => panels)
+      const panels = await replacePanelServer(async () => {
+        const dev = await createServer(panelServerConfig(server.config.mode))
+        await dev.listen()
+        return dev
+      })
+      server.config.logger.info(`  panel pages: ${panels.resolvedUrls?.local[0] ?? "?"}panels/`)
+      closePanelServerWith(server, panels)
     },
     async configurePreviewServer(server) {
       // The build's panel pages, from the same dist/ but another origin.
-      panels = await preview({ configFile, mode: server.config.mode })
+      const panels = await replacePanelServer(() => preview(panelServerConfig(server.config.mode)))
       server.config.logger.info(`  panel pages: ${panels.resolvedUrls?.local[0] ?? "?"}panels/`)
-      closeWith(server, () => panels)
+      closePanelServerWith(server, panels)
     }
   }
 }

@@ -13,6 +13,7 @@ let options: {
   onFrame: Mock
   onEditing: Mock
   onCursor: Mock
+  onOpen: Mock
   onMessage: Mock
   onError: Mock
 }
@@ -56,6 +57,7 @@ beforeEach(() => {
     onFrame: vi.fn(),
     onEditing: vi.fn(),
     onCursor: vi.fn(),
+    onOpen: vi.fn(),
     onMessage: vi.fn(),
     onError: vi.fn()
   }
@@ -171,6 +173,8 @@ describe("port messages", () => {
     port.postMessage({ type: "editing", editing: true, caret: { x: 1, y: 2, height: 16, color: "red" }, selectedText: "" })
     port.postMessage({ type: "cursor", cursor: "pointer" })
     port.postMessage({ type: "cursor", cursor: "url(https://evil.example/c.png), auto" })
+    port.postMessage({ type: "open", url: "https://example.com/page" })
+    port.postMessage({ type: "open", url: "javascript:alert(1)" })
     port.postMessage({ type: "app", data: { hello: 1 } })
     port.postMessage({ type: "nonsense" })
     port.postMessage(frame(3))
@@ -182,6 +186,7 @@ describe("port messages", () => {
     ])
     expect(options.onEditing.mock.calls).toEqual([[true, { x: 1, y: 2, height: 16, color: "red" }, ""]])
     expect(options.onCursor.mock.calls).toEqual([["pointer"]])
+    expect(options.onOpen.mock.calls).toEqual([["https://example.com/page"]])
     expect(options.onMessage.mock.calls).toEqual([[{ hello: 1 }]])
   })
 

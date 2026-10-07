@@ -57,6 +57,12 @@ export interface HtmlPanelOptions {
   keyboard?: PanelKeyboard
   /** How long to wait for the page's agent before giving up, in milliseconds. */
   readyTimeout?: number
+  /**
+   * Opens a link the user followed in the page (or a URL the page passed to
+   * window.open()): an http(s) URL, only right after the user pressed the
+   * panel or a key in it. By default, in a new tab of the host's browser.
+   */
+  onLink?: (url: URL, panel: HtmlPanel) => void
   /** Data the page sent with `sendToHost()` (agent/page.ts). Check it before use. */
   onMessage?: (data: unknown) => void
   onError?: (error: Error) => void
@@ -72,10 +78,16 @@ const CARET_BLINK_MS = 530
 export const PANEL_SANDBOX = "allow-scripts allow-forms allow-popups"
 
 /**
- * How long after the user presses a sandboxed panel its page may take the
- * keyboard (by focusing a text field, which the agent reports as editing).
+ * How long after the user acts on a panel (presses it, or a key while it has the
+ * keyboard) its page may take the keyboard (sandboxed pages: by focusing a text
+ * field, which the agent reports as editing) or open a link.
  */
-const KEYBOARD_GRANT_MS = 1000
+const USER_ACTION_MS = 1000
+
+/** Opens a link in a new tab, without giving the new page a way back to the host. */
+function openInNewTab(url: URL): void {
+  window.open(url.href, "_blank", "noopener,noreferrer")
+}
 
 const RGBA = /^rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)\s*(?:[,/]\s*([\d.]+)(%?)\s*)?\)$/
 
@@ -121,8 +133,8 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
   /** Where the IME was last placed, to place it again only when it moves. */
   private imePlacement = ""
   private readonly scratch = new Vector3()
-  /** Until when a sandboxed page may take the keyboard: shortly after the user pressed the panel. */
-  private keyboardGrantUntil = -Infinity
+  /** Until when the page may act on the user's behalf: shortly after the user acted on the panel. */
+  private userActionUntil = -Infinity
 
   constructor(options: HtmlPanelOptions) {
     const url = new URL(options.url, location.href)
@@ -194,6 +206,11 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
         this.setEditing(editing, caret)
       },
       onCursor: cursor => this.setCursor(cursor),
+      onOpen: url => {
+        // Not on its own: a page cannot open tabs, sandboxed or not, unless the user just acted on it.
+        if (performance.now() > this.userActionUntil) return
+        ;(options.onLink ?? openInNewTab)(new URL(url), this)
+      },
       onMessage: data => options.onMessage?.(data),
       onError: error => {
         this.renderer.clear()
@@ -316,12 +333,12 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
    * field pressed, or one a button press opens), or while it has the keyboard.
    */
   private mayTakeKeyboard(): boolean {
-    return !this.sandboxed || this.keyboard.isTarget(this) || performance.now() <= this.keyboardGrantUntil
+    return !this.sandboxed || this.keyboard.isTarget(this) || performance.now() <= this.userActionUntil
   }
 
   pointer(kind: PointerKind, uv: Vector2 | null = null, shiftKey = false): void {
     // Only presses and releases (the user acting on this panel) open the window, not hovering.
-    if (kind === "down" || kind === "up") this.keyboardGrantUntil = performance.now() + KEYBOARD_GRANT_MS
+    if (kind === "down" || kind === "up") this.userActionUntil = performance.now() + USER_ACTION_MS
     const { x, y } = uv ? this.toPage(uv) : { x: 0, y: 0 }
     this.send({ type: "pointer", kind, x, y, shiftKey })
   }
@@ -331,6 +348,8 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
   }
 
   sendKey(event: KeyboardEvent): void {
+    // Enter on a focused link opens it.
+    this.userActionUntil = performance.now() + USER_ACTION_MS
     const { key, shiftKey, ctrlKey, altKey, metaKey } = event
     this.send({ type: "key", key, shiftKey, ctrlKey, altKey, metaKey })
   }

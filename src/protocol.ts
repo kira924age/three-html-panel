@@ -28,6 +28,18 @@ const MAX_KEY_LENGTH = 64
 /** The longest text sent either way: typed or pasted text, and a selection to copy. */
 export const MAX_TEXT_LENGTH = 64 * 1024
 const CURSOR_KEYWORD = /^[a-z][a-z-]{0,31}$/
+const MAX_URL_LENGTH = 8192
+
+/** `value` if it is an absolute http(s) URL, else null: no javascript:, data: or the like. */
+export function parseOpenableUrl(value: unknown): string | null {
+  if (typeof value !== "string" || value.length > MAX_URL_LENGTH) return null
+  try {
+    const url = new URL(value)
+    return url.protocol === "http:" || url.protocol === "https:" ? url.href : null
+  } catch {
+    return null
+  }
+}
 
 /** Posted by the agent to the parent window when it starts. */
 export interface ReadyMessage {
@@ -73,6 +85,12 @@ export interface CursorMessage {
   cursor: string
 }
 
+/** A link the user followed in the page, or a URL the page passed to window.open(), for the host to open. */
+export interface OpenMessage {
+  type: "open"
+  url: string
+}
+
 /** Data for the application on the other side; the panel does not look into it. */
 export interface AppMessage {
   type: "app"
@@ -80,7 +98,7 @@ export interface AppMessage {
 }
 
 /** From the page to the host, through the port. */
-export type PageMessage = FrameMessage | EditingMessage | CursorMessage | AppMessage | { type: "pong" }
+export type PageMessage = FrameMessage | EditingMessage | CursorMessage | OpenMessage | AppMessage | { type: "pong" }
 
 /** From the host to the page, through the port. */
 export type HostMessage = PanelInput | AppMessage | { type: "ping" }
@@ -143,6 +161,10 @@ export function parsePageMessage(data: unknown, limits: PageMessageLimits): Page
     }
     case "pong":
       return { type: "pong" }
+    case "open": {
+      const url = parseOpenableUrl(data.url)
+      return url ? { type: "open", url } : null
+    }
     case "cursor":
       return typeof data.cursor === "string" && CURSOR_KEYWORD.test(data.cursor)
         ? { type: "cursor", cursor: data.cursor }

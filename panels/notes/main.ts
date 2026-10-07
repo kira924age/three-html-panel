@@ -133,6 +133,7 @@ app.querySelector(".help-button")!.addEventListener("click", () => {
       <li>This page runs in an iframe on another origin than the 3D scene.</li>
       <li>A script in the page copies its DOM into an SVG and posts it to the scene, which draws it into a texture.</li>
       <li>Your clicks and keys are posted to the page and synthesized as DOM events there.</li>
+      <li>Links open in a new tab of the scene's browser: <a href="https://threejs.org/" target="_blank">three.js</a>.</li>
     </ul>
   `
   stage.appendChild(help)

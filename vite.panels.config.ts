@@ -5,7 +5,7 @@
 // already (vite.config.ts uses the same plugin).
 
 import { posix } from "node:path"
-import { defineConfig, loadEnv, type Plugin } from "vite"
+import { defineConfig, loadEnv, type InlineConfig, type Plugin } from "vite"
 
 /** The same sandbox as the demo's iframes (PANEL_SANDBOX in src/html-panel.ts). */
 const PANEL_SANDBOX_CSP = "sandbox allow-scripts allow-forms allow-popups"
@@ -42,7 +42,19 @@ export function injectPanelAgent(hostOrigin: string): Plugin {
   }
 }
 
-export default defineConfig(({ mode }) => {
+/**
+ * The panel server's whole configuration, for vite.config.ts to start it with.
+ * It reads no config file and no .env of its own (envDir: false), so it never
+ * restarts by itself: only the scene's server restarts it, one at a time (two
+ * restarting on their own would race for the port).
+ */
+export function panelServerConfig(mode: string): InlineConfig {
+  return { ...panelConfig(mode), configFile: false, envDir: false, mode }
+}
+
+export default defineConfig(({ mode }) => panelConfig(mode))
+
+function panelConfig(mode: string) {
   const env = loadEnv(mode, import.meta.dirname, "VITE_")
   const hostOrigin = env.VITE_HOST_ORIGIN!
   const panelPort = Number(new URL(env.VITE_PANEL_ORIGIN!).port)
@@ -66,4 +78,4 @@ export default defineConfig(({ mode }) => {
     preview: server,
     plugins: [injectPanelAgent(hostOrigin)]
   }
-})
+}

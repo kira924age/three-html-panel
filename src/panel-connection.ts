@@ -50,6 +50,8 @@ export interface PanelConnectionOptions {
   onEditing: (editing: boolean, caret: Caret | null, selectedText: string) => void
   /** The mouse cursor the page wants where the pointer is (a CSS keyword). */
   onCursor: (cursor: string) => void
+  /** The page asks for a link to be opened (a checked http(s) URL). */
+  onOpen: (url: string) => void
   onMessage: (data: unknown) => void
   /** No agent connected in time, or the agent speaks another protocol version. */
   onError: (error: Error) => void
@@ -131,6 +133,9 @@ export class PanelConnection {
         break
       case "cursor":
         this.options.onCursor(message.cursor)
+        break
+      case "open":
+        this.options.onOpen(message.url)
         break
       case "app":
         this.options.onMessage(message.data)

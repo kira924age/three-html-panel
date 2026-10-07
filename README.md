@@ -98,6 +98,15 @@ Added by the server, which is what the demo does: `injectPanelAgent()` in `vite.
 
 `pnpm build` emits the agent as `dist/agent.js`.
 
+### Links
+
+A link the user follows in a panel opens in a new tab of the host's browser, and so does a URL the page passes to `window.open()` (which then returns `null`). Inside the panel, a `target="_blank"` link would be blocked as a popup (the click is synthetic, so there is no user activation), and any other link would replace the page with one that has no agent, leaving the panel blank.
+
+- Links the page cancels (`preventDefault`), links within the page (`#fragment`), `download` links and schemes other than http(s) are left to the page.
+- The host opens only http(s) URLs, only within a second of the user pressing the panel or a key in it, and with `noopener,noreferrer`. A page cannot open tabs on its own, sandboxed or not.
+- Pass `onLink: (url, panel) => …` to `HtmlPanel` to do something else, such as asking the user first.
+- Navigation by script (`location.href = …`) still happens in the panel.
+
 ### App messages
 
 Pages that know about the host can exchange data with it through the agent. The data must be structured-cloneable, and the host should treat it as untrusted input:
@@ -119,7 +128,7 @@ panel.postMessage("scene-click")
 
 1. The agent posts `{ type: "ready", version }` to `window.parent`, addressed to the host origin.
 2. The host accepts it only if `event.source` is the panel's iframe (`iframe.contentWindow`) and `event.origin` is the panel URL's origin, or `"null"` with `sandbox: true`. It creates a `MessageChannel` and posts `{ type: "connect", version }` with one port to the iframe, addressed to the panel URL's origin, or with `sandbox: true` to `"*"`: an opaque origin cannot be named. Posted to `contentWindow`, it still only reaches the document now in that iframe.
-3. From then on, only the port is used: `frame` (seq, width, height, svg), `editing` (editing, caret) and `cursor` (a CSS cursor keyword) from the page; `pointer` (with `shiftKey`), `wheel`, `key`, `text`, `composition` (text being composed with an IME, and its caret), `blur` from the host; `app` both ways.
+3. From then on, only the port is used: `frame` (seq, width, height, svg), `editing` (whether an element has focus, a caret, the selected text), `cursor` (a CSS cursor keyword) and `open` (a link to open) from the page; `pointer` (with `shiftKey`), `wheel`, `key`, `text`, `composition` (text being composed with an IME, and its caret), `blur` from the host; `app` both ways.
 4. After every `load` of the iframe, the host sends `ping` and starts the timeout; the agent answers `pong`. Only the agent of the document now loaded can answer (an unloaded document's port is dead), so this tells whether the new document has an agent. The order of `ready` and `load` cannot tell: `ready` sometimes arrives after `load`.
 
 Every document the iframe loads (a reload, a navigation) says `ready` again and gets a new port; the old one is closed. The host drops frames whose `seq` does not grow, whose size differs from the iframe's or exceeds 4096 px, or whose SVG is over 16 MB, carets that are not finite numbers with a short color string, and cursors that are not plain keywords (a `url()` cursor would have the host load whatever the page names). See `src/protocol.ts`.
