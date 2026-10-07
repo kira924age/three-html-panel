@@ -81,7 +81,30 @@ export async function probeScaling(load: (svg: string) => Promise<HTMLImageEleme
   }
 }
 
-let scaling: Promise<Scaling> | null = null
+/**
+ * Scales frames to the canvas the way probeScaling chose, probed once. If a
+ * bitmap fails later anyway (a real frame is larger than the probe's, and
+ * Safari can refuse one under its memory limit), that frame and all the next
+ * ones are drawn with drawImage: shadows misplaced rather than no frames.
+ */
+export class FrameScaler {
+  private scaling: Promise<Scaling> | null = null
+
+  constructor(private readonly probe: () => Promise<Scaling> = probeScaling) {}
+
+  /** What to draw for `image` at width x height: the image itself, or a bitmap to close after drawing. */
+  async scale(image: HTMLImageElement, width: number, height: number): Promise<CanvasImageSource> {
+    if ((await (this.scaling ??= this.probe())) !== "bitmap") return image
+    try {
+      return await createImageBitmap(image, { resizeWidth: width, resizeHeight: height, resizeQuality: "high" })
+    } catch {
+      this.scaling = Promise.resolve("drawImage")
+      return image
+    }
+  }
+}
+
+const sharedScaler = new FrameScaler()
 
 export class FrameRenderer {
   readonly canvas = document.createElement("canvas")
@@ -135,10 +158,7 @@ export class FrameRenderer {
       try {
         const image = await loadSvg(frame.svg)
         const { width, height } = this.canvas
-        const source =
-          (await (scaling ??= probeScaling())) === "bitmap"
-            ? await createImageBitmap(image, { resizeWidth: width, resizeHeight: height, resizeQuality: "high" })
-            : image
+        const source = await sharedScaler.scale(image, width, height)
         if (this.disposed) {
           if (source !== image) (source as ImageBitmap).close()
           continue

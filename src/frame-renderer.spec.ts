@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { probeScaling } from "./frame-renderer"
+import { FrameScaler, probeScaling } from "./frame-renderer"
 
 afterEach(() => {
   vi.restoreAllMocks()
@@ -55,5 +55,31 @@ describe("probeScaling", () => {
     vi.stubGlobal("createImageBitmap", undefined)
     expect(await probeScaling(load)).toBe("drawImage")
     expect(await probeScaling(() => Promise.reject(new Error("decode")))).toBe("drawImage")
+  })
+})
+
+describe("FrameScaler", () => {
+  it("scales through a bitmap where the probe chose it", async () => {
+    vi.stubGlobal("createImageBitmap", vi.fn(async () => bitmap))
+    const scaler = new FrameScaler(async () => "bitmap")
+    expect(await scaler.scale(image, 1920, 1280)).toBe(bitmap)
+    expect(createImageBitmap).toHaveBeenCalledWith(image, expect.objectContaining({ resizeWidth: 1920, resizeHeight: 1280 }))
+  })
+
+  it("draws the image itself from then on when a bitmap fails (Safari's memory limit)", async () => {
+    const create = vi.fn(async () => Promise.reject(new Error("out of memory")))
+    vi.stubGlobal("createImageBitmap", create)
+    const scaler = new FrameScaler(async () => "bitmap")
+    expect(await scaler.scale(image, 4096, 2731)).toBe(image)
+    expect(await scaler.scale(image, 4096, 2731)).toBe(image)
+    expect(create).toHaveBeenCalledTimes(1)
+  })
+
+  it("probes once, and draws the image itself where the probe chose drawImage", async () => {
+    const probe = vi.fn(async () => "drawImage" as const)
+    const scaler = new FrameScaler(probe)
+    expect(await scaler.scale(image, 800, 600)).toBe(image)
+    expect(await scaler.scale(image, 800, 600)).toBe(image)
+    expect(probe).toHaveBeenCalledTimes(1)
   })
 })
