@@ -69,7 +69,7 @@ export class PanelPointer {
     this.element.setPointerCapture(event.pointerId)
     this.pressed = { panel: hit.panel, pointerId: event.pointerId }
     this.hover(hit.panel)
-    hit.panel.pointer("down", hit.uv)
+    hit.panel.pointer("down", hit.uv, event.shiftKey)
   }
 
   private readonly onPointerMove = (event: PointerEvent) => {
@@ -77,12 +77,12 @@ export class PanelPointer {
       if (event.pointerId !== this.pressed.pointerId) return
       this.setRay(event)
       const uv = this.pressed.panel.uvFromRay(this.raycaster.ray)
-      if (uv) this.pressed.panel.pointer("move", uv)
+      if (uv) this.pressed.panel.pointer("move", uv, event.shiftKey)
       return
     }
     const hit = this.pick(event)
     this.hover(hit?.panel ?? null)
-    if (hit) hit.panel.pointer("move", hit.uv)
+    if (hit) hit.panel.pointer("move", hit.uv, event.shiftKey)
   }
 
   private readonly onPointerUp = (event: PointerEvent) => {

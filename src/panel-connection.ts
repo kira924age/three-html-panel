@@ -9,6 +9,12 @@
 // Each document the iframe loads (a reload, a navigation) runs its own agent,
 // which posts `ready` again. The previous port is closed then. If no agent
 // shows up, the connection reports a timeout.
+//
+// Whether the document loaded last has an agent cannot be told from the order
+// of `ready` and the iframe's `load`: they come by different paths, and `ready`
+// can arrive after `load`. So every `load` starts the timer and pings the
+// current port. Only a live agent answers: the port of an unloaded document is
+// dead. A `pong`, or a `ready` from a new document, stops the timer.
 
 import {
   PROTOCOL_VERSION,
@@ -44,8 +50,6 @@ export class PanelConnection {
   private port: MessagePort | null = null
   private lastSeq = -1
   private timer = 0
-  /** Whether an agent said `ready` since the iframe's last `load`. */
-  private readySinceLoad = false
   private disposed = false
 
   constructor(private readonly options: PanelConnectionOptions) {
@@ -87,9 +91,7 @@ export class PanelConnection {
 
   private connect(target: Window): void {
     this.closePort()
-    window.clearTimeout(this.timer)
-    this.timer = 0
-    this.readySinceLoad = true
+    this.stopTimer()
     this.lastSeq = -1
 
     const channel = new MessageChannel()
@@ -106,6 +108,9 @@ export class PanelConnection {
     const message = parsePageMessage(event.data, { width, height, lastSeq: this.lastSeq })
     if (!message) return
     switch (message.type) {
+      case "pong":
+        this.stopTimer()
+        break
       case "frame":
         this.lastSeq = message.seq
         this.options.onFrame({ svg: message.svg, width: message.width, height: message.height })
@@ -122,11 +127,9 @@ export class PanelConnection {
     }
   }
 
-  // A document without an agent never says `ready`. The agent runs before the
-  // page finishes loading, so by `load` it normally has; if not, wait a while.
   private readonly onLoad = () => {
-    if (!this.readySinceLoad) this.startTimer()
-    this.readySinceLoad = false
+    this.startTimer()
+    this.send({ type: "ping" })
   }
 
   private startTimer(): void {
@@ -136,6 +139,11 @@ export class PanelConnection {
       this.closePort()
       this.options.onError(new Error("the panel page did not start the three-html-panel agent"))
     }, this.options.readyTimeout ?? READY_TIMEOUT_MS)
+  }
+
+  private stopTimer(): void {
+    window.clearTimeout(this.timer)
+    this.timer = 0
   }
 
   private closePort(): void {

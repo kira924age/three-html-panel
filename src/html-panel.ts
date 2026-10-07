@@ -53,6 +53,18 @@ export interface HtmlPanelOptions {
 
 const CARET_BLINK_MS = 530
 
+const RGBA = /^rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)\s*(?:[,/]\s*([\d.]+)(%?)\s*)?\)$/
+
+/** A CSS color as an opaque color and an alpha. THREE.Color ignores alpha (with a warning). */
+export function splitAlpha(css: string): { rgb: string; alpha: number } {
+  if (css === "transparent") return { rgb: "rgb(0, 0, 0)", alpha: 0 }
+  const match = RGBA.exec(css)
+  if (!match) return { rgb: css, alpha: 1 }
+  const [, r, g, b, a, percent] = match
+  const alpha = a === undefined ? 1 : Number(a) / (percent ? 100 : 1)
+  return { rgb: `rgb(${r}, ${g}, ${b})`, alpha: Math.min(1, Math.max(0, alpha)) }
+}
+
 export interface HtmlPanelEventMap extends Object3DEventMap {
   /** `cursor` changed. */
   cursorchange: {}
@@ -118,7 +130,10 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
     this.add(this.back)
 
     // The caret is drawn on top of the texture, so blinking does not re-upload it.
-    this.caret = new Mesh(new PlaneGeometry(1, 1), new MeshBasicMaterial({ side: DoubleSide, depthWrite: false }))
+    this.caret = new Mesh(
+      new PlaneGeometry(1, 1),
+      new MeshBasicMaterial({ side: DoubleSide, depthWrite: false, transparent: true })
+    )
     this.caret.raycast = () => {}
     this.caret.visible = false
     this.caret.renderOrder = 1
@@ -189,6 +204,9 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
   }
 
   private updateCaret(caret: Caret | null): void {
+    const color = caret ? splitAlpha(caret.color) : null
+    // A transparent caret (caret-color: transparent) is how a page hides it.
+    if (color?.alpha === 0) caret = null
     this.caret.userData.hasCaret = caret !== null
     this.caret.visible = caret !== null
     if (!caret) return
@@ -200,7 +218,8 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
       (0.5 - (caret.y + caret.height / 2) / this.pageHeight) * this.worldHeight,
       0.0005
     )
-    this.caret.material.color.setStyle(caret.color)
+    this.caret.material.color.setStyle(color!.rgb)
+    this.caret.material.opacity = color!.alpha
   }
 
   private send(message: HostMessage): void {
@@ -238,9 +257,9 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
     return new Vector2(local.x / this.worldWidth + 0.5, local.y / this.worldHeight + 0.5)
   }
 
-  pointer(kind: PointerKind, uv: Vector2 | null = null): void {
+  pointer(kind: PointerKind, uv: Vector2 | null = null, shiftKey = false): void {
     const { x, y } = uv ? this.toPage(uv) : { x: 0, y: 0 }
-    this.send({ type: "pointer", kind, x, y })
+    this.send({ type: "pointer", kind, x, y, shiftKey })
   }
 
   wheel(uv: Vector2, deltaX: number, deltaY: number): void {

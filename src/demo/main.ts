@@ -39,8 +39,8 @@ controls.target.set(0.15, 1.2, 0)
 controls.enableDamping = true
 controls.update()
 
-// The panel pages are served from another origin in development (see
-// vite.panels.config.ts), and next to the scene in a build.
+// The panel pages are served from another origin (VITE_PANEL_ORIGIN, see
+// vite.config.ts); without one, next to the scene.
 const panelBase: string = import.meta.env.VITE_PANEL_ORIGIN || location.href
 const pageUrl = (path: string) => new URL(path, panelBase)
 

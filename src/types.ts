@@ -9,7 +9,7 @@ export type PointerKind = "down" | "move" | "up" | "leave"
 
 /** Input for a panel, in CSS pixels of the panel page. */
 export type PanelInput =
-  | { type: "pointer"; kind: PointerKind; x: number; y: number }
+  | { type: "pointer"; kind: PointerKind; x: number; y: number; shiftKey?: boolean }
   | { type: "wheel"; x: number; y: number; deltaX: number; deltaY: number }
   | {
       type: "key"

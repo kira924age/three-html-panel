@@ -1,28 +1,36 @@
 import { resolve } from "node:path"
-import { createServer, defineConfig, loadEnv, type Plugin, type ViteDevServer } from "vite"
+import { createServer, defineConfig, loadEnv, preview, type Plugin, type PreviewServer, type ViteDevServer } from "vite"
 import { AGENT_BUILD_FILE, injectPanelAgent } from "./vite.panels.config.ts"
 
-/** Starts the panel pages' server (another origin) together with this one. */
+/** Closes `other` before `server`, so that a restarted server does not find the other's port taken. */
+function closeWith(server: { close(): Promise<void> }, other: () => { close(): Promise<void> } | null): void {
+  const close = server.close.bind(server)
+  server.close = async () => {
+    await other()?.close()
+    return close()
+  }
+}
+
+/** Starts the panel pages' server (another origin) together with this one, for `pnpm dev` and `pnpm preview`. */
 function panelServer(): Plugin {
-  let panels: ViteDevServer | null = null
+  let panels: ViteDevServer | PreviewServer | null = null
+  const configFile = resolve(import.meta.dirname, "vite.panels.config.ts")
   return {
     name: "three-html-panel:panel-server",
     apply: "serve",
     async configureServer(server) {
-      panels = await createServer({
-        configFile: resolve(import.meta.dirname, "vite.panels.config.ts"),
-        mode: server.config.mode
-      })
-      await panels.listen()
+      const dev = await createServer({ configFile, mode: server.config.mode })
+      panels = dev
+      await dev.listen()
+      server.config.logger.info(`  panel pages: ${dev.resolvedUrls?.local[0] ?? "?"}panels/`)
+      // Vite closes the server before restarting it (after a config change).
+      closeWith(server, () => panels)
+    },
+    async configurePreviewServer(server) {
+      // The build's panel pages, from the same dist/ but another origin.
+      panels = await preview({ configFile, mode: server.config.mode })
       server.config.logger.info(`  panel pages: ${panels.resolvedUrls?.local[0] ?? "?"}panels/`)
-      // Vite closes the server before restarting it (after a config change);
-      // the panel server must go too, or the restarted one finds its port taken.
-      const close = server.close.bind(server)
-      server.close = async () => {
-        await panels?.close()
-        panels = null
-        return close()
-      }
+      closeWith(server, () => panels)
     }
   }
 }

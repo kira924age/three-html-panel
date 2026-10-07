@@ -101,6 +101,8 @@ export class PanelAgent {
     if (!message) return
     if (message.type === "app") {
       this.window.dispatchEvent(new CustomEvent(HOST_MESSAGE_EVENT, { detail: message.data }))
+    } else if (message.type === "ping") {
+      this.post({ type: "pong" })
     } else {
       this.capture.handle(message)
     }

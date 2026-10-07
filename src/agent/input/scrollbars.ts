@@ -25,8 +25,8 @@ export interface Scrollbar {
 const OVERLAY_THICKNESS = 10
 const MIN_THUMB_LENGTH = 24
 const SCROLLABLE = new Set(["auto", "scroll", "overlay"])
-/** Form controls scroll their own content, which the snapshot does not show scrolled; leave them alone. */
-const SKIPPED = new Set(["TEXTAREA", "INPUT", "SELECT"])
+/** Single-line inputs scroll without a scrollbar; a <select> draws its own list. */
+const SKIPPED = new Set(["INPUT", "SELECT"])
 
 export function contains(box: Box, x: number, y: number): boolean {
   return x >= box.left && x < box.left + box.width && y >= box.top && y < box.top + box.height
@@ -52,6 +52,10 @@ interface Overflow {
 function overflowOf(element: Element): Overflow | null {
   const document = element.ownerDocument
   const window = document.defaultView!
+  if (element !== document.scrollingElement && element !== document.body) {
+    const computed = window.getComputedStyle(element)
+    return { x: computed.overflowX, y: computed.overflowY }
+  }
   const html = window.getComputedStyle(document.documentElement)
   if (element === document.scrollingElement) {
     // The viewport takes its overflow from <html>, or from <body> when <html> leaves it visible.
@@ -63,7 +67,7 @@ function overflowOf(element: Element): Overflow | null {
     return { x: pick(html.overflowX, body.overflowX), y: pick(html.overflowY, body.overflowY) }
   }
   // <body>'s overflow went to the viewport.
-  if (element === document.body && html.overflowX === "visible" && html.overflowY === "visible") return null
+  if (html.overflowX === "visible" && html.overflowY === "visible") return null
   const computed = window.getComputedStyle(element)
   return { x: computed.overflowX, y: computed.overflowY }
 }
@@ -71,12 +75,13 @@ function overflowOf(element: Element): Overflow | null {
 /** The scrollbars an element shows right now, if any. */
 export function scrollbarsOf(element: Element): Scrollbar[] {
   if (SKIPPED.has(element.tagName)) return []
+  // This runs for every element of every frame. Checking the overflow style
+  // first is cheaper than reading sizes, and rules out all but scroll containers.
+  const overflow = overflowOf(element)
+  if (!overflow || (!SCROLLABLE.has(overflow.x) && !SCROLLABLE.has(overflow.y))) return []
   const { clientWidth, clientHeight, scrollWidth, scrollHeight } = element
   const overflowsX = scrollWidth > clientWidth + 1
   const overflowsY = scrollHeight > clientHeight + 1
-  if (!overflowsX && !overflowsY) return []
-  const overflow = overflowOf(element)
-  if (!overflow) return []
   const showX = overflowsX && SCROLLABLE.has(overflow.x)
   const showY = overflowsY && SCROLLABLE.has(overflow.y)
   if (!showX && !showY) return []
@@ -133,6 +138,16 @@ export function scrollbarsOf(element: Element): Scrollbar[] {
   return bars
 }
 
+/** How far a scrollbar can be hit beyond its track, toward the content: thin ones are hard to hit. */
+const HIT_SLOP = 4
+
+/** `box` (the track or the thumb) widened toward the content by the hit slop. */
+export function hitBox(bar: Scrollbar, box: Box): Box {
+  return bar.axis === "y"
+    ? { ...box, left: box.left - HIT_SLOP, width: box.width + HIT_SLOP }
+    : { ...box, top: box.top - HIT_SLOP, height: box.height + HIT_SLOP }
+}
+
 /** The innermost scrollbar under a point, if any. */
 export function scrollbarAt(document: Document, x: number, y: number): Scrollbar | null {
   const chain: Element[] = []
@@ -140,7 +155,7 @@ export function scrollbarAt(document: Document, x: number, y: number): Scrollbar
   const root = document.scrollingElement
   if (root && !chain.includes(root)) chain.push(root)
   for (const element of chain) {
-    for (const bar of scrollbarsOf(element)) if (contains(bar.track, x, y)) return bar
+    for (const bar of scrollbarsOf(element)) if (contains(hitBox(bar, bar.track), x, y)) return bar
   }
   return null
 }

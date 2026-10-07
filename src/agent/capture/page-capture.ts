@@ -94,6 +94,7 @@ export class PageCapture {
   dispose(): void {
     this.disposed = true
     clearTimeout(this.timer)
+    this.input.dispose()
     this.mutations.disconnect()
     for (const type of INVALIDATING_EVENTS) this.window.removeEventListener(type, this.invalidate, true)
   }
@@ -139,13 +140,20 @@ export class PageCapture {
       const height = this.window.innerHeight
       const focused = this.input.focused
       const selection = isTextField(focused) ? this.measure(() => measureSelection(focused)) : []
-      const xhtml = snapshotDocument(this.document, {
+      // The page's ::selection color, if it sets one.
+      const selectionColor = isTextField(focused)
+        ? this.window.getComputedStyle(focused, "::selection").backgroundColor
+        : undefined
+      // The snapshot measures scrolled text fields with a mirror (caret.ts).
+      const xhtml = this.measure(() => snapshotDocument(this.document, {
         hovered: this.input.hovered,
         active: this.input.active,
         focused,
         selection,
+        selectionColor,
+        scrollbar: this.input.scrollbarState,
         inlineImage: url => this.images.get(url)
-      })
+      }))
       this.options.onFrame({ svg: buildFrameSvg(xhtml, this.css.get(), width, height), width, height })
       this.reportEditing()
       this.reportCursor()
