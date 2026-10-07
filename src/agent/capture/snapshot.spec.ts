@@ -68,6 +68,26 @@ describe("animated values in the image", () => {
   })
 })
 
+describe("text being composed", () => {
+  it("shows in the copy, not in the page, and is underlined", () => {
+    document.body.innerHTML = `<input id="name" value="ab">`
+    const field = document.querySelector<HTMLInputElement>("#name")!
+    document.getAnimations = () => []
+    const xhtml = snapshotDocument(document, {
+      hovered: new Set(),
+      active: new Set(),
+      focused: field,
+      inlineImage: () => null,
+      composition: { field, value: "aにほb", boxes: [{ left: 10, top: 5, width: 30, height: 14 }], color: "rgb(0, 0, 0)" }
+    })
+    const copy = new DOMParser().parseFromString(xhtml, "application/xhtml+xml")
+    expect(copy.getElementById("name")!.getAttribute("value")).toBe("aにほb")
+    expect(field.value).toBe("ab")
+    // The underline: as wide as the composed text, at the bottom of its line.
+    expect(xhtml).toMatch(/left:10px;top:18px;width:30px;height:1px;[^"]*background:rgb\(0, 0, 0\)/)
+  })
+})
+
 describe("endOffsetOf", () => {
   it("finds the end a finite animation stops at", () => {
     expect(endOffsetOf({})).toBe(1)

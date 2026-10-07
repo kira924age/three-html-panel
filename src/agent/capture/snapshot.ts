@@ -37,6 +37,12 @@ export interface SnapshotOptions {
   selection?: readonly Box[]
   /** The page's ::selection background, if any; a default is used when it is transparent. */
   selectionColor?: string
+  /**
+   * Text being composed with an IME in a field: the value it shows while
+   * composing, which goes into the copy only (never into the page), and the
+   * boxes the composed text covers, underlined.
+   */
+  composition?: { field: Element; value: string; boxes: readonly Box[]; color: string } | null
   /** The scrollbar being hovered or pressed, drawn darker. */
   scrollbar?: { element: Element; axis: "x" | "y"; state: "hover" | "active" } | null
 }
@@ -169,13 +175,15 @@ class Snapshotter {
       if (element.type === "checkbox" || element.type === "radio") {
         copy.toggleAttribute("checked", element.checked)
       } else if (element.type !== "file") {
-        copy.setAttribute("value", element.value)
+        const value = this.shownValue(element)
+        copy.setAttribute("value", value)
         // Only text inputs have a selection, and scroll their text.
-        if (element.selectionStart !== null) this.copyTextScroll(element, copy)
+        if (element.selectionStart !== null) this.copyTextScroll(element, copy, value)
       }
     } else if (element instanceof HTMLTextAreaElement) {
-      copy.textContent = element.value
-      this.copyTextScroll(element, copy)
+      const value = this.shownValue(element)
+      copy.textContent = value
+      this.copyTextScroll(element, copy, value)
     } else if (element instanceof HTMLOptionElement) {
       copy.toggleAttribute("selected", element.selected)
     }
@@ -186,16 +194,22 @@ class Snapshotter {
    * past and move the rest into place with the padding (measured, see
    * scrolledText). A line only partly scrolled past is left out whole.
    */
-  private copyTextScroll(field: HTMLInputElement | HTMLTextAreaElement, copy: Element): void {
+  private copyTextScroll(field: HTMLInputElement | HTMLTextAreaElement, copy: Element, value: string): void {
     const scrolled = scrolledText(field)
     if (!scrolled || !(copy instanceof HTMLElement)) return
     const isInput = field.tagName === "INPUT"
-    const rest = field.value.slice(scrolled.index)
+    const rest = value.slice(scrolled.index)
     if (isInput) copy.setAttribute("value", rest)
     else copy.textContent = rest
     const side = isInput ? "padding-left" : "padding-top"
     const padding = parseFloat(this.window.getComputedStyle(field).getPropertyValue(side)) || 0
     copy.style.setProperty(side, `${padding + scrolled.offset}px`, "important")
+  }
+
+  /** A field's value, or what it shows while text is composed in it. */
+  private shownValue(field: HTMLInputElement | HTMLTextAreaElement): string {
+    const composition = this.options.composition
+    return composition?.field === field ? composition.value : field.value
   }
 
   private copyImage(element: Element, copy: Element): void {
@@ -326,6 +340,14 @@ export function snapshotDocument(document: Document, options: SnapshotOptions): 
   const pageColor = options.selectionColor && !TRANSPARENT.test(options.selectionColor) ? options.selectionColor : null
   const css = pageColor ? `background:${pageColor};mix-blend-mode:multiply` : `background:${SELECTION_COLOR}`
   for (const { left, top, width, height } of options.selection ?? []) drawBox(root, left, top, width, height, css)
+  // Composed text is underlined, as IMEs do.
+  if (options.composition) {
+    const { boxes, color } = options.composition
+    for (const box of boxes) {
+      const thickness = Math.max(1, Math.round(box.height / 14))
+      drawBox(root, box.left, box.top + box.height - thickness, box.width, thickness, `background:${color}`)
+    }
+  }
   drawScrollbars(root, snapshotter.scrollbars, options.scrollbar)
   return new XMLSerializer().serializeToString(root)
 }

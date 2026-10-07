@@ -128,6 +128,20 @@ describe("text editing", () => {
     expect(input.cursor).toBe("text")
   })
 
+  it("keeps what is being composed for the focused field until it ends or focus moves", () => {
+    const field = document.querySelector<HTMLInputElement>("#name")!
+    field.focus()
+    input.handle({ type: "composition", text: "にほ", cursor: 2 })
+    expect(input.composition).toEqual({ text: "にほ", cursor: 2 })
+    // Composing does not touch the page's value.
+    expect(field.value).toBe("ab")
+    input.handle({ type: "composition", text: "", cursor: 0 })
+    expect(input.composition).toBeNull()
+    input.handle({ type: "composition", text: "に", cursor: 1 })
+    document.querySelector<HTMLButtonElement>("#go")!.focus()
+    expect(input.composition).toBeNull()
+  })
+
   it("ignores text when no field has focus", () => {
     document.querySelector<HTMLButtonElement>("#go")!.focus()
     input.handle({ type: "text", text: "X" })

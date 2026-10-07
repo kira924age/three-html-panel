@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { Vector2 } from "three"
+import { PerspectiveCamera, Scene, Vector2, type WebGLRenderer } from "three"
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest"
 import { HtmlPanel, PANEL_SANDBOX, splitAlpha } from "./html-panel"
 import { PanelKeyboard } from "./panel-keyboard"
@@ -119,5 +119,48 @@ describe("the panel's iframe", () => {
       expect(focus).toHaveBeenCalledWith(panel)
       port.close()
     })
+  })
+
+  it("places the IME at the caret on screen while the keyboard types into the panel", async () => {
+    const keyboard = new PanelKeyboard()
+    const placeIme = vi.spyOn(keyboard, "placeIme")
+    const panel = open(false, keyboard)
+    // A 1x1 panel facing a camera 1 unit in front of it.
+    panel.updateMatrixWorld()
+    const camera = new PerspectiveCamera(90, 800 / 600, 0.01, 10)
+    camera.position.set(0, 0, 1)
+    camera.updateMatrixWorld()
+    const canvas = document.createElement("canvas")
+    canvas.getBoundingClientRect = () => new DOMRect(0, 0, 800, 600)
+    const renderer = { domElement: canvas } as unknown as WebGLRenderer
+
+    const postMessage = vi.fn()
+    panel.iframe.contentWindow!.postMessage = postMessage as typeof window.postMessage
+    const ready = new MessageEvent("message", { data: { type: "ready", version: 1 }, origin: "https://panel.example" })
+    Object.defineProperty(ready, "source", { value: panel.iframe.contentWindow })
+    window.dispatchEvent(ready)
+    const port = (postMessage.mock.calls[0]![2] as MessagePort[])[0]!
+    // The page's default size is 800x600: a caret at its centre.
+    port.postMessage({ type: "editing", editing: true, caret: { x: 400, y: 290, height: 20, color: "rgb(0, 0, 0)" } })
+    await new Promise(resolve => setTimeout(resolve, 20))
+
+    panel.onBeforeRender(renderer, new Scene(), camera)
+    expect(placeIme).toHaveBeenCalledTimes(1)
+    const placement = placeIme.mock.calls[0]![0]!
+    expect(placement.x).toBe(400)
+    expect(placement.y).toBeLessThan(300)
+    expect(placement.y + placement.height).toBeGreaterThan(300)
+    // Unchanged: not placed again.
+    panel.onBeforeRender(renderer, new Scene(), camera)
+    expect(placeIme).toHaveBeenCalledTimes(1)
+
+    // Once keys no longer go to the panel, its caret does not move the IME.
+    keyboard.release(panel)
+    placeIme.mockClear()
+    camera.position.x = 0.2
+    camera.updateMatrixWorld()
+    panel.onBeforeRender(renderer, new Scene(), camera)
+    expect(placeIme).not.toHaveBeenCalled()
+    port.close()
   })
 })
