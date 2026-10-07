@@ -7,9 +7,20 @@ export type FrameWindow = Window & typeof globalThis
 
 export type PointerKind = "down" | "move" | "up" | "leave"
 
+/** What drives a pointer: a mouse, a finger, or a VR controller. */
+export type PointerInput = "mouse" | "touch" | "xr"
+
 /** Input for a panel, in CSS pixels of the panel page. */
 export type PanelInput =
-  | { type: "pointer"; kind: PointerKind; x: number; y: number; shiftKey?: boolean }
+  | {
+      type: "pointer"
+      kind: PointerKind
+      x: number
+      y: number
+      shiftKey?: boolean
+      /** What drives the pointer; a mouse if not given. */
+      input?: PointerInput
+    }
   | { type: "wheel"; x: number; y: number; deltaX: number; deltaY: number }
   | {
       type: "key"

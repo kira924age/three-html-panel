@@ -165,6 +165,23 @@ describe("connecting", () => {
     expect(received).toContainEqual({ type: "open", url: "https://example.com/docs" })
   })
 
+  it("reports where the text fields are, for the host to open a soft keyboard on a tap", async () => {
+    document.body.innerHTML = `<input id="name"><input id="below"><button>Go</button>`
+    document.querySelector("#name")!.getBoundingClientRect = () => new DOMRect(10, 20, 100, 30)
+    // Scrolled out of view: not reported.
+    document.querySelector("#below")!.getBoundingClientRect = () => new DOMRect(10, 5000, 100, 30)
+    start()
+    const host = connect()
+    const received: { type: string; boxes?: unknown }[] = []
+    host.onmessage = event => received.push(event.data)
+    await vi.waitFor(() =>
+      expect(received.find(message => message.type === "editables")).toEqual({
+        type: "editables",
+        boxes: [{ left: 10, top: 20, width: 100, height: 30 }]
+      })
+    )
+  })
+
   it("does not send anything before it is connected", async () => {
     start()
     sendToHost({ shape: "box" })

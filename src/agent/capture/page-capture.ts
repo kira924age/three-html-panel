@@ -9,10 +9,10 @@
 
 import { composedValue, isTextField, measureCaret, measureComposition, measureSelection } from "../input/caret"
 import { InputSynthesizer } from "../input/input"
-import type { Caret, Frame, FrameWindow, PanelInput } from "../../types"
+import type { Box, Caret, Frame, FrameWindow, PanelInput } from "../../types"
 import { DocumentCss } from "./css"
 import { ImageInliner } from "./images"
-import { MAX_TEXT_LENGTH } from "../../protocol"
+import { MAX_EDITABLES, MAX_TEXT_LENGTH } from "../../protocol"
 import { RenderPacer } from "./pacer"
 import { buildFrameSvg, isSampledLive, snapshotDocument } from "./snapshot"
 
@@ -40,6 +40,8 @@ export interface PageCaptureOptions {
    * caret, and its selected text (for the host to copy).
    */
   onEditing: (editing: boolean, caret: Caret | null, selectedText: string) => void
+  /** Where the text fields are now (CSS px, in view), when that changed. */
+  onEditables: (boxes: Box[]) => void
   /** The mouse cursor changed (a CSS keyword, or "" when the pointer is not over the page). */
   onCursor: (cursor: string) => void
 }
@@ -56,6 +58,7 @@ export class PageCapture {
   private notBefore = 0
   private lastEditing = ""
   private lastCursor = ""
+  private lastEditables = ""
   private started = false
   private disposed = false
 
@@ -88,6 +91,7 @@ export class PageCapture {
     this.started = true
     this.lastEditing = ""
     this.lastCursor = ""
+    this.lastEditables = ""
     this.css.invalidate()
     this.invalidate()
   }
@@ -177,12 +181,32 @@ export class PageCapture {
       }))
       this.options.onFrame({ svg: buildFrameSvg(xhtml, this.css.get(), width, height), width, height })
       this.reportEditing()
+      this.reportEditables(width, height)
       this.reportCursor()
     } finally {
       this.notBefore = performance.now() + this.pacer.record(performance.now() - started)
     }
     // Keep sampling while something is animating, so the panel shows it moving.
     if (this.dirty || this.hasLiveAnimations()) this.invalidate()
+  }
+
+  /** The text fields in view, for the host to open a soft keyboard on a tap right away. */
+  private reportEditables(width: number, height: number): void {
+    const boxes: Box[] = []
+    for (const field of Array.from(this.document.querySelectorAll("input, textarea"))) {
+      if (boxes.length === MAX_EDITABLES) break
+      if (!isTextField(field)) continue
+      const rect = field.getBoundingClientRect()
+      const left = Math.max(0, rect.left)
+      const top = Math.max(0, rect.top)
+      const right = Math.min(width, rect.right)
+      const bottom = Math.min(height, rect.bottom)
+      if (right > left && bottom > top) boxes.push({ left, top, width: right - left, height: bottom - top })
+    }
+    const key = JSON.stringify(boxes)
+    if (key === this.lastEditables) return
+    this.lastEditables = key
+    this.options.onEditables(boxes)
   }
 
   private reportCursor(): void {

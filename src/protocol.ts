@@ -15,7 +15,7 @@
 // host checks more strictly: it shows whatever the page sends, so sizes are
 // bounded.
 
-import type { Caret, PanelInput, PointerKind } from "./types"
+import type { Box, Caret, PanelInput, PointerKind } from "./types"
 
 export const PROTOCOL_VERSION = 1
 
@@ -29,6 +29,15 @@ const MAX_KEY_LENGTH = 64
 export const MAX_TEXT_LENGTH = 64 * 1024
 const CURSOR_KEYWORD = /^[a-z][a-z-]{0,31}$/
 const MAX_URL_LENGTH = 8192
+/** The most text fields the page reports; more are not offered a soft keyboard on a tap. */
+export const MAX_EDITABLES = 256
+
+function parseBox(value: unknown): Box | null {
+  if (!isObject(value)) return null
+  const { left, top, width, height } = value
+  if (![left, top, width, height].every(isFiniteNumber) || (width as number) < 0 || (height as number) < 0) return null
+  return { left: left as number, top: top as number, width: width as number, height: height as number }
+}
 
 /** `value` if it is an absolute http(s) URL, else null: no javascript:, data: or the like. */
 export function parseOpenableUrl(value: unknown): string | null {
@@ -85,6 +94,16 @@ export interface CursorMessage {
   cursor: string
 }
 
+/**
+ * Where the page's text fields are, in its CSS pixels. iOS opens the soft
+ * keyboard only when focus moves while a touch is handled, long before the
+ * agent hears of the tap: the host checks these to focus its field right away.
+ */
+export interface EditablesMessage {
+  type: "editables"
+  boxes: Box[]
+}
+
 /** A link the user followed in the page, or a URL the page passed to window.open(), for the host to open. */
 export interface OpenMessage {
   type: "open"
@@ -98,7 +117,14 @@ export interface AppMessage {
 }
 
 /** From the page to the host, through the port. */
-export type PageMessage = FrameMessage | EditingMessage | CursorMessage | OpenMessage | AppMessage | { type: "pong" }
+export type PageMessage =
+  | FrameMessage
+  | EditingMessage
+  | EditablesMessage
+  | CursorMessage
+  | OpenMessage
+  | AppMessage
+  | { type: "pong" }
 
 /** From the host to the page, through the port. */
 export type HostMessage = PanelInput | AppMessage | { type: "ping" }
@@ -161,6 +187,11 @@ export function parsePageMessage(data: unknown, limits: PageMessageLimits): Page
     }
     case "pong":
       return { type: "pong" }
+    case "editables": {
+      if (!Array.isArray(data.boxes) || data.boxes.length > MAX_EDITABLES) return null
+      const boxes = data.boxes.map(parseBox)
+      return boxes.every(box => box !== null) ? { type: "editables", boxes: boxes as Box[] } : null
+    }
     case "open": {
       const url = parseOpenableUrl(data.url)
       return url ? { type: "open", url } : null
@@ -183,10 +214,11 @@ export function parseHostMessage(data: unknown): HostMessage | null {
   if (!isObject(data)) return null
   switch (data.type) {
     case "pointer": {
-      const { kind, x, y, shiftKey } = data
+      const { kind, x, y, shiftKey, input } = data
       if (!POINTER_KINDS.has(kind as PointerKind) || !isFiniteNumber(x) || !isFiniteNumber(y)) return null
       if (shiftKey !== undefined && typeof shiftKey !== "boolean") return null
-      return { type: "pointer", kind: kind as PointerKind, x, y, shiftKey: shiftKey === true }
+      if (input !== undefined && input !== "mouse" && input !== "touch" && input !== "xr") return null
+      return { type: "pointer", kind: kind as PointerKind, x, y, shiftKey: shiftKey === true, input: input ?? "mouse" }
     }
     case "wheel": {
       const { x, y, deltaX, deltaY } = data

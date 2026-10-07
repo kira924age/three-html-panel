@@ -96,6 +96,17 @@ describe("parseOpenableUrl", () => {
   })
 })
 
+describe("editables", () => {
+  it("accepts boxes of finite numbers, not too many", () => {
+    const box = { left: 1, top: 2, width: 30, height: 20 }
+    expect(parsePageMessage({ type: "editables", boxes: [box] }, limits)).toEqual({ type: "editables", boxes: [box] })
+    expect(parsePageMessage({ type: "editables", boxes: [{ ...box, width: Number.NaN }] }, limits)).toBeNull()
+    expect(parsePageMessage({ type: "editables", boxes: [{ ...box, height: -1 }] }, limits)).toBeNull()
+    expect(parsePageMessage({ type: "editables", boxes: Array(257).fill(box) }, limits)).toBeNull()
+    expect(parsePageMessage({ type: "editables", boxes: "all" }, limits)).toBeNull()
+  })
+})
+
 describe("parseReady", () => {
   it("needs the type and an integer version", () => {
     expect(parseReady({ type: "ready", version: 1 })).toEqual({ type: "ready", version: 1 })
@@ -112,8 +123,11 @@ describe("parseHostMessage", () => {
       kind: "down",
       x: 1,
       y: 2,
-      shiftKey: false
+      shiftKey: false,
+      input: "mouse"
     })
+    expect(parseHostMessage({ type: "pointer", kind: "down", x: 1, y: 2, input: "touch" })).toMatchObject({ input: "touch" })
+    expect(parseHostMessage({ type: "pointer", kind: "down", x: 1, y: 2, input: "pen" })).toBeNull()
     expect(parseHostMessage({ type: "pointer", kind: "down", x: 1, y: 2, shiftKey: "yes" })).toBeNull()
     expect(parseHostMessage({ type: "pointer", kind: "press", x: 1, y: 2 })).toBeNull()
     expect(parseHostMessage({ type: "wheel", x: 1, y: 2, deltaX: Number.NaN, deltaY: 0 })).toBeNull()

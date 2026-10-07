@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { PerspectiveCamera, Scene, Vector2, type WebGLRenderer } from "three"
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest"
-import { HtmlPanel, PANEL_SANDBOX, splitAlpha } from "./html-panel"
+import { HtmlPanel, PANEL_SANDBOX, defaultPixelRatio, splitAlpha } from "./html-panel"
 import { PanelKeyboard } from "./panel-keyboard"
 
 describe("splitAlpha", () => {
@@ -11,6 +11,22 @@ describe("splitAlpha", () => {
     expect(splitAlpha("rgb(10 20 30 / 50%)")).toEqual({ rgb: "rgb(10, 20, 30)", alpha: 0.5 })
     expect(splitAlpha("transparent").alpha).toBe(0)
     expect(splitAlpha("#ff0000")).toEqual({ rgb: "#ff0000", alpha: 1 })
+  })
+})
+
+describe("defaultPixelRatio", () => {
+  it("is 1 on phones (coarse pointer, small screen) and 2 elsewhere", () => {
+    const set = (coarse: boolean, shortSide: number) => {
+      vi.stubGlobal("matchMedia", (query: string) => ({ matches: coarse && query.includes("coarse") }))
+      vi.stubGlobal("screen", { width: shortSide, height: shortSide * 2 })
+    }
+    set(true, 390)
+    expect(defaultPixelRatio()).toBe(1)
+    set(true, 1024)
+    expect(defaultPixelRatio()).toBe(2)
+    set(false, 390)
+    expect(defaultPixelRatio()).toBe(2)
+    vi.unstubAllGlobals()
   })
 })
 
@@ -55,6 +71,15 @@ describe("the panel's iframe", () => {
     expect(tokens).toEqual(["allow-scripts", "allow-forms", "allow-popups"])
     expect(tokens).not.toContain("allow-same-origin")
     expect(tokens).not.toContain("allow-popups-to-escape-sandbox")
+  })
+
+  it("draws at 1x on phones, by default", () => {
+    vi.stubGlobal("matchMedia", (query: string) => ({ matches: query.includes("coarse") }))
+    vi.stubGlobal("screen", { width: 390, height: 844 })
+    const panel = open()
+    vi.unstubAllGlobals()
+    // The default page is 800 CSS px wide.
+    expect((panel.material.map!.image as HTMLCanvasElement).width).toBe(800)
   })
 
   it("is not sandboxed by default", () => {
@@ -164,6 +189,27 @@ describe("the panel's iframe", () => {
       port.close()
     })
 
+    it("takes the keyboard during a tap on a text field, and lets it go if the page does not focus one", async () => {
+      const keyboard = new PanelKeyboard()
+      const focus = vi.spyOn(keyboard, "focus")
+      const release = vi.spyOn(keyboard, "release")
+      const panel = open(true, keyboard)
+      const port = connect(panel)
+      // The default page is 800x600: a field at its top left, 200x40.
+      port.postMessage({ type: "editables", boxes: [{ left: 0, top: 0, width: 200, height: 40 }] })
+      await delivered()
+      expect(panel.focusForTyping(new Vector2(0.9, 0.1))).toBe(false)
+      expect(focus).not.toHaveBeenCalled()
+
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] })
+      expect(panel.focusForTyping(new Vector2(0.05, 0.98))).toBe(true)
+      expect(focus).toHaveBeenCalledWith(panel)
+      vi.advanceTimersByTime(1000)
+      expect(release).toHaveBeenCalledWith(panel)
+      vi.useRealTimers()
+      port.close()
+    })
+
     it("takes the keyboard when not sandboxed, as before", async () => {
       const keyboard = new PanelKeyboard()
       const focus = vi.spyOn(keyboard, "focus")
@@ -208,6 +254,15 @@ describe("the panel's iframe", () => {
     // Unchanged: not placed again.
     panel.onBeforeRender(renderer, new Scene(), camera)
     expect(placeIme).toHaveBeenCalledTimes(1)
+
+    // With a finger, the field stays in its corner (iOS would scroll to it).
+    placeIme.mockClear()
+    panel.pointer("down", new Vector2(0.5, 0.5), false, "touch")
+    camera.position.x = 0.1
+    camera.updateMatrixWorld()
+    panel.onBeforeRender(renderer, new Scene(), camera)
+    expect(placeIme).not.toHaveBeenCalled()
+    panel.pointer("down", new Vector2(0.5, 0.5), false, "mouse")
 
     // Once keys no longer go to the panel, its caret does not move the IME.
     keyboard.release(panel)

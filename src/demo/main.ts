@@ -1,11 +1,13 @@
 import {
   AmbientLight,
   BoxGeometry,
-  type BufferGeometry,
+  BufferGeometry,
   Color,
   DirectionalLight,
   GridHelper,
   IcosahedronGeometry,
+  Line,
+  LineBasicMaterial,
   Mesh,
   MeshStandardMaterial,
   PerspectiveCamera,
@@ -17,13 +19,20 @@ import {
   WebGLRenderer
 } from "three"
 import { OrbitControls } from "three/addons/controls/OrbitControls.js"
-import { HtmlPanel, PanelPointer } from "../index"
+import { VRButton } from "three/addons/webxr/VRButton.js"
+import { HtmlPanel, PanelPointer, PanelXRPointer } from "../index"
 import { SCENE_CLICK, parseSceneControl, type SceneControl } from "./scene-events"
 
 const renderer = new WebGLRenderer({ antialias: true })
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2))
 renderer.setSize(innerWidth, innerHeight)
+renderer.xr.enabled = true
 document.body.appendChild(renderer.domElement)
+// A button to enter VR, only where the browser and a headset can (it would
+// otherwise say "VR not supported" over the page).
+void navigator.xr?.isSessionSupported("immersive-vr").then(supported => {
+  if (supported) document.body.appendChild(VRButton.createButton(renderer))
+})
 
 const scene = new Scene()
 scene.background = new Color(0x1d2129)
@@ -69,6 +78,15 @@ const panels = [notes, sceneControls]
 scene.add(...panels)
 new PanelPointer(camera, renderer.domElement, () => panels)
 
+// In VR, each controller points at the panels with a ray; the trigger presses.
+const xrPointer = new PanelXRPointer(renderer, () => panels)
+for (const index of [0, 1]) {
+  const controller = renderer.xr.getController(index)
+  const ray = new BufferGeometry().setFromPoints([new Vector3(0, 0, 0), new Vector3(0, 0, -5)])
+  controller.add(new Line(ray, new LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.6 })))
+  scene.add(controller)
+}
+
 // The object the controls panel drives.
 const geometries: Record<NonNullable<SceneControl["shape"]>, BufferGeometry> = {
   knot: new TorusKnotGeometry(0.16, 0.05, 160, 24),
@@ -111,6 +129,7 @@ addEventListener("resize", () => {
 
 const captionAnchor = new Vector3()
 renderer.setAnimationLoop(() => {
+  xrPointer.update()
   if (spin) object.rotation.y += 0.01
   controls.update()
   renderer.render(scene, camera)

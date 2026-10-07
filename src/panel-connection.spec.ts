@@ -14,6 +14,7 @@ let options: {
   onEditing: Mock
   onCursor: Mock
   onOpen: Mock
+  onEditables: Mock
   onMessage: Mock
   onError: Mock
 }
@@ -58,6 +59,7 @@ beforeEach(() => {
     onEditing: vi.fn(),
     onCursor: vi.fn(),
     onOpen: vi.fn(),
+    onEditables: vi.fn(),
     onMessage: vi.fn(),
     onError: vi.fn()
   }

@@ -32,7 +32,7 @@ import { FrameRenderer } from "./frame-renderer"
 import { PanelConnection } from "./panel-connection"
 import { getSharedKeyboard, type KeyboardTarget, type PanelKeyboard } from "./panel-keyboard"
 import { MAX_PAGE_LENGTH, type HostMessage } from "./protocol"
-import type { Caret, PointerKind } from "./types"
+import type { Box, Caret, PointerInput, PointerKind } from "./types"
 
 export interface HtmlPanelOptions {
   /** The page to show. It must load the agent with this page's origin as its host origin. */
@@ -84,6 +84,18 @@ export const PANEL_SANDBOX = "allow-scripts allow-forms allow-popups"
  */
 const USER_ACTION_MS = 1000
 
+/**
+ * Texture pixels per CSS pixel. Phones get 1: drawing and uploading a page at
+ * 2x costs them about four times as much, and their screens show the panel small.
+ */
+export function defaultPixelRatio(): number {
+  const phone =
+    typeof matchMedia === "function" &&
+    matchMedia("(pointer: coarse)").matches &&
+    Math.min(screen.width, screen.height) < 768
+  return phone ? 1 : 2
+}
+
 /** Opens a link in a new tab, without giving the new page a way back to the host. */
 function openInNewTab(url: URL): void {
   window.open(url.href, "_blank", "noopener,noreferrer")
@@ -130,6 +142,11 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
   private selected = ""
   /** The caret the page reported last, in its CSS pixels, for placing the IME. */
   private caretBox: Caret | null = null
+  /** Where the page's text fields are (CSS px), as it reported last. */
+  private editables: Box[] = []
+  /** What drove the pointer last: the IME is placed at the caret only for a mouse. */
+  private lastInput: PointerInput = "mouse"
+  private keyboardTimer = 0
   /** Where the IME was last placed, to place it again only when it moves. */
   private imePlacement = ""
   private readonly scratch = new Vector3()
@@ -154,7 +171,7 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
     const renderer = new FrameRenderer({
       width: pageWidth,
       height: pageHeight,
-      pixelRatio: options.pixelRatio ?? 2,
+      pixelRatio: options.pixelRatio ?? defaultPixelRatio(),
       background: options.background ?? "#ffffff"
     })
     super(
@@ -197,6 +214,7 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
       height: pageHeight,
       readyTimeout: options.readyTimeout,
       onConnect: () => {
+        this.editables = []
         this.setEditing(false, null)
         this.setCursor("default")
       },
@@ -206,6 +224,7 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
         this.setEditing(editing, caret)
       },
       onCursor: cursor => this.setCursor(cursor),
+      onEditables: boxes => (this.editables = boxes),
       onOpen: url => {
         // Not on its own: a page cannot open tabs, sandboxed or not, unless the user just acted on it.
         if (performance.now() > this.userActionUntil) return
@@ -336,11 +355,12 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
     return !this.sandboxed || this.keyboard.isTarget(this) || performance.now() <= this.userActionUntil
   }
 
-  pointer(kind: PointerKind, uv: Vector2 | null = null, shiftKey = false): void {
+  pointer(kind: PointerKind, uv: Vector2 | null = null, shiftKey = false, input: PointerInput = "mouse"): void {
+    if (kind === "down") this.lastInput = input
     // Only presses and releases (the user acting on this panel) open the window, not hovering.
     if (kind === "down" || kind === "up") this.userActionUntil = performance.now() + USER_ACTION_MS
     const { x, y } = uv ? this.toPage(uv) : { x: 0, y: 0 }
-    this.send({ type: "pointer", kind, x, y, shiftKey })
+    this.send({ type: "pointer", kind, x, y, shiftKey, input })
   }
 
   wheel(uv: Vector2, deltaX: number, deltaY: number): void {
@@ -374,6 +394,9 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
   override onBeforeRender(renderer: WebGLRenderer, _scene: unknown, camera: Camera): void {
     const caret = this.caretBox
     if (!caret || !this.keyboard.isTarget(this)) return
+    // With a soft keyboard, the field stays in its corner: iOS scrolls the page to
+    // show a focused field that the keyboard would cover, and the scene with it.
+    if (this.lastInput !== "mouse") return
     const top = this.toClient(caret.x, caret.y, renderer.domElement, camera)
     const bottom = this.toClient(caret.x, caret.y + caret.height, renderer.domElement, camera)
     // Behind the camera: leave the field where it was.
@@ -383,6 +406,27 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
     if (key === this.imePlacement) return
     this.imePlacement = key
     this.keyboard.placeIme(placement)
+  }
+
+  /**
+   * For a tap on the panel at `uv`, while the touch is still being handled: if it
+   * lands on a text field, takes the keyboard now. iOS shows the soft keyboard
+   * only for focus moved during a touch's own handling, which is long over when
+   * the page hears of the tap. True if it did. If the page then does not focus
+   * a field (the tap was on something over it, say), the keyboard is let go.
+   */
+  focusForTyping(uv: Vector2): boolean {
+    const { x, y } = this.toPage(uv)
+    if (!this.editables.some(box => x >= box.left && x < box.left + box.width && y >= box.top && y < box.top + box.height)) {
+      return false
+    }
+    this.userActionUntil = performance.now() + USER_ACTION_MS
+    this.keyboard.focus(this)
+    window.clearTimeout(this.keyboardTimer)
+    this.keyboardTimer = window.setTimeout(() => {
+      if (!this.editing) this.keyboard.release(this)
+    }, USER_ACTION_MS)
+    return true
   }
 
   /** A point of the page (CSS pixels) on screen (client pixels of the canvas's page), or null behind the camera. */
@@ -416,6 +460,7 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
 
   dispose(): void {
     window.clearInterval(this.caretTimer)
+    window.clearTimeout(this.keyboardTimer)
     this.connection.dispose()
     this.keyboard.release(this)
     this.keyboard.unregister(this.iframe)

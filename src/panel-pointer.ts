@@ -12,9 +12,17 @@
 //
 // While the pointer is over a panel (or dragging in one), the canvas shows the
 // mouse cursor the page asks for there.
+//
+// Touch: a drag in a panel scrolls it (in the page, see agent/input/pan.ts). A
+// tap on a text field takes the keyboard while the touchend is handled, which
+// is when iOS opens its soft keyboard (HtmlPanel.focusForTyping).
 
 import { Raycaster, Vector2, type Camera } from "three"
 import type { HtmlPanel } from "./html-panel"
+import type { PointerInput } from "./types"
+
+/** A pen acts like a finger: it drags to scroll. */
+const inputOf = (event: PointerEvent): PointerInput => (event.pointerType === "mouse" ? "mouse" : "touch")
 
 const LINE_HEIGHT_PX = 16
 
@@ -40,9 +48,10 @@ export class PanelPointer {
     element.addEventListener("wheel", this.onWheel, { capture: true, passive: false })
     // Keep keyboard focus where it is (the panel keyboard) when pressing a panel.
     element.addEventListener("mousedown", this.onMouseDown, true)
+    element.addEventListener("touchend", this.onTouchEnd, { capture: true, passive: false })
   }
 
-  private setRay(event: PointerEvent | WheelEvent | MouseEvent): void {
+  private setRay(event: { clientX: number; clientY: number }): void {
     const rect = this.element.getBoundingClientRect()
     const ndc = new Vector2(
       ((event.clientX - rect.left) / rect.width) * 2 - 1,
@@ -52,7 +61,7 @@ export class PanelPointer {
   }
 
   /** The nearest panel under the pointer and the texture coordinate hit. */
-  private pick(event: PointerEvent | WheelEvent | MouseEvent): { panel: HtmlPanel; uv: Vector2 } | null {
+  private pick(event: { clientX: number; clientY: number }): { panel: HtmlPanel; uv: Vector2 } | null {
     this.setRay(event)
     const hit = this.raycaster.intersectObjects(this.panels() as HtmlPanel[], false)[0]
     if (!hit?.uv) return null
@@ -69,7 +78,7 @@ export class PanelPointer {
     this.element.setPointerCapture(event.pointerId)
     this.pressed = { panel: hit.panel, pointerId: event.pointerId }
     this.hover(hit.panel)
-    hit.panel.pointer("down", hit.uv, event.shiftKey)
+    hit.panel.pointer("down", hit.uv, event.shiftKey, inputOf(event))
   }
 
   private readonly onPointerMove = (event: PointerEvent) => {
@@ -77,12 +86,12 @@ export class PanelPointer {
       if (event.pointerId !== this.pressed.pointerId) return
       this.setRay(event)
       const uv = this.pressed.panel.uvFromRay(this.raycaster.ray)
-      if (uv) this.pressed.panel.pointer("move", uv, event.shiftKey)
+      if (uv) this.pressed.panel.pointer("move", uv, event.shiftKey, inputOf(event))
       return
     }
     const hit = this.pick(event)
     this.hover(hit?.panel ?? null)
-    if (hit) hit.panel.pointer("move", hit.uv, event.shiftKey)
+    if (hit) hit.panel.pointer("move", hit.uv, event.shiftKey, inputOf(event))
   }
 
   private readonly onPointerUp = (event: PointerEvent) => {
@@ -91,7 +100,7 @@ export class PanelPointer {
     this.pressed = null
     this.setRay(event)
     const uv = pressed.panel.uvFromRay(this.raycaster.ray) ?? new Vector2(-1, -1)
-    pressed.panel.pointer("up", uv)
+    pressed.panel.pointer("up", uv, false, inputOf(event))
     // A touch has no hover after it lifts.
     if (event.pointerType === "touch") this.hover(null)
     this.updateCursor()
@@ -99,6 +108,16 @@ export class PanelPointer {
 
   private readonly onPointerLeave = () => {
     if (!this.pressed) this.hover(null)
+  }
+
+  private readonly onTouchEnd = (event: TouchEvent) => {
+    const touch = event.changedTouches[0]
+    if (!touch || event.touches.length > 0) return
+    const hit = this.pick(touch)
+    if (!hit?.panel.focusForTyping(hit.uv)) return
+    // The browser would follow with compatibility mouse events on the canvas, and
+    // its mousedown would take the focus straight back from the keyboard's field.
+    event.preventDefault()
   }
 
   private readonly onMouseDown = (event: MouseEvent) => {
@@ -151,5 +170,6 @@ export class PanelPointer {
     this.element.removeEventListener("pointerleave", this.onPointerLeave)
     this.element.removeEventListener("wheel", this.onWheel, true)
     this.element.removeEventListener("mousedown", this.onMouseDown, true)
+    this.element.removeEventListener("touchend", this.onTouchEnd, true)
   }
 }

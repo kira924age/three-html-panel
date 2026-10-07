@@ -13,6 +13,7 @@
 //   selecting text by dragging, double click (word) and triple click (line)
 // - click and dblclick, only when the pointer did not move in between
 // - wheel scrolling, and text editing in <input>/<textarea> (editing.ts)
+// - scrolling by dragging a finger or a VR controller, as touch does (pan.ts)
 // - scrollbars: dragging the thumb, paging by pressing (and holding) the
 //   track (the scrollbars in the image are the agent's own, see scrollbars.ts)
 //
@@ -22,8 +23,9 @@
 import { caretAt, indexFromPoint, isTextField, revealIndex, verticalIndex, type Composition, type TextField } from "./caret"
 import { editAction, lineEnd, lineStart, wordAt } from "./editing"
 import { EditHistory, type FieldState } from "./history"
+import { PAN_START_DISTANCE, panAxes, type PanAxes } from "./pan"
 import { contains, hitBox, maxScroll, scrollbarAt, scrollbarsOf, thumbTravel, type Axis, type Scrollbar } from "./scrollbars"
-import type { FrameWindow, PanelInput } from "../../types"
+import type { FrameWindow, PanelInput, PointerInput } from "../../types"
 
 const POINTER_ID = 1
 /** Movement (CSS px) after which a press is a drag, not a click. */
@@ -153,6 +155,17 @@ export interface InputSynthesizerOptions {
   onChange: () => void
 }
 
+/** A finger or controller drag that may scroll, from where it was pressed. */
+interface Pan {
+  target: Element
+  scroller: Element
+  axes: PanAxes
+  start: { x: number; y: number }
+  last: { x: number; y: number }
+  /** It has started scrolling (and the page got pointercancel). */
+  active: boolean
+}
+
 interface Press {
   target: Element
   x: number
@@ -193,6 +206,9 @@ export class InputSynthesizer {
     position: number
   } | null = null
   private pageTimer = 0
+  /** What drives the pointer now, and the drag it may be scrolling. */
+  private pointerInput: PointerInput = "mouse"
+  private pan: Pan | null = null
   /** The scrollbar the pointer hovers (it is not part of the page). */
   private hoveredScrollbar: Scrollbar | null = null
 
@@ -208,7 +224,7 @@ export class InputSynthesizer {
   handle(input: PanelInput): void {
     switch (input.type) {
       case "pointer":
-        if (input.kind === "down") this.pointerDown(input.x, input.y, input.shiftKey === true)
+        if (input.kind === "down") this.pointerDown(input.x, input.y, input.shiftKey === true, input.input ?? "mouse")
         else if (input.kind === "move") this.pointerMove(input.x, input.y)
         else if (input.kind === "up") this.pointerUp(input.x, input.y)
         else {
@@ -443,7 +459,8 @@ export class InputSynthesizer {
       buttons,
       relatedTarget,
       pointerId: POINTER_ID,
-      pointerType: "mouse",
+      // A VR controller acts as a mouse to the page (it hovers, and has no touch events).
+      pointerType: this.pointerInput === "touch" ? "touch" : "mouse",
       isPrimary: true,
       width: 1,
       height: 1,
@@ -490,8 +507,10 @@ export class InputSynthesizer {
     this.hoverTarget = target
   }
 
-  private pointerDown(x: number, y: number, shiftKey: boolean): void {
+  private pointerDown(x: number, y: number, shiftKey: boolean, input: PointerInput = "mouse"): void {
     this.pointer = { x, y }
+    this.pointerInput = input
+    this.pan = null
     // Like a real scrollbar, pressing one is not a press on the page.
     const bar = scrollbarAt(this.document, x, y)
     if (bar) {
@@ -512,6 +531,8 @@ export class InputSynthesizer {
     const init = this.pointerInit(x, y, 1)
     const pointerOk = target.dispatchEvent(this.pointerEvent("pointerdown", init))
     this.press = { target, x, y, moved: false, mouseEvents: pointerOk }
+    // A finger or controller drag scrolls, unless the page took the press (cancelled it).
+    if (input !== "mouse" && pointerOk) this.pan = this.startPan(target, x, y)
     // Cancelling pointerdown suppresses the compatibility mouse events, and with
     // them the default action of mousedown (focusing).
     if (pointerOk && target.dispatchEvent(this.mouseEvent("mousedown", { ...init, detail: count, shiftKey }))) {
@@ -525,6 +546,9 @@ export class InputSynthesizer {
       this.dragScrollbar(x, y)
       return
     }
+    // Once the page captures the pointer, the drag is the page's.
+    if (this.captureTarget) this.pan = null
+    if (this.pan && this.updatePan(this.pan, x, y)) return
     this.hoveredScrollbar = this.press ? null : scrollbarAt(this.document, x, y)
     const target = this.hitTest(x, y)
     this.updateHover(target, x, y)
@@ -545,6 +569,15 @@ export class InputSynthesizer {
       return
     }
     this.textDrag = null
+    const pan = this.pan
+    this.pan = null
+    // A drag that scrolled already ended for the page (pointercancel): no pointerup, no click.
+    if (pan?.active) {
+      this.press = null
+      this.active.clear()
+      this.updateHover(this.hitTest(x, y), x, y)
+      return
+    }
     const target = this.hitTest(x, y)
     const press = this.press
     const destination = this.captureTarget?.isConnected ? this.captureTarget : target
@@ -573,6 +606,47 @@ export class InputSynthesizer {
     } else {
       this.lastClick = { time: now, x, y }
     }
+  }
+
+  // --- Drag scrolling ---------------------------------------------------------
+
+  /** What a drag from `target` would scroll, and in which directions; null if nothing. */
+  private startPan(target: Element, x: number, y: number): Pan | null {
+    const touchActions = ancestors(target).map(element => this.window.getComputedStyle(element).touchAction ?? "")
+    const axes = panAxes(touchActions)
+    if (!axes.x && !axes.y) return null
+    const scroller = this.panScroller(target, axes)
+    if (!scroller) return null
+    return { target, scroller, axes, start: { x, y }, last: { x, y }, active: false }
+  }
+
+  /** The nearest element that can scroll in an allowed direction, or the document's scroller. */
+  private panScroller(target: Element, axes: PanAxes): Element | null {
+    for (const element of ancestors(target)) {
+      const style = this.window.getComputedStyle(element)
+      const y = axes.y && /(auto|scroll|overlay)/.test(style.overflowY) && element.scrollHeight > element.clientHeight + 1
+      const x = axes.x && /(auto|scroll|overlay)/.test(style.overflowX) && element.scrollWidth > element.clientWidth + 1
+      if (x || y) return element
+    }
+    const root = this.document.scrollingElement
+    if (!root) return null
+    return root.scrollHeight > root.clientHeight + 1 || root.scrollWidth > root.clientWidth + 1 ? root : null
+  }
+
+  /** Follows the drag: true once it scrolls (and the page gets no more pointer events for it). */
+  private updatePan(pan: Pan, x: number, y: number): boolean {
+    if (!pan.active) {
+      const dx = pan.axes.x ? Math.abs(x - pan.start.x) : 0
+      const dy = pan.axes.y ? Math.abs(y - pan.start.y) : 0
+      if (Math.max(dx, dy) < PAN_START_DISTANCE) return false
+      // Browsers send pointercancel when a touch turns into a scroll.
+      pan.active = true
+      this.textDrag = null
+      pan.target.dispatchEvent(this.pointerEvent("pointercancel", this.pointerInit(x, y, 0)))
+    }
+    pan.scroller.scrollBy(pan.axes.x ? pan.last.x - x : 0, pan.axes.y ? pan.last.y - y : 0)
+    pan.last = { x, y }
+    return true
   }
 
   // --- Scrollbars ------------------------------------------------------------
