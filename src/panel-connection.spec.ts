@@ -110,6 +110,55 @@ describe("ready", () => {
   })
 })
 
+describe("ready with a sandbox", () => {
+  /** Replaces the connection with one for a sandboxed iframe (or not). */
+  function connectionFor(sandboxed: boolean): void {
+    connection.dispose()
+    connection = new PanelConnection({ iframe, origin: ORIGIN, sandboxed, width: 800, height: 600, ...options })
+  }
+
+  it("accepts ready from the sandboxed iframe's opaque origin, and addresses connect to it with \"*\"", () => {
+    connectionFor(true)
+    ready("null")
+    expect(postToFrame).toHaveBeenCalledTimes(1)
+    const [message, targetOrigin, transfer] = postToFrame.mock.calls[0]!
+    expect(message).toEqual({ type: "connect", version: PROTOCOL_VERSION })
+    expect(targetOrigin).toBe("*")
+    expect(transfer).toHaveLength(1)
+  })
+
+  it("ignores ready from the panel URL's origin when sandboxed (the page cannot be there)", () => {
+    connectionFor(true)
+    ready(ORIGIN)
+    ready("https://evil.example")
+    expect(postToFrame).not.toHaveBeenCalled()
+  })
+
+  it("ignores ready from an opaque origin, or another one, when not sandboxed", () => {
+    connectionFor(false)
+    ready("null")
+    ready("https://evil.example")
+    expect(postToFrame).not.toHaveBeenCalled()
+    ready(ORIGIN)
+    expect(postToFrame.mock.calls[0]![1]).toBe(ORIGIN)
+  })
+
+  it("ignores ready from another iframe or the host itself, sandboxed or not", () => {
+    const other = document.createElement("iframe")
+    document.body.appendChild(other)
+    for (const sandboxed of [true, false]) {
+      connectionFor(sandboxed)
+      const origin = sandboxed ? "null" : ORIGIN
+      ready(origin, other.contentWindow)
+      ready(origin, window)
+      ready(origin, null)
+    }
+    other.remove()
+    expect(postToFrame).not.toHaveBeenCalled()
+    expect(options.onConnect).not.toHaveBeenCalled()
+  })
+})
+
 describe("port messages", () => {
   it("passes on valid messages and drops invalid ones", async () => {
     ready()

@@ -20,7 +20,31 @@ A proof of concept for placing **an existing web page, scripts included, as an i
 └───────────────────────────────────────────┘          └────────────────────────────┘
 ```
 
-**Only show pages you trust.** The iframe is not sandboxed, so the page runs as an ordinary page of its origin (and a same-origin page with the host's privileges). The host does check everything the agent sends: messages are accepted only from the panel's iframe on the panel URL's origin, through a private `MessagePort`, and frames and carets are bounded in size and validated. Choose panel URLs in code; never take them from user input or synced state.
+## Trust: `sandbox`
+
+A panel is either trusted or not, and `HtmlPanel`'s `sandbox` option says which. Either way, the host checks the shape and size of everything the agent sends, and accepts it only through the `MessagePort` it handed to the panel's iframe.
+
+**`sandbox: false` (the default): only show pages you trust.** The iframe is not sandboxed, so the page runs as an ordinary page of its origin. A page on the host's own origin runs with the host's privileges: it can read the host's cookies and storage and reach into the host's document. This is not forbidden (`pnpm build` could serve the demo from one origin), but choose such URLs in code; never take them from user input or synced state.
+
+**`sandbox: true`: for pages you do not trust.** The iframe gets `sandbox="allow-scripts allow-forms allow-popups"`, before its `src` is set, and never `allow-same-origin` (with it, a page on the host's origin could reach into the host and remove its own sandbox) nor `allow-popups-to-escape-sandbox`; there is no way to add them. The page then runs on an opaque origin (`self.origin` is `"null"`): it cannot read the host's cookies, storage, tokens or document, and its own `document.cookie` and `localStorage` throw `SecurityError`. It also cannot take the keyboard:
+
+- if the page moves real focus into its iframe (`window.focus()`, a label's click, …), the host gives it back at once to where it was, or else blurs the iframe;
+- if the page focuses one of its text fields (or its agent claims so), the host only moves the keyboard to the panel within a second of the user pressing that panel; otherwise it tells the page to let go.
+
+A page that keeps taking focus can still catch a key typed in the instant before focus is back (in our tests, with a page taking focus every 30 ms: about 1 key in 60 lost in Chrome, none in Playwright's Firefox and WebKit builds). The host cannot stop a page from trying.
+
+With a sandbox, the host can only tell which iframe a message comes from, not which page: any document in that iframe, including one the page navigated to on its own, can act as the panel. So send through the port only what any page in that iframe may see (the input the user gives that panel, and app messages meant for it), and treat everything that comes back as untrusted (`onMessage` data included).
+
+### Serving sandboxed pages
+
+- Send the same sandbox with the page: `Content-Security-Policy: sandbox allow-scripts allow-forms allow-popups`. The iframe's attribute only holds inside this host; the header also holds when the page is opened directly or embedded elsewhere.
+- From a sandboxed page, its own scripts (module scripts are fetched with CORS), CSS, images and API are on another origin, `null`. Answer them with `Access-Control-Allow-Origin` (`*` for public files, or `null`); the agent also needs it to fetch the page's CSS and images again. Anything any sandboxed page may read, any site may read, so keep private data out of such responses.
+
+The demo's panel server does both (`vite.panels.config.ts`).
+
+### Writing pages that run sandboxed
+
+`localStorage`, `sessionStorage`, IndexedDB, cookies and `window.parent` are not available (they throw or are cross-origin). Keep state on the server, and talk to the host with `sendToHost` / `onHostMessage`.
 
 ## Run
 
@@ -34,7 +58,7 @@ pnpm dev
 - http://localhost:5173: the 3D scene. Open this one.
 - http://localhost:5174: the panel pages, on purpose another origin. It adds the agent to every page under `panels/` (`vite.panels.config.ts`).
 
-The ports come from `.env.development`. The demo shows two pages:
+The ports come from `.env.development`. The demo shows two pages, both with `sandbox: true`:
 
 - `panels/notes/`: a sticky-note board (drag, double-click, typing, hover, a CSS animation, scrolling). It is an ordinary page with no knowledge of the panel.
 - `panels/controls/`: a form that drives the 3D object next to it (shape, color, spin, caption), and counts clicks on the object. Being on another origin, it cannot reach the scene's window; it uses the agent's app messages (see below).
@@ -50,7 +74,7 @@ On the host:
 ```ts
 import { HtmlPanel, PanelPointer } from "./src"
 
-const panel = new HtmlPanel({ url: "https://panels.example/notes/", width: 960, height: 640, size: 1.6 })
+const panel = new HtmlPanel({ url: "https://panels.example/notes/", width: 960, height: 640, size: 1.6, sandbox: true })
 scene.add(panel)
 new PanelPointer(camera, renderer.domElement, () => [panel])
 ```
@@ -94,7 +118,7 @@ panel.postMessage("scene-click")
 ### Protocol
 
 1. The agent posts `{ type: "ready", version }` to `window.parent`, addressed to the host origin.
-2. The host accepts it only if `event.source` is the panel's iframe and `event.origin` is the panel URL's origin, creates a `MessageChannel`, and posts `{ type: "connect", version }` with one port to the iframe, addressed to that origin.
+2. The host accepts it only if `event.source` is the panel's iframe (`iframe.contentWindow`) and `event.origin` is the panel URL's origin, or `"null"` with `sandbox: true`. It creates a `MessageChannel` and posts `{ type: "connect", version }` with one port to the iframe, addressed to the panel URL's origin, or with `sandbox: true` to `"*"`: an opaque origin cannot be named. Posted to `contentWindow`, it still only reaches the document now in that iframe.
 3. From then on, only the port is used: `frame` (seq, width, height, svg), `editing` (editing, caret) and `cursor` (a CSS cursor keyword) from the page; `pointer` (with `shiftKey`), `wheel`, `key`, `text`, `blur` from the host; `app` both ways.
 4. After every `load` of the iframe, the host sends `ping` and starts the timeout; the agent answers `pong`. Only the agent of the document now loaded can answer (an unloaded document's port is dead), so this tells whether the new document has an agent. The order of `ready` and `load` cannot tell: `ready` sometimes arrives after `load`.
 

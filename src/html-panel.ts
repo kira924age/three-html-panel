@@ -7,8 +7,12 @@
 // with the agent (panel-connection.ts) and never reads the page's document, so
 // the page can be on another origin.
 //
-// The iframe is not sandboxed. Only show pages you trust, from URLs you choose,
-// never from user input or synced room state.
+// With `sandbox: true`, the iframe is sandboxed without allow-same-origin: the
+// page runs on an opaque origin and cannot reach the host's cookies, storage or
+// document, nor take the keyboard. It is not trusted; everything it sends is
+// checked. Without it, the page runs as an ordinary page of its origin (a page
+// on the host's origin with the host's privileges): only show pages you trust,
+// from URLs you choose, never from user input or synced room state.
 
 import {
   BackSide,
@@ -31,6 +35,11 @@ import type { Caret, PointerKind } from "./types"
 export interface HtmlPanelOptions {
   /** The page to show. It must load the agent with this page's origin as its host origin. */
   url: string | URL
+  /**
+   * Runs the page in a sandboxed iframe (allow-scripts allow-forms allow-popups,
+   * never allow-same-origin), for pages that are not trusted. Default false.
+   */
+  sandbox?: boolean
   /** The page's layout width in CSS pixels. */
   width?: number
   /** The page's layout height in CSS pixels. */
@@ -53,6 +62,19 @@ export interface HtmlPanelOptions {
 
 const CARET_BLINK_MS = 530
 
+/**
+ * The sandbox of an untrusted panel. Never allow-same-origin: with it, a page on
+ * the host's origin could reach into the host and remove its own sandbox. Nor
+ * allow-popups-to-escape-sandbox. Not configurable on purpose.
+ */
+export const PANEL_SANDBOX = "allow-scripts allow-forms allow-popups"
+
+/**
+ * How long after the user presses a sandboxed panel its page may take the
+ * keyboard (by focusing a text field, which the agent reports as editing).
+ */
+const KEYBOARD_GRANT_MS = 1000
+
 const RGBA = /^rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)\s*(?:[,/]\s*([\d.]+)(%?)\s*)?\)$/
 
 /** A CSS color as an opaque color and an alpha. THREE.Color ignores alpha (with a warning). */
@@ -74,6 +96,7 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
   readonly iframe = document.createElement("iframe")
   /** The origin the page is expected on; messages from anywhere else are ignored. */
   readonly origin: string
+  readonly sandboxed: boolean
   readonly pageWidth: number
   readonly pageHeight: number
   readonly worldWidth: number
@@ -89,6 +112,8 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
   private readonly onError: (error: Error) => void
   private readonly connection: PanelConnection
   private editing = false
+  /** Until when a sandboxed page may take the keyboard: shortly after the user pressed the panel. */
+  private keyboardGrantUntil = -Infinity
 
   constructor(options: HtmlPanelOptions) {
     const url = new URL(options.url, location.href)
@@ -117,6 +142,7 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
     )
     this.renderer = renderer
     this.origin = url.origin
+    this.sandboxed = options.sandbox === true
     this.pageWidth = pageWidth
     this.pageHeight = pageHeight
     this.worldWidth = pageWidth * scale
@@ -145,6 +171,7 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
     this.connection = new PanelConnection({
       iframe: this.iframe,
       origin: this.origin,
+      sandboxed: this.sandboxed,
       width: pageWidth,
       height: pageHeight,
       readyTimeout: options.readyTimeout,
@@ -167,6 +194,8 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
 
   private openFrame(url: URL, container: HTMLElement): void {
     const iframe = this.iframe
+    // Before src: a page that starts loading without the sandbox runs without it.
+    if (this.sandboxed) iframe.setAttribute("sandbox", PANEL_SANDBOX)
     iframe.tabIndex = -1
     iframe.setAttribute("aria-hidden", "true")
     iframe.title = "panel"
@@ -185,7 +214,7 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
       zIndex: "-1",
       colorScheme: "light"
     })
-    this.keyboard.register(iframe)
+    this.keyboard.register(iframe, { sandboxed: this.sandboxed })
     iframe.src = url.href
     container.appendChild(iframe)
   }
@@ -197,6 +226,14 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
   }
 
   private setEditing(editing: boolean, caret: Caret | null): void {
+    if (editing && !this.editing && !this.mayTakeKeyboard()) {
+      // A sandboxed page focused a field on its own (or says it did: the page
+      // runs the agent and can send anything). It must not take the keys the
+      // user is typing elsewhere; undo its focus instead.
+      this.send({ type: "blur" })
+      editing = false
+      caret = null
+    }
     if (editing && !this.editing) this.keyboard.focus(this)
     if (!editing && this.editing) this.keyboard.release(this)
     this.editing = editing
@@ -257,7 +294,18 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
     return new Vector2(local.x / this.worldWidth + 0.5, local.y / this.worldHeight + 0.5)
   }
 
+  /**
+   * Whether the page may take the keyboard now. A trusted page always may. A
+   * sandboxed one only right after the user pressed the panel (focusing the
+   * field pressed, or one a button press opens), or while it has the keyboard.
+   */
+  private mayTakeKeyboard(): boolean {
+    return !this.sandboxed || this.keyboard.isTarget(this) || performance.now() <= this.keyboardGrantUntil
+  }
+
   pointer(kind: PointerKind, uv: Vector2 | null = null, shiftKey = false): void {
+    // Only presses and releases (the user acting on this panel) open the window, not hovering.
+    if (kind === "down" || kind === "up") this.keyboardGrantUntil = performance.now() + KEYBOARD_GRANT_MS
     const { x, y } = uv ? this.toPage(uv) : { x: 0, y: 0 }
     this.send({ type: "pointer", kind, x, y, shiftKey })
   }
@@ -276,6 +324,9 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
   }
 
   blurFromHost(): void {
+    // The host decides: editing ends now, whatever the page reports later.
+    this.editing = false
+    this.updateCaret(null)
     this.send({ type: "blur" })
   }
 
@@ -283,6 +334,8 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
   blur(): void {
     if (!this.editing) return
     this.keyboard.release(this)
+    this.editing = false
+    this.updateCaret(null)
     this.send({ type: "blur" })
   }
 
