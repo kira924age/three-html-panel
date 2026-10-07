@@ -1,6 +1,8 @@
-// The development server for the panel pages, on another origin than the
-// scene (vite.config.ts starts it). It adds the panel agent to every page
-// under panels/, the way a server or proxy in front of an existing site could.
+// The server for the panel pages, on another origin than the scene
+// (vite.config.ts starts it with `pnpm dev` and `pnpm preview`). In
+// development it adds the panel agent to every page under panels/, the way a
+// server or proxy in front of an existing site could; a build has the tag
+// already (vite.config.ts uses the same plugin).
 
 import { posix } from "node:path"
 import { defineConfig, loadEnv, type Plugin } from "vite"
@@ -41,15 +43,13 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, import.meta.dirname, "VITE_")
   const hostOrigin = env.VITE_HOST_ORIGIN!
   const panelPort = Number(new URL(env.VITE_PANEL_ORIGIN!).port)
+  // Only the scene's origin may read from this server with CORS.
+  const server = { port: panelPort, strictPort: true, cors: { origin: hostOrigin } }
   return {
     root: import.meta.dirname,
     clearScreen: false,
-    server: {
-      port: panelPort,
-      strictPort: true,
-      // Only the scene's origin may read from this server with CORS.
-      cors: { origin: hostOrigin }
-    },
+    server,
+    preview: server,
     plugins: [injectPanelAgent(hostOrigin)]
   }
 })

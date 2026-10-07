@@ -56,7 +56,9 @@ export class PanelAgent {
   ) {
     this.capture = new PageCapture(window.document, {
       onFrame: frame => this.post({ type: "frame", seq: this.seq++, ...frame }),
-      onEditing: (editing, caret) => this.post({ type: "editing", editing, caret })
+      onEditing: (editing, caret) => this.post({ type: "editing", editing, caret }),
+      // "" (not over the page) goes as "default"; the host stops using it when the pointer leaves anyway.
+      onCursor: cursor => this.post({ type: "cursor", cursor: cursor || "default" })
     })
     window.addEventListener("message", this.onWindowMessage)
     window.addEventListener(PAGE_MESSAGE_EVENT, this.onPageMessage)
@@ -99,6 +101,8 @@ export class PanelAgent {
     if (!message) return
     if (message.type === "app") {
       this.window.dispatchEvent(new CustomEvent(HOST_MESSAGE_EVENT, { detail: message.data }))
+    } else if (message.type === "ping") {
+      this.post({ type: "pong" })
     } else {
       this.capture.handle(message)
     }

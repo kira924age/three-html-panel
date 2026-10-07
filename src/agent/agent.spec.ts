@@ -104,6 +104,16 @@ describe("connecting", () => {
     expect(parent.postMessage).toHaveBeenCalledTimes(1)
   })
 
+  it("answers the host's ping, so the host knows this document has an agent", async () => {
+    start()
+    const host = connect()
+    const received: { type: string }[] = []
+    host.onmessage = event => received.push(event.data)
+    host.postMessage({ type: "ping" })
+    await delivered()
+    expect(received).toContainEqual({ type: "pong" })
+  })
+
   it("does not send anything before it is connected", async () => {
     start()
     sendToHost({ shape: "box" })

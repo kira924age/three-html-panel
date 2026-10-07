@@ -9,7 +9,7 @@ export type PointerKind = "down" | "move" | "up" | "leave"
 
 /** Input for a panel, in CSS pixels of the panel page. */
 export type PanelInput =
-  | { type: "pointer"; kind: PointerKind; x: number; y: number }
+  | { type: "pointer"; kind: PointerKind; x: number; y: number; shiftKey?: boolean }
   | { type: "wheel"; x: number; y: number; deltaX: number; deltaY: number }
   | {
       type: "key"
@@ -22,6 +22,14 @@ export type PanelInput =
   | { type: "text"; text: string }
   /** Keyboard focus left the panel from the host side (the user pressed elsewhere). */
   | { type: "blur" }
+
+/** A rectangle in CSS pixels of the panel page (viewport coordinates). */
+export interface Box {
+  left: number
+  top: number
+  width: number
+  height: number
+}
 
 /** A text caret in CSS pixels of the panel page. */
 export interface Caret {

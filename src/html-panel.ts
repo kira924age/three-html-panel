@@ -10,7 +10,18 @@
 // The iframe is not sandboxed. Only show pages you trust, from URLs you choose,
 // never from user input or synced room state.
 
-import { BackSide, DoubleSide, Mesh, MeshBasicMaterial, Plane, PlaneGeometry, Vector2, Vector3, type Ray } from "three"
+import {
+  BackSide,
+  DoubleSide,
+  Mesh,
+  MeshBasicMaterial,
+  Plane,
+  PlaneGeometry,
+  Vector2,
+  Vector3,
+  type Object3DEventMap,
+  type Ray
+} from "three"
 import { FrameRenderer } from "./frame-renderer"
 import { PanelConnection } from "./panel-connection"
 import { getSharedKeyboard, type KeyboardTarget, type PanelKeyboard } from "./panel-keyboard"
@@ -42,7 +53,24 @@ export interface HtmlPanelOptions {
 
 const CARET_BLINK_MS = 530
 
-export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial> implements KeyboardTarget {
+const RGBA = /^rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)\s*(?:[,/]\s*([\d.]+)(%?)\s*)?\)$/
+
+/** A CSS color as an opaque color and an alpha. THREE.Color ignores alpha (with a warning). */
+export function splitAlpha(css: string): { rgb: string; alpha: number } {
+  if (css === "transparent") return { rgb: "rgb(0, 0, 0)", alpha: 0 }
+  const match = RGBA.exec(css)
+  if (!match) return { rgb: css, alpha: 1 }
+  const [, r, g, b, a, percent] = match
+  const alpha = a === undefined ? 1 : Number(a) / (percent ? 100 : 1)
+  return { rgb: `rgb(${r}, ${g}, ${b})`, alpha: Math.min(1, Math.max(0, alpha)) }
+}
+
+export interface HtmlPanelEventMap extends Object3DEventMap {
+  /** `cursor` changed. */
+  cursorchange: {}
+}
+
+export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelEventMap> implements KeyboardTarget {
   readonly iframe = document.createElement("iframe")
   /** The origin the page is expected on; messages from anywhere else are ignored. */
   readonly origin: string
@@ -50,6 +78,8 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial> implements
   readonly pageHeight: number
   readonly worldWidth: number
   readonly worldHeight: number
+  /** The mouse cursor the page asks for where the pointer is, as a CSS keyword. */
+  cursor = "default"
 
   private readonly renderer: FrameRenderer
   private readonly keyboard: PanelKeyboard
@@ -100,7 +130,10 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial> implements
     this.add(this.back)
 
     // The caret is drawn on top of the texture, so blinking does not re-upload it.
-    this.caret = new Mesh(new PlaneGeometry(1, 1), new MeshBasicMaterial({ side: DoubleSide, depthWrite: false }))
+    this.caret = new Mesh(
+      new PlaneGeometry(1, 1),
+      new MeshBasicMaterial({ side: DoubleSide, depthWrite: false, transparent: true })
+    )
     this.caret.raycast = () => {}
     this.caret.visible = false
     this.caret.renderOrder = 1
@@ -115,9 +148,13 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial> implements
       width: pageWidth,
       height: pageHeight,
       readyTimeout: options.readyTimeout,
-      onConnect: () => this.setEditing(false, null),
+      onConnect: () => {
+        this.setEditing(false, null)
+        this.setCursor("default")
+      },
       onFrame: frame => this.renderer.submit(frame),
       onEditing: (editing, caret) => this.setEditing(editing, caret),
+      onCursor: cursor => this.setCursor(cursor),
       onMessage: data => options.onMessage?.(data),
       onError: error => {
         this.renderer.clear()
@@ -153,6 +190,12 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial> implements
     container.appendChild(iframe)
   }
 
+  private setCursor(cursor: string): void {
+    if (cursor === this.cursor) return
+    this.cursor = cursor
+    this.dispatchEvent({ type: "cursorchange" })
+  }
+
   private setEditing(editing: boolean, caret: Caret | null): void {
     if (editing && !this.editing) this.keyboard.focus(this)
     if (!editing && this.editing) this.keyboard.release(this)
@@ -161,6 +204,9 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial> implements
   }
 
   private updateCaret(caret: Caret | null): void {
+    const color = caret ? splitAlpha(caret.color) : null
+    // A transparent caret (caret-color: transparent) is how a page hides it.
+    if (color?.alpha === 0) caret = null
     this.caret.userData.hasCaret = caret !== null
     this.caret.visible = caret !== null
     if (!caret) return
@@ -172,7 +218,8 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial> implements
       (0.5 - (caret.y + caret.height / 2) / this.pageHeight) * this.worldHeight,
       0.0005
     )
-    this.caret.material.color.setStyle(caret.color)
+    this.caret.material.color.setStyle(color!.rgb)
+    this.caret.material.opacity = color!.alpha
   }
 
   private send(message: HostMessage): void {
@@ -210,9 +257,9 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial> implements
     return new Vector2(local.x / this.worldWidth + 0.5, local.y / this.worldHeight + 0.5)
   }
 
-  pointer(kind: PointerKind, uv: Vector2 | null = null): void {
+  pointer(kind: PointerKind, uv: Vector2 | null = null, shiftKey = false): void {
     const { x, y } = uv ? this.toPage(uv) : { x: 0, y: 0 }
-    this.send({ type: "pointer", kind, x, y })
+    this.send({ type: "pointer", kind, x, y, shiftKey })
   }
 
   wheel(uv: Vector2, deltaX: number, deltaY: number): void {

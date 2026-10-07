@@ -9,20 +9,34 @@
 //
 // - hover/enter/leave bookkeeping, and the :hover/:active state (via attributes)
 // - pointer capture, which throws for a pointer the browser does not know
-// - focus (see VirtualFocus), and placing the caret where a field was pressed
+// - focus (see VirtualFocus), and placing the caret where a field was pressed;
+//   selecting text by dragging, double click (word) and triple click (line)
 // - click and dblclick, only when the pointer did not move in between
-// - wheel scrolling, and text editing in <input>/<textarea>
+// - wheel scrolling, and text editing in <input>/<textarea> (editing.ts)
+// - scrollbars: dragging the thumb, paging by pressing (and holding) the
+//   track (the scrollbars in the image are the agent's own, see scrollbars.ts)
 //
 // Events are constructed from the page's own window, so that they belong to
 // the page's realm like events the browser would dispatch there.
 
-import { indexFromPoint, isTextField, type TextField } from "./caret"
+import { caretAt, indexFromPoint, isTextField, revealIndex, verticalIndex, type TextField } from "./caret"
+import { editAction, lineEnd, lineStart, wordAt } from "./editing"
+import { contains, hitBox, maxScroll, scrollbarAt, scrollbarsOf, thumbTravel, type Axis, type Scrollbar } from "./scrollbars"
 import type { FrameWindow, PanelInput } from "../../types"
 
 const POINTER_ID = 1
 /** Movement (CSS px) after which a press is a drag, not a click. */
 const CLICK_SLOP = 6
 const DOUBLE_CLICK_MS = 500
+/** Pressing a scrollbar's track scrolls by this share of the visible length, like browsers do. */
+const PAGE_SCROLL_RATIO = 0.875
+/** Holding a press on the track keeps paging: after this long, then at this interval. */
+const PAGE_REPEAT_DELAY_MS = 400
+const PAGE_REPEAT_INTERVAL_MS = 60
+
+// macOS and iOS keep Emacs-style keys in text fields: Ctrl+A and Ctrl+E move to
+// the start and end of the line. Select all is Cmd+A there.
+const APPLE_PLATFORM = /mac|iphone|ipad|ipod/i
 
 const FOCUSABLE_SELECTOR =
   'input, textarea, select, button, a[href], [tabindex], [contenteditable=""], [contenteditable="true"]'
@@ -156,6 +170,27 @@ export class InputSynthesizer {
   private captureTarget: Element | null = null
   private press: Press | null = null
   private lastClick: { time: number; x: number; y: number } | null = null
+  /** The last press, to count double and triple presses. */
+  private lastDown: { time: number; x: number; y: number; count: number } | null = null
+  /** Where the pointer is over the page, if it is. */
+  private pointer: { x: number; y: number } | null = null
+  /** Text being selected by dragging: the field, and the range the press selected (a word on a double press). */
+  private textDrag: { field: TextField; unit: "char" | "word" | "line"; start: number; end: number } | null = null
+  /** The horizontal position Up/Down keep to, while they keep moving the caret. */
+  private goal: { field: TextField; index: number; x: number } | null = null
+  /**
+   * A press on a scrollbar, until it is released. On the thumb, it drags: where
+   * the press was and the scroll offset then. On the track, it pages toward the
+   * pointer while held.
+   */
+  private scrollbarPress: {
+    bar: Scrollbar
+    drag: { from: number; scroll: number } | null
+    position: number
+  } | null = null
+  private pageTimer = 0
+  /** The scrollbar the pointer hovers (it is not part of the page). */
+  private hoveredScrollbar: Scrollbar | null = null
 
   constructor(
     private readonly document: Document,
@@ -169,10 +204,14 @@ export class InputSynthesizer {
   handle(input: PanelInput): void {
     switch (input.type) {
       case "pointer":
-        if (input.kind === "down") this.pointerDown(input.x, input.y)
+        if (input.kind === "down") this.pointerDown(input.x, input.y, input.shiftKey === true)
         else if (input.kind === "move") this.pointerMove(input.x, input.y)
         else if (input.kind === "up") this.pointerUp(input.x, input.y)
-        else this.updateHover(null, 0, 0)
+        else {
+          this.pointer = null
+          this.hoveredScrollbar = null
+          this.updateHover(null, 0, 0)
+        }
         break
       case "wheel":
         this.wheel(input.x, input.y, input.deltaX, input.deltaY)
@@ -193,6 +232,68 @@ export class InputSynthesizer {
   /** The focused element, if any. */
   get focused(): Element | null {
     return this.focus.current
+  }
+
+  /**
+   * The mouse cursor the page asks for where the pointer is, as a CSS keyword,
+   * or "" while the pointer is not over the page.
+   */
+  get cursor(): string {
+    if (this.scrollbarPress || this.hoveredScrollbar) return "default"
+    // While selecting text, the text cursor stays wherever the pointer goes.
+    if (this.textDrag) return "text"
+    const target = this.captureTarget?.isConnected ? this.captureTarget : this.hoverTarget
+    if (!target?.isConnected) return ""
+    // The computed value lists url() images before a keyword to fall back on; only the keyword is used.
+    const keyword = this.window.getComputedStyle(target).cursor.split(",").pop()!.trim()
+    if (keyword !== "auto" && /^[a-z-]+$/.test(keyword)) return keyword
+    // "auto" is the text cursor over editable text, and over text itself.
+    const editable = target instanceof this.window.HTMLElement && target.isContentEditable
+    if (isTextField(target) || editable) return "text"
+    return this.pointer && this.isOverText(this.pointer.x, this.pointer.y) ? "text" : "default"
+  }
+
+  /** The scrollbar being pressed or hovered, to be drawn that way. */
+  get scrollbarState(): { element: Element; axis: Axis; state: "active" | "hover" } | null {
+    const bar = this.scrollbarPress?.bar ?? this.hoveredScrollbar
+    if (!bar) return null
+    return { element: bar.element, axis: bar.axis, state: this.scrollbarPress ? "active" : "hover" }
+  }
+
+  dispose(): void {
+    window.clearTimeout(this.pageTimer)
+  }
+
+  /** Whether a point is on a character of the page's text (not only inside an element with text). */
+  private isOverText(x: number, y: number): boolean {
+    const document = this.document as Document & {
+      caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null
+      caretRangeFromPoint?: (x: number, y: number) => Range | null
+    }
+    let node: Node | null = null
+    let offset = 0
+    if (document.caretPositionFromPoint) {
+      const position = document.caretPositionFromPoint(x, y)
+      node = position?.offsetNode ?? null
+      offset = position?.offset ?? 0
+    } else if (document.caretRangeFromPoint) {
+      const range = document.caretRangeFromPoint(x, y)
+      node = range?.startContainer ?? null
+      offset = range?.startOffset ?? 0
+    }
+    if (!node || node.nodeType !== Node.TEXT_NODE) return false
+    const length = (node as Text).length
+    const range = document.createRange()
+    // The caret position is between two characters; the point is on one of them.
+    for (const [from, to] of [[offset - 1, offset], [offset, offset + 1]] as const) {
+      if (from < 0 || to > length) continue
+      range.setStart(node, from)
+      range.setEnd(node, to)
+      for (const rect of Array.from(range.getClientRects())) {
+        if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) return true
+      }
+    }
+    return false
   }
 
   /**
@@ -220,22 +321,73 @@ export class InputSynthesizer {
 
   // --- Focus -----------------------------------------------------------------
 
-  /** Focuses what a press landed on, the way mousedown does. */
-  private focusAt(target: Element, x: number, y: number): void {
+  /** Focuses what a press landed on, the way mousedown does. `count` is 2 for a double press, and so on. */
+  private focusAt(target: Element, x: number, y: number, count: number, shiftKey: boolean): void {
     // Pressing a <label> focuses its control.
     const focusable = target.closest(FOCUSABLE_SELECTOR) ?? target.closest("label")?.control ?? null
     if (focusable && this.focus.isFocusable(focusable)) {
+      const wasFocused = this.focus.current === focusable
       this.focus.set(focusable)
-      // Untrusted mousedown does not move the caret; place it where the press was.
-      if (isTextField(focusable)) this.placeCaret(focusable, x, y)
+      // Untrusted mousedown does not move the caret; place it where the press was
+      // (unless the press was on a label, which only focuses the field).
+      if (isTextField(focusable) && focusable.contains(target)) {
+        this.pressText(focusable, x, y, count, shiftKey && wasFocused)
+      }
     } else {
       this.focus.set(null)
     }
   }
 
-  private placeCaret(field: TextField, x: number, y: number): void {
+  /**
+   * A press in a text field: places the caret, or selects a word (double) or a
+   * line (triple), or extends the selection (Shift). Dragging then extends it.
+   */
+  private pressText(field: TextField, x: number, y: number, count: number, extend: boolean): void {
     const index = this.options.measure(() => indexFromPoint(field, x, y))
-    field.setSelectionRange(index, index)
+    const value = field.value
+    const multiline = field.tagName === "TEXTAREA"
+    let start = index
+    let end = index
+    let unit: "char" | "word" | "line" = "char"
+    if (extend) {
+      const anchor = field.selectionDirection === "backward" ? (field.selectionEnd ?? index) : (field.selectionStart ?? index)
+      start = end = anchor
+    } else if (count === 2) {
+      ;[start, end] = wordAt(value, index)
+      unit = "word"
+    } else if (count >= 3) {
+      start = multiline ? lineStart(value, index) : 0
+      end = multiline ? lineEnd(value, index) : value.length
+      unit = "line"
+    }
+    this.textDrag = { field, unit, start, end }
+    if (extend) this.dragText(x, y)
+    else this.select(field, start, end)
+  }
+
+  /** Extends the selection being dragged to the point, by the unit the press chose. */
+  private dragText(x: number, y: number): void {
+    const { field, unit, start, end } = this.textDrag!
+    const index = this.options.measure(() => indexFromPoint(field, x, y))
+    const value = field.value
+    if (unit === "char") {
+      this.select(field, start, index)
+      return
+    }
+    const [from, to] =
+      unit === "word"
+        ? wordAt(value, index)
+        : field.tagName === "TEXTAREA"
+          ? [lineStart(value, index), lineEnd(value, index)]
+          : [0, value.length]
+    if (index < start) this.select(field, end, from)
+    else this.select(field, start, Math.max(to, end))
+  }
+
+  /** Selects from `anchor` to `focus` (the end that moves), and scrolls the field to show `focus`. */
+  private select(field: TextField, anchor: number, focus: number): void {
+    field.setSelectionRange(Math.min(anchor, focus), Math.max(anchor, focus), focus < anchor ? "backward" : "forward")
+    this.options.measure(() => revealIndex(field, focus))
   }
 
   // --- Pointer ---------------------------------------------------------------
@@ -305,7 +457,19 @@ export class InputSynthesizer {
     this.hoverTarget = target
   }
 
-  private pointerDown(x: number, y: number): void {
+  private pointerDown(x: number, y: number, shiftKey: boolean): void {
+    this.pointer = { x, y }
+    // Like a real scrollbar, pressing one is not a press on the page.
+    const bar = scrollbarAt(this.document, x, y)
+    if (bar) {
+      this.pressScrollbar(bar, x, y)
+      return
+    }
+    const now = performance.now()
+    const last = this.lastDown
+    const count =
+      last && now - last.time < DOUBLE_CLICK_MS && Math.hypot(x - last.x, y - last.y) <= CLICK_SLOP ? last.count + 1 : 1
+    this.lastDown = { time: now, x, y, count }
     const target = this.hitTest(x, y)
     this.updateHover(target, x, y)
     this.captureTarget = null
@@ -317,12 +481,18 @@ export class InputSynthesizer {
     this.press = { target, x, y, moved: false, mouseEvents: pointerOk }
     // Cancelling pointerdown suppresses the compatibility mouse events, and with
     // them the default action of mousedown (focusing).
-    if (pointerOk && target.dispatchEvent(this.mouseEvent("mousedown", { ...init, detail: 1 }))) {
-      this.focusAt(target, x, y)
+    if (pointerOk && target.dispatchEvent(this.mouseEvent("mousedown", { ...init, detail: count, shiftKey }))) {
+      this.focusAt(target, x, y, count, shiftKey)
     }
   }
 
   private pointerMove(x: number, y: number): void {
+    this.pointer = { x, y }
+    if (this.scrollbarPress) {
+      this.dragScrollbar(x, y)
+      return
+    }
+    this.hoveredScrollbar = this.press ? null : scrollbarAt(this.document, x, y)
     const target = this.hitTest(x, y)
     this.updateHover(target, x, y)
     const press = this.press
@@ -332,9 +502,16 @@ export class InputSynthesizer {
     const init = this.pointerInit(x, y, press ? 1 : 0)
     destination.dispatchEvent(this.pointerEvent("pointermove", init))
     if (!press || press.mouseEvents) destination.dispatchEvent(this.mouseEvent("mousemove", init))
+    if (press && this.textDrag?.field.isConnected) this.dragText(x, y)
   }
 
   private pointerUp(x: number, y: number): void {
+    if (this.scrollbarPress) {
+      this.scrollbarPress = null
+      window.clearTimeout(this.pageTimer)
+      return
+    }
+    this.textDrag = null
     const target = this.hitTest(x, y)
     const press = this.press
     const destination = this.captureTarget?.isConnected ? this.captureTarget : target
@@ -363,6 +540,57 @@ export class InputSynthesizer {
     } else {
       this.lastClick = { time: now, x, y }
     }
+  }
+
+  // --- Scrollbars ------------------------------------------------------------
+
+  private pressScrollbar(bar: Scrollbar, x: number, y: number): void {
+    const position = bar.axis === "y" ? y : x
+    if (contains(hitBox(bar, bar.thumb), x, y)) {
+      const scroll = bar.axis === "y" ? bar.element.scrollTop : bar.element.scrollLeft
+      this.scrollbarPress = { bar, drag: { from: position, scroll }, position }
+      return
+    }
+    // A press on the track pages toward the press, and keeps paging while held
+    // until the thumb reaches the pointer.
+    this.scrollbarPress = { bar, drag: null, position }
+    this.pageToward(bar, position)
+    const repeat = () => {
+      const press = this.scrollbarPress
+      if (!press || press.drag) return
+      const current = scrollbarsOf(press.bar.element).find(other => other.axis === press.bar.axis)
+      if (!current || !this.pageToward(current, press.position)) return
+      this.options.onChange()
+      this.pageTimer = window.setTimeout(repeat, PAGE_REPEAT_INTERVAL_MS)
+    }
+    this.pageTimer = window.setTimeout(repeat, PAGE_REPEAT_DELAY_MS)
+  }
+
+  /** Scrolls a page toward `position` on the track. False once the thumb is there. */
+  private pageToward(bar: Scrollbar, position: number): boolean {
+    const [thumbStart, thumbEnd] =
+      bar.axis === "y" ? [bar.thumb.top, bar.thumb.top + bar.thumb.height] : [bar.thumb.left, bar.thumb.left + bar.thumb.width]
+    if (position >= thumbStart && position < thumbEnd) return false
+    const direction = position < thumbStart ? -1 : 1
+    const page = (bar.axis === "y" ? bar.element.clientHeight : bar.element.clientWidth) * PAGE_SCROLL_RATIO
+    if (bar.axis === "y") bar.element.scrollBy(0, direction * page)
+    else bar.element.scrollBy(direction * page, 0)
+    return true
+  }
+
+  /** Moves the thumb with the pointer: the thumb's travel maps onto the scroll range. */
+  private dragScrollbar(x: number, y: number): void {
+    const press = this.scrollbarPress!
+    const { bar, drag } = press
+    press.position = bar.axis === "y" ? y : x
+    if (!drag) return
+    const { from, scroll } = drag
+    const travel = thumbTravel(bar)
+    if (travel <= 0) return
+    const moved = (bar.axis === "y" ? y : x) - from
+    const offset = scroll + (moved * maxScroll(bar)) / travel
+    if (bar.axis === "y") bar.element.scrollTop = offset
+    else bar.element.scrollLeft = offset
   }
 
   private canScroll(element: Element, deltaX: number, deltaY: number): boolean {
@@ -421,40 +649,38 @@ export class InputSynthesizer {
       return
     }
 
-    const length = target.value.length
-    const start = target.selectionStart ?? length
-    const end = target.selectionEnd ?? length
-    const collapse = (position: number) => target.setSelectionRange(position, position)
-    const modifier = input.ctrlKey || input.metaKey
+    const field = target
+    const length = field.value.length
+    const action = editAction(
+      {
+        value: field.value,
+        start: field.selectionStart ?? length,
+        end: field.selectionEnd ?? length,
+        direction: field.selectionDirection ?? "none",
+        multiline: field.tagName === "TEXTAREA"
+      },
+      input,
+      { apple: this.isApple(), verticalTarget: (index, direction, page) => this.verticalTarget(field, index, direction, page) }
+    )
+    if (!action) return
+    if (action.type === "select") this.select(field, action.anchor, action.focus)
+    else if (action.type === "edit") this.editText(field, action.text, action.start, action.end, action.inputType)
+    else field.form?.requestSubmit()
+  }
 
-    switch (input.key) {
-      case "Backspace":
-        if (start !== end) this.editText(target, "", start, end, "deleteContentBackward")
-        else if (start > 0) this.editText(target, "", start - 1, start, "deleteContentBackward")
-        break
-      case "Delete":
-        if (start !== end) this.editText(target, "", start, end, "deleteContentForward")
-        else if (end < length) this.editText(target, "", start, end + 1, "deleteContentForward")
-        break
-      case "ArrowLeft":
-        collapse(start !== end ? start : Math.max(0, start - 1))
-        break
-      case "ArrowRight":
-        collapse(start !== end ? end : Math.min(length, end + 1))
-        break
-      case "Home":
-        collapse(0)
-        break
-      case "End":
-        collapse(length)
-        break
-      case "Enter":
-        if (target.tagName === "TEXTAREA") this.editText(target, "\n", start, end, "insertLineBreak")
-        else target.form?.requestSubmit()
-        break
-      default:
-        if (modifier && input.key.toLowerCase() === "a") target.select()
-    }
+  /** Up/Down keep to the horizontal position they started from, like browsers do. */
+  private verticalTarget(field: TextField, index: number, direction: -1 | 1, page: boolean): number | null {
+    const goal = this.goal
+    const x =
+      goal && goal.field === field && goal.index === index ? goal.x : this.options.measure(() => caretAt(field, index).x)
+    const target = this.options.measure(() => verticalIndex(field, index, direction, page, x))
+    this.goal = { field, index: target ?? (direction < 0 ? 0 : field.value.length), x }
+    return target
+  }
+
+  private isApple(): boolean {
+    const navigator = this.window.navigator as Navigator & { userAgentData?: { platform?: string } }
+    return APPLE_PLATFORM.test(navigator.userAgentData?.platform || navigator.platform || "")
   }
 
   private text(text: string): void {
@@ -479,6 +705,7 @@ export class InputSynthesizer {
       text = text.slice(0, Math.max(0, room))
     }
     field.setRangeText(text, start, end, "end")
+    this.options.measure(() => revealIndex(field, field.selectionEnd ?? field.value.length))
     field.dispatchEvent(new InputEvent("input", { bubbles: true, composed: true, inputType, data }))
   }
 }

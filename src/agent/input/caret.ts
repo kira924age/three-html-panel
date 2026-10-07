@@ -5,7 +5,7 @@
 // <div> that copies the field's text styles and contains the text, split so
 // the position of each character can be read from the layout.
 
-import type { Caret, FrameWindow } from "../../types"
+import type { Box, Caret, FrameWindow } from "../../types"
 
 export type TextField = HTMLInputElement | HTMLTextAreaElement
 
@@ -86,29 +86,165 @@ const isSingleLine = (field: TextField): field is HTMLInputElement => field.tagN
 const displayText = (field: TextField) =>
   isSingleLine(field) && field.type === "password" ? "•".repeat(field.value.length) : field.value
 
-/** Where the caret of a focused text field is, in the page's CSS pixels. */
-export function measureCaret(field: TextField): Caret | null {
-  const index = field.selectionEnd ?? field.value.length
+/** Where a caret would be at `index`, in the page's CSS pixels, whether or not it is in view. */
+export function caretAt(field: TextField, index: number): { x: number; y: number; height: number } {
   const text = displayText(field)
   return withMirror(field, mirror => {
-    mirror.textContent = text.slice(0, index)
-    const marker = field.ownerDocument.createElement("span")
-    // The marker needs content to get a line box; a zero-width space has no width.
-    marker.textContent = text.slice(index) || "​"
-    mirror.appendChild(marker)
-
+    const marker = placeMarker(field, mirror, text, index)
     const rect = field.getBoundingClientRect()
-    const computed = windowOf(field).getComputedStyle(field)
-    const height = marker.getBoundingClientRect().height || parseFloat(computed.fontSize) * 1.2
+    const height = marker.getClientRects()[0]?.height || parseFloat(windowOf(field).getComputedStyle(field).fontSize) * 1.2
     const x = rect.left + marker.offsetLeft - field.scrollLeft
     // A single-line input centres its line vertically; a textarea starts at the top.
-    const y =
-      isSingleLine(field)
-        ? rect.top + (rect.height - height) / 2
-        : rect.top + marker.offsetTop - field.scrollTop
-    if (x < rect.left - 1 || x > rect.right + 1 || y + height < rect.top || y > rect.bottom) return null
-    const color = computed.caretColor === "auto" ? computed.color : computed.caretColor
-    return { x, y, height, color }
+    const y = isSingleLine(field) ? rect.top + (rect.height - height) / 2 : rect.top + marker.offsetTop - field.scrollTop
+    return { x, y, height }
+  })
+}
+
+/**
+ * Fills the mirror with the text, and a marker at `index`. The marker holds
+ * only the character after it, so that it stays on one line; the rest follows,
+ * so lines still wrap where the field's do. At a line break or the end, a
+ * zero-width space gives it a line box.
+ */
+function placeMarker(field: TextField, mirror: HTMLDivElement, text: string, index: number): HTMLSpanElement {
+  const document = field.ownerDocument
+  mirror.textContent = text.slice(0, index)
+  const marker = document.createElement("span")
+  const next = Array.from(text.slice(index, index + 2))[0] ?? ""
+  const markerText = next === "" || next === "\n" ? "\u200b" : next
+  marker.textContent = markerText
+  mirror.appendChild(marker)
+  mirror.appendChild(document.createTextNode(text.slice(index + (markerText === next ? next.length : 0))))
+  return marker
+}
+
+/**
+ * Where the caret of a focused text field is, in the page's CSS pixels. None
+ * while text is selected (browsers do not draw the caret then either), or when
+ * the caret is scrolled out of view.
+ */
+export function measureCaret(field: TextField): Caret | null {
+  if (field.selectionStart !== field.selectionEnd) return null
+  const { x, y, height } = caretAt(field, field.selectionEnd ?? field.value.length)
+  const rect = field.getBoundingClientRect()
+  if (x < rect.left - 1 || x > rect.right + 1 || y + height < rect.top || y > rect.bottom) return null
+  const computed = windowOf(field).getComputedStyle(field)
+  const color = computed.caretColor === "auto" ? computed.color : computed.caretColor
+  return { x, y, height, color }
+}
+
+/** The part of a field that shows its content: the padding box, in the page's CSS pixels. */
+function viewOf(field: TextField): Box {
+  const rect = field.getBoundingClientRect()
+  return { left: rect.left + field.clientLeft, top: rect.top + field.clientTop, width: field.clientWidth, height: field.clientHeight }
+}
+
+/** Scrolls the field so that the caret at `index` is in view, as browsers do while typing. */
+export function revealIndex(field: TextField, index: number): void {
+  const caret = caretAt(field, index)
+  const view = viewOf(field)
+  const computed = windowOf(field).getComputedStyle(field)
+  // Keep the caret inside the padding, not only inside the box.
+  const padLeft = parseFloat(computed.paddingLeft) || 0
+  const padRight = parseFloat(computed.paddingRight) || 0
+  const padTop = parseFloat(computed.paddingTop) || 0
+  const padBottom = parseFloat(computed.paddingBottom) || 0
+  if (caret.x < view.left + padLeft) field.scrollLeft -= view.left + padLeft - caret.x
+  else if (caret.x > view.left + view.width - padRight) field.scrollLeft += caret.x - (view.left + view.width - padRight)
+  if (isSingleLine(field)) return
+  // A caret is as tall as the text, not the line: where the first one sits
+  // unscrolled is the top to keep to, and the same leading goes below the last.
+  const top = caretAt(field, 0).y + field.scrollTop - view.top
+  const leading = Math.max(0, top - padTop)
+  if (caret.y < view.top + top) field.scrollTop -= view.top + top - caret.y
+  else if (caret.y + caret.height + leading > view.top + view.height - padBottom) {
+    field.scrollTop += caret.y + caret.height + leading - (view.top + view.height - padBottom)
+  }
+}
+
+/**
+ * The index on the visual line above or below the caret at `index` (soft wraps
+ * included), at `x` (page CSS pixels) or else the caret's own position; or a
+ * page (the field's height) away. Null past the first or last line.
+ */
+export function verticalIndex(field: TextField, index: number, direction: -1 | 1, page: boolean, x?: number) {
+  const caret = caretAt(field, index)
+  const distance = page ? Math.max(caret.height, field.clientHeight - caret.height) : caret.height
+  const y = caret.y + caret.height / 2 + direction * distance
+  const first = caretAt(field, 0)
+  const last = caretAt(field, field.value.length)
+  if (y < first.y || y > last.y + last.height) return null
+  return indexFromPoint(field, x ?? caret.x, y)
+}
+
+/**
+ * For a scrolled field: the index of the first character to show, and how far
+ * from the top (textarea) or left (input) of the padding box it is. The copy in
+ * the image cannot be scrolled; leaving out what is scrolled past and moving the
+ * rest by that much shows the same. Null when the field is not scrolled.
+ */
+export function scrolledText(field: TextField): { index: number; offset: number } | null {
+  const vertical = !isSingleLine(field)
+  const scroll = vertical ? field.scrollTop : field.scrollLeft
+  if (scroll <= 0) return null
+  const text = displayText(field)
+  return withMirror(field, mirror => {
+    const at = (index: number) => {
+      const marker = placeMarker(field, mirror, text, index)
+      return vertical ? marker.offsetTop : marker.offsetLeft
+    }
+    const origin = at(0)
+    // The first character whose line (or position) starts at or after the scroll offset.
+    let low = 0
+    let high = text.length
+    while (low < high) {
+      const middle = (low + high) >> 1
+      if (at(middle) - origin >= scroll) high = middle
+      else low = middle + 1
+    }
+    return { index: low, offset: at(low) - origin - scroll }
+  })
+}
+
+/**
+ * The rectangles the selected text of a text field covers, one per line, in
+ * the page's CSS pixels and clipped to the field. Empty without a selection.
+ */
+export function measureSelection(field: TextField): Box[] {
+  const start = field.selectionStart
+  const end = field.selectionEnd
+  if (start === null || end === null || start === end) return []
+  const text = displayText(field)
+  return withMirror(field, mirror => {
+    const document = field.ownerDocument
+    mirror.textContent = text.slice(0, start)
+    const selected = document.createElement("span")
+    selected.textContent = text.slice(start, end)
+    mirror.appendChild(selected)
+    mirror.appendChild(document.createTextNode(text.slice(end)))
+
+    const rect = field.getBoundingClientRect()
+    const origin = mirror.getBoundingClientRect()
+    const clip = {
+      left: rect.left + field.clientLeft,
+      top: rect.top + field.clientTop,
+      right: rect.left + field.clientLeft + field.clientWidth,
+      bottom: rect.top + field.clientTop + field.clientHeight
+    }
+    const boxes: Box[] = []
+    for (const line of Array.from(selected.getClientRects())) {
+      const left = rect.left + line.left - origin.left - field.scrollLeft
+      // A single-line input centres its line vertically, like measureCaret.
+      const top = isSingleLine(field)
+        ? rect.top + (rect.height - line.height) / 2
+        : rect.top + line.top - origin.top - field.scrollTop
+      const x0 = Math.max(left, clip.left)
+      const y0 = Math.max(top, clip.top)
+      const x1 = Math.min(left + line.width, clip.right)
+      const y1 = Math.min(top + line.height, clip.bottom)
+      if (x1 > x0 && y1 > y0) boxes.push({ left: x0, top: y0, width: x1 - x0, height: y1 - y0 })
+    }
+    return boxes
   })
 }
 

@@ -5,7 +5,8 @@
 // screen is not in the markup:
 //
 // - form state (value, checked, selected) lives in properties, not attributes
-// - scroll positions are not rendered by foreignObject at all
+// - scroll positions are not rendered by foreignObject at all, and the real
+//   scrollbars would not show them either: they are replaced (scrollbars.ts)
 // - interaction states (:hover, :focus) are expressed as attributes, see css.ts
 // - running animations are frozen at their current values
 // - images and canvases must be embedded as data URLs
@@ -15,7 +16,9 @@
 //
 // Type checks on live elements use the page's window (see FrameWindow).
 
-import type { FrameWindow } from "../../types"
+import type { Box, FrameWindow } from "../../types"
+import { scrolledText } from "../input/caret"
+import { scrollbarsOf, type Scrollbar } from "../input/scrollbars"
 import { ACTIVE_ATTRIBUTE, FOCUS_ATTRIBUTE, FOCUS_WITHIN_ATTRIBUTE, HOVER_ATTRIBUTE } from "./css"
 
 /** Elements that do not contribute to what is on screen. <style> is collected separately. */
@@ -29,6 +32,12 @@ export interface SnapshotOptions {
   ignored?: ReadonlySet<Element>
   /** Returns a data URL for an image, or null if it is not available yet. */
   inlineImage: (url: string) => string | null
+  /** The selected text in the focused field, as measured by measureSelection(). */
+  selection?: readonly Box[]
+  /** The page's ::selection background, if any; a default is used when it is transparent. */
+  selectionColor?: string
+  /** The scrollbar being hovered or pressed, drawn darker. */
+  scrollbar?: { element: Element; axis: "x" | "y"; state: "hover" | "active" } | null
 }
 
 const toKebabCase = (property: string) =>
@@ -67,6 +76,8 @@ class Snapshotter {
   private readonly window: FrameWindow
   private readonly animated: Map<Element, Set<string>>
   private readonly focusWithin = new Set<Element>()
+  /** Scrollbars to draw over the copy. */
+  readonly scrollbars: Scrollbar[] = []
 
   constructor(
     private readonly document: Document,
@@ -100,6 +111,7 @@ class Snapshotter {
       if (childCopy) copy.appendChild(childCopy)
     }
     this.copyScroll(element, copy)
+    this.hideScrollbars(element, copy)
     return copy
   }
 
@@ -110,12 +122,32 @@ class Snapshotter {
         copy.toggleAttribute("checked", element.checked)
       } else if (element.type !== "file") {
         copy.setAttribute("value", element.value)
+        // Only text inputs have a selection, and scroll their text.
+        if (element.selectionStart !== null) this.copyTextScroll(element, copy)
       }
     } else if (element instanceof HTMLTextAreaElement) {
       copy.textContent = element.value
+      this.copyTextScroll(element, copy)
     } else if (element instanceof HTMLOptionElement) {
       copy.toggleAttribute("selected", element.selected)
     }
+  }
+
+  /**
+   * A text field's own scroll is not drawn either. Leave out the text scrolled
+   * past and move the rest into place with the padding (measured, see
+   * scrolledText). A line only partly scrolled past is left out whole.
+   */
+  private copyTextScroll(field: HTMLInputElement | HTMLTextAreaElement, copy: Element): void {
+    const scrolled = scrolledText(field)
+    if (!scrolled || !(copy instanceof HTMLElement)) return
+    const isInput = field.tagName === "INPUT"
+    const rest = field.value.slice(scrolled.index)
+    if (isInput) copy.setAttribute("value", rest)
+    else copy.textContent = rest
+    const side = isInput ? "padding-left" : "padding-top"
+    const padding = parseFloat(this.window.getComputedStyle(field).getPropertyValue(side)) || 0
+    copy.style.setProperty(side, `${padding + scrolled.offset}px`, "important")
   }
 
   private copyImage(element: Element, copy: Element): void {
@@ -180,14 +212,73 @@ class Snapshotter {
       }
     }
   }
+
+  /**
+   * The copy is not scrolled, so its real scrollbars would show the wrong
+   * position: hide them, keeping the room a classic scrollbar takes, and
+   * remember them to be drawn by drawScrollbars().
+   */
+  private hideScrollbars(element: Element, copy: Element): void {
+    const bars = scrollbarsOf(element)
+    if (bars.length === 0) return
+    this.scrollbars.push(...bars)
+    // The document's scrollbars are the viewport's; the root copy never shows any.
+    if (element === this.document.scrollingElement || !(copy instanceof HTMLElement)) return
+    copy.style.setProperty("overflow", "hidden", "important")
+    if (bars.some(bar => bar.gutter)) copy.style.setProperty("scrollbar-gutter", "stable", "important")
+  }
+}
+
+// The image cannot show a text field's selection, so it is drawn over the field.
+const SELECTION_COLOR = "rgb(51 144 255 / 35%)"
+const SCROLLBAR_TRACK_COLOR = "rgb(0 0 0 / 5%)"
+const SCROLLBAR_THUMB_COLOR = "rgb(0 0 0 / 38%)"
+const SCROLLBAR_THUMB_HOVER_COLOR = "rgb(0 0 0 / 52%)"
+const SCROLLBAR_THUMB_ACTIVE_COLOR = "rgb(0 0 0 / 64%)"
+const TRANSPARENT = /^(transparent|rgba\(0, 0, 0, 0\))$/
+const SCROLLBAR_INSET = 2
+
+/** Adds a fixed box on top of everything to the root copy. */
+function drawBox(root: HTMLElement, left: number, top: number, width: number, height: number, css: string): void {
+  const element = root.ownerDocument.createElement("div")
+  element.setAttribute(
+    "style",
+    `position:fixed;left:${left}px;top:${top}px;width:${width}px;height:${height}px;` +
+      `margin:0;padding:0;border:0;pointer-events:none;z-index:2147483647;${css}`
+  )
+  root.appendChild(element)
+}
+
+/** Adds the scrollbars on top of everything, as fixed boxes in the root copy. */
+function drawScrollbars(root: HTMLElement, bars: readonly Scrollbar[], state: SnapshotOptions["scrollbar"]): void {
+  const box = (left: number, top: number, width: number, height: number, css: string) =>
+    drawBox(root, left, top, width, height, css)
+  for (const { element, axis, track, thumb, gutter } of bars) {
+    if (gutter) box(track.left, track.top, track.width, track.height, `background:${SCROLLBAR_TRACK_COLOR}`)
+    const width = Math.max(0, thumb.width - 2 * SCROLLBAR_INSET)
+    const height = Math.max(0, thumb.height - 2 * SCROLLBAR_INSET)
+    const current = state?.element === element && state.axis === axis ? state.state : null
+    const color =
+      current === "active" ? SCROLLBAR_THUMB_ACTIVE_COLOR : current === "hover" ? SCROLLBAR_THUMB_HOVER_COLOR : SCROLLBAR_THUMB_COLOR
+    const style = `background:${color};border-radius:${Math.min(width, height) / 2}px`
+    box(thumb.left + SCROLLBAR_INSET, thumb.top + SCROLLBAR_INSET, width, height, style)
+  }
 }
 
 /** Serializes the page as XHTML (an <html> element with the XHTML namespace). */
 export function snapshotDocument(document: Document, options: SnapshotOptions): string {
-  const root = new Snapshotter(document, options).copy(document.documentElement) as HTMLElement
+  const snapshotter = new Snapshotter(document, options)
+  const root = snapshotter.copy(document.documentElement) as HTMLElement
   root.style.setProperty("width", `${document.documentElement.clientWidth}px`)
   root.style.setProperty("height", `${document.documentElement.clientHeight}px`)
   root.style.setProperty("overflow", "hidden")
+  // In the root, not <body>: a scrolled <body> is translated, which would move fixed boxes with it.
+  // The highlight is drawn over the text, not under it: the page's color (often
+  // opaque) is multiplied in, which keeps dark text on a light field readable.
+  const pageColor = options.selectionColor && !TRANSPARENT.test(options.selectionColor) ? options.selectionColor : null
+  const css = pageColor ? `background:${pageColor};mix-blend-mode:multiply` : `background:${SELECTION_COLOR}`
+  for (const { left, top, width, height } of options.selection ?? []) drawBox(root, left, top, width, height, css)
+  drawScrollbars(root, snapshotter.scrollbars, options.scrollbar)
   return new XMLSerializer().serializeToString(root)
 }
 

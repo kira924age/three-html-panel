@@ -12,6 +12,7 @@ let options: {
   onConnect: Mock
   onFrame: Mock
   onEditing: Mock
+  onCursor: Mock
   onMessage: Mock
   onError: Mock
 }
@@ -50,7 +51,14 @@ beforeEach(() => {
   document.body.appendChild(iframe)
   postToFrame = vi.fn()
   iframe.contentWindow!.postMessage = postToFrame as typeof window.postMessage
-  options = { onConnect: vi.fn(), onFrame: vi.fn(), onEditing: vi.fn(), onMessage: vi.fn(), onError: vi.fn() }
+  options = {
+    onConnect: vi.fn(),
+    onFrame: vi.fn(),
+    onEditing: vi.fn(),
+    onCursor: vi.fn(),
+    onMessage: vi.fn(),
+    onError: vi.fn()
+  }
   connection = new PanelConnection({ iframe, origin: ORIGIN, width: 800, height: 600, readyTimeout: 1000, ...options })
 })
 
@@ -112,6 +120,8 @@ describe("port messages", () => {
     port.postMessage(frame(2, { svg: 1 }))
     port.postMessage({ type: "editing", editing: true, caret: { x: 1, y: 2, height: Number.NaN, color: "red" } })
     port.postMessage({ type: "editing", editing: true, caret: { x: 1, y: 2, height: 16, color: "red" } })
+    port.postMessage({ type: "cursor", cursor: "pointer" })
+    port.postMessage({ type: "cursor", cursor: "url(https://evil.example/c.png), auto" })
     port.postMessage({ type: "app", data: { hello: 1 } })
     port.postMessage({ type: "nonsense" })
     port.postMessage(frame(3))
@@ -122,6 +132,7 @@ describe("port messages", () => {
       { svg: "<svg/>", width: 800, height: 600 }
     ])
     expect(options.onEditing.mock.calls).toEqual([[true, { x: 1, y: 2, height: 16, color: "red" }]])
+    expect(options.onCursor.mock.calls).toEqual([["pointer"]])
     expect(options.onMessage.mock.calls).toEqual([[{ hello: 1 }]])
   })
 
@@ -171,19 +182,66 @@ describe("timeout", () => {
     expect(options.onError).toHaveBeenCalledTimes(1)
   })
 
-  it("does not time out once connected, but does after a load without ready", () => {
-    vi.useFakeTimers()
+  /** Fakes only the timeout's timers, so that ports still deliver. */
+  function withTimeoutTimers(): void {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] })
     connection.dispose()
     connection = new PanelConnection({ iframe, origin: ORIGIN, width: 800, height: 600, readyTimeout: 1000, ...options })
+  }
+  const portDelivery = () => new Promise(resolve => setImmediate(resolve))
+
+  /** The agent's side of the last port: answers pings like a live agent does. */
+  function answerPings(): MessagePort {
+    const port = pagePort()
+    port.onmessage = event => {
+      if ((event.data as { type: string }).type === "ping") port.postMessage({ type: "pong" })
+    }
+    return port
+  }
+
+  it("keeps the connection after a load when the agent answers the ping", async () => {
+    withTimeoutTimers()
     ready()
+    answerPings()
     iframe.dispatchEvent(new Event("load"))
+    for (let i = 0; i < 5; i++) await portDelivery()
     vi.advanceTimersByTime(5000)
     expect(options.onError).not.toHaveBeenCalled()
+  })
 
-    // The iframe navigated to a page without the agent.
+  it("times out after a load to a page without the agent", async () => {
+    withTimeoutTimers()
+    ready()
+    answerPings()
     iframe.dispatchEvent(new Event("load"))
+    for (let i = 0; i < 5; i++) await portDelivery()
+    // The iframe navigates to a page without the agent: the old port is dead.
+    pagePort().close()
+    iframe.dispatchEvent(new Event("load"))
+    for (let i = 0; i < 5; i++) await portDelivery()
     vi.advanceTimersByTime(1000)
     expect(options.onError).toHaveBeenCalledTimes(1)
     expect(connection.connected).toBe(false)
+  })
+
+  it("is not fooled when a page's ready arrives after its load", async () => {
+    withTimeoutTimers()
+    ready()
+    answerPings()
+    // The next page: load first, then its ready.
+    pagePort().close()
+    iframe.dispatchEvent(new Event("load"))
+    ready()
+    answerPings()
+    for (let i = 0; i < 5; i++) await portDelivery()
+    vi.advanceTimersByTime(5000)
+    expect(options.onError).not.toHaveBeenCalled()
+
+    // Then a page without the agent must still time out.
+    pagePort().close()
+    iframe.dispatchEvent(new Event("load"))
+    for (let i = 0; i < 5; i++) await portDelivery()
+    vi.advanceTimersByTime(1000)
+    expect(options.onError).toHaveBeenCalledTimes(1)
   })
 })

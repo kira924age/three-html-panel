@@ -7,6 +7,9 @@
 //    and answers with `connect`, transferring one end of a MessageChannel.
 // 3. Everything else goes through that port: frames and the editing state from
 //    the page, input and app messages from the host.
+// 4. After each load of the iframe, the host sends `ping`; only the agent of
+//    the document now loaded can answer `pong` (an unloaded document's port is
+//    dead). Without an answer or a new `ready`, the host gives up.
 //
 // Each side checks the shape of what it receives and drops anything else. The
 // host checks more strictly: it shows whatever the page sends, so sizes are
@@ -23,6 +26,7 @@ export const MAX_SVG_LENGTH = 16 * 1024 * 1024
 const MAX_COLOR_LENGTH = 64
 const MAX_KEY_LENGTH = 64
 const MAX_TEXT_LENGTH = 64 * 1024
+const CURSOR_KEYWORD = /^[a-z][a-z-]{0,31}$/
 
 /** Posted by the agent to the parent window when it starts. */
 export interface ReadyMessage {
@@ -52,6 +56,15 @@ export interface EditingMessage {
   caret: Caret | null
 }
 
+/**
+ * The mouse cursor over the page where the pointer is. Only CSS cursor
+ * keywords: a url() cursor would have the host load whatever the page names.
+ */
+export interface CursorMessage {
+  type: "cursor"
+  cursor: string
+}
+
 /** Data for the application on the other side; the panel does not look into it. */
 export interface AppMessage {
   type: "app"
@@ -59,10 +72,10 @@ export interface AppMessage {
 }
 
 /** From the page to the host, through the port. */
-export type PageMessage = FrameMessage | EditingMessage | AppMessage
+export type PageMessage = FrameMessage | EditingMessage | CursorMessage | AppMessage | { type: "pong" }
 
 /** From the host to the page, through the port. */
-export type HostMessage = PanelInput | AppMessage
+export type HostMessage = PanelInput | AppMessage | { type: "ping" }
 
 type Fields = Record<string, unknown>
 
@@ -118,6 +131,12 @@ export function parsePageMessage(data: unknown, limits: PageMessageLimits): Page
       if (caret === undefined) return null
       return { type: "editing", editing: data.editing, caret }
     }
+    case "pong":
+      return { type: "pong" }
+    case "cursor":
+      return typeof data.cursor === "string" && CURSOR_KEYWORD.test(data.cursor)
+        ? { type: "cursor", cursor: data.cursor }
+        : null
     case "app":
       return { type: "app", data: data.data }
     default:
@@ -132,9 +151,10 @@ export function parseHostMessage(data: unknown): HostMessage | null {
   if (!isObject(data)) return null
   switch (data.type) {
     case "pointer": {
-      const { kind, x, y } = data
+      const { kind, x, y, shiftKey } = data
       if (!POINTER_KINDS.has(kind as PointerKind) || !isFiniteNumber(x) || !isFiniteNumber(y)) return null
-      return { type: "pointer", kind: kind as PointerKind, x, y }
+      if (shiftKey !== undefined && typeof shiftKey !== "boolean") return null
+      return { type: "pointer", kind: kind as PointerKind, x, y, shiftKey: shiftKey === true }
     }
     case "wheel": {
       const { x, y, deltaX, deltaY } = data
@@ -158,6 +178,8 @@ export function parseHostMessage(data: unknown): HostMessage | null {
       return isShortString(data.text, MAX_TEXT_LENGTH) ? { type: "text", text: data.text } : null
     case "blur":
       return { type: "blur" }
+    case "ping":
+      return { type: "ping" }
     case "app":
       return { type: "app", data: data.data }
     default:
