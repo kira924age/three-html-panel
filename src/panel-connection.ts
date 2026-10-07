@@ -6,6 +6,13 @@
 // MessagePort. From then on only that port is used, so other windows and
 // frames cannot speak for the page.
 //
+// A sandboxed iframe (no allow-same-origin) runs its page on an opaque origin:
+// `event.origin` is "null", and `connect` can only be addressed to "*". It goes
+// to the iframe's contentWindow, so only the document now in that iframe gets
+// the port, but that document can be any page: the panel page, or wherever it
+// navigated itself. Whatever goes through the port must be fine for any page in
+// that iframe to see, and whatever comes back is untrusted.
+//
 // Each document the iframe loads (a reload, a navigation) runs its own agent,
 // which posts `ready` again. The previous port is closed then. If no agent
 // shows up, the connection reports a timeout.
@@ -31,6 +38,8 @@ export interface PanelConnectionOptions {
   iframe: HTMLIFrameElement
   /** The origin of the panel URL. `ready` from any other origin is ignored. */
   origin: string
+  /** The iframe is sandboxed (opaque origin): `ready` comes from "null", `connect` goes to "*". */
+  sandboxed?: boolean
   /** The page size the iframe is laid out at; frames of another size are dropped. */
   width: number
   height: number
@@ -79,7 +88,8 @@ export class PanelConnection {
     // Both checks matter: the source ties the message to this iframe (not
     // another panel or a popup), the origin to the page that was asked for
     // (not whatever the iframe navigated to since).
-    if (event.source === null || event.source !== iframe.contentWindow || event.origin !== origin) return
+    const expectedOrigin = this.options.sandboxed ? "null" : origin
+    if (event.source === null || event.source !== iframe.contentWindow || event.origin !== expectedOrigin) return
     const ready = parseReady(event.data)
     if (!ready) return
     if (ready.version !== PROTOCOL_VERSION) {
@@ -98,7 +108,8 @@ export class PanelConnection {
     this.port = channel.port1
     channel.port1.onmessage = this.onPortMessage
     const message: ConnectMessage = { type: "connect", version: PROTOCOL_VERSION }
-    target.postMessage(message, this.options.origin, [channel.port2])
+    // An opaque origin cannot be named; "*" still only reaches this iframe's document.
+    target.postMessage(message, this.options.sandboxed ? "*" : this.options.origin, [channel.port2])
     this.options.onConnect()
   }
 

@@ -7,6 +7,9 @@
 import { posix } from "node:path"
 import { defineConfig, loadEnv, type Plugin } from "vite"
 
+/** The same sandbox as the demo's iframes (PANEL_SANDBOX in src/html-panel.ts). */
+const PANEL_SANDBOX_CSP = "sandbox allow-scripts allow-forms allow-popups"
+
 export const AGENT_SOURCE = "/src/agent/entry.ts"
 /** Where a build puts the agent, so that pages can load it without bundling it. */
 export const AGENT_BUILD_FILE = "agent.js"
@@ -43,8 +46,19 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, import.meta.dirname, "VITE_")
   const hostOrigin = env.VITE_HOST_ORIGIN!
   const panelPort = Number(new URL(env.VITE_PANEL_ORIGIN!).port)
-  // Only the scene's origin may read from this server with CORS.
-  const server = { port: panelPort, strictPort: true, cors: { origin: hostOrigin } }
+  const server = {
+    port: panelPort,
+    strictPort: true,
+    // The demo's panels are sandboxed: their pages are on the opaque origin
+    // "null", and so is every request they make for their own scripts, CSS and
+    // images. Any sandboxed page anywhere is "null" too, so while this server
+    // runs, any site could read what it serves; fine for a local demo of public
+    // files, not for a server with anything private on it.
+    cors: { origin: [hostOrigin, "null"] },
+    // The sandbox also comes with the response, so that it holds when a panel
+    // page is opened directly or embedded anywhere else, not only in the demo.
+    headers: { "Content-Security-Policy": PANEL_SANDBOX_CSP }
+  }
   return {
     root: import.meta.dirname,
     clearScreen: false,
