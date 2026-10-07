@@ -156,6 +156,17 @@ describe("dragging to scroll", () => {
       expect(input.focused).toBe(button)
     })
 
+    it("tells the page a mouse hovering after a finger is a mouse", () => {
+      pointer("down", 60)
+      pointer("up", 60)
+      const types: string[] = []
+      const record = (event: Event) => types.push((event as PointerEvent).pointerType)
+      document.addEventListener("pointermove", record)
+      pointer("move", 70, "mouse")
+      document.removeEventListener("pointermove", record)
+      expect(types).toEqual(["mouse"])
+    })
+
     it("gives a drag the page captured no mouse events", () => {
       pointer("down", 60)
       button.setPointerCapture(1)

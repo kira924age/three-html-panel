@@ -242,7 +242,11 @@ export class InputSynthesizer {
     switch (input.type) {
       case "pointer":
         if (input.kind === "down") this.pointerDown(input.x, input.y, input.shiftKey === true, input.input ?? "mouse")
-        else if (input.kind === "move") this.pointerMove(input.x, input.y)
+        else if (input.kind === "move") {
+          // Hovering, the pointer may be another one now (a mouse after a finger).
+          if (!this.press && !this.scrollbarPress) this.pointerInput = input.input ?? "mouse"
+          this.pointerMove(input.x, input.y)
+        }
         else if (input.kind === "up") this.pointerUp(input.x, input.y)
         else {
           this.pointer = null
