@@ -12,17 +12,26 @@
 // - focus (see VirtualFocus), and placing the caret where a field was pressed
 // - click and dblclick, only when the pointer did not move in between
 // - wheel scrolling, and text editing in <input>/<textarea>
+// - scrollbars: dragging the thumb, paging by pressing the track (the
+//   scrollbars in the image are the agent's own, see scrollbars.ts)
 //
 // Events are constructed from the page's own window, so that they belong to
 // the page's realm like events the browser would dispatch there.
 
 import { indexFromPoint, isTextField, type TextField } from "./caret"
+import { contains, maxScroll, scrollbarAt, thumbTravel, type Scrollbar } from "./scrollbars"
 import type { FrameWindow, PanelInput } from "../../types"
 
 const POINTER_ID = 1
 /** Movement (CSS px) after which a press is a drag, not a click. */
 const CLICK_SLOP = 6
 const DOUBLE_CLICK_MS = 500
+/** Pressing a scrollbar's track scrolls by this share of the visible length, like browsers do. */
+const PAGE_SCROLL_RATIO = 0.875
+
+// macOS and iOS keep Emacs-style keys in text fields: Ctrl+A and Ctrl+E move to
+// the start and end of the line. Select all is Cmd+A there.
+const APPLE_PLATFORM = /mac|iphone|ipad|ipod/i
 
 const FOCUSABLE_SELECTOR =
   'input, textarea, select, button, a[href], [tabindex], [contenteditable=""], [contenteditable="true"]'
@@ -156,6 +165,13 @@ export class InputSynthesizer {
   private captureTarget: Element | null = null
   private press: Press | null = null
   private lastClick: { time: number; x: number; y: number } | null = null
+  /**
+   * A press on a scrollbar, until it is released. On the thumb, it drags: where
+   * the press was and the scroll offset then.
+   */
+  private scrollbarPress: { bar: Scrollbar; drag: { from: number; scroll: number } | null } | null = null
+  /** Whether the pointer hovers a scrollbar (which is not part of the page). */
+  private overScrollbar = false
 
   constructor(
     private readonly document: Document,
@@ -172,7 +188,10 @@ export class InputSynthesizer {
         if (input.kind === "down") this.pointerDown(input.x, input.y)
         else if (input.kind === "move") this.pointerMove(input.x, input.y)
         else if (input.kind === "up") this.pointerUp(input.x, input.y)
-        else this.updateHover(null, 0, 0)
+        else {
+          this.overScrollbar = false
+          this.updateHover(null, 0, 0)
+        }
         break
       case "wheel":
         this.wheel(input.x, input.y, input.deltaX, input.deltaY)
@@ -193,6 +212,22 @@ export class InputSynthesizer {
   /** The focused element, if any. */
   get focused(): Element | null {
     return this.focus.current
+  }
+
+  /**
+   * The mouse cursor the page asks for where the pointer is, as a CSS keyword,
+   * or "" while the pointer is not over the page.
+   */
+  get cursor(): string {
+    if (this.scrollbarPress || this.overScrollbar) return "default"
+    const target = this.captureTarget?.isConnected ? this.captureTarget : this.hoverTarget
+    if (!target?.isConnected) return ""
+    // The computed value lists url() images before a keyword to fall back on; only the keyword is used.
+    const keyword = this.window.getComputedStyle(target).cursor.split(",").pop()!.trim()
+    if (keyword !== "auto" && /^[a-z-]+$/.test(keyword)) return keyword
+    // "auto" is the text cursor over editable text.
+    const editable = target instanceof this.window.HTMLElement && target.isContentEditable
+    return isTextField(target) || editable ? "text" : "default"
   }
 
   /**
@@ -306,6 +341,12 @@ export class InputSynthesizer {
   }
 
   private pointerDown(x: number, y: number): void {
+    // Like a real scrollbar, pressing one is not a press on the page.
+    const bar = scrollbarAt(this.document, x, y)
+    if (bar) {
+      this.pressScrollbar(bar, x, y)
+      return
+    }
     const target = this.hitTest(x, y)
     this.updateHover(target, x, y)
     this.captureTarget = null
@@ -323,6 +364,11 @@ export class InputSynthesizer {
   }
 
   private pointerMove(x: number, y: number): void {
+    if (this.scrollbarPress) {
+      this.dragScrollbar(x, y)
+      return
+    }
+    this.overScrollbar = !this.press && scrollbarAt(this.document, x, y) !== null
     const target = this.hitTest(x, y)
     this.updateHover(target, x, y)
     const press = this.press
@@ -335,6 +381,10 @@ export class InputSynthesizer {
   }
 
   private pointerUp(x: number, y: number): void {
+    if (this.scrollbarPress) {
+      this.scrollbarPress = null
+      return
+    }
     const target = this.hitTest(x, y)
     const press = this.press
     const destination = this.captureTarget?.isConnected ? this.captureTarget : target
@@ -363,6 +413,37 @@ export class InputSynthesizer {
     } else {
       this.lastClick = { time: now, x, y }
     }
+  }
+
+  // --- Scrollbars ------------------------------------------------------------
+
+  private pressScrollbar(bar: Scrollbar, x: number, y: number): void {
+    const position = bar.axis === "y" ? y : x
+    if (contains(bar.thumb, x, y)) {
+      const scroll = bar.axis === "y" ? bar.element.scrollTop : bar.element.scrollLeft
+      this.scrollbarPress = { bar, drag: { from: position, scroll } }
+      return
+    }
+    this.scrollbarPress = { bar, drag: null }
+    // A press on the track pages toward the press.
+    const thumbStart = bar.axis === "y" ? bar.thumb.top : bar.thumb.left
+    const direction = position < thumbStart ? -1 : 1
+    const page = (bar.axis === "y" ? bar.element.clientHeight : bar.element.clientWidth) * PAGE_SCROLL_RATIO
+    if (bar.axis === "y") bar.element.scrollBy(0, direction * page)
+    else bar.element.scrollBy(direction * page, 0)
+  }
+
+  /** Moves the thumb with the pointer: the thumb's travel maps onto the scroll range. */
+  private dragScrollbar(x: number, y: number): void {
+    const { bar, drag } = this.scrollbarPress!
+    if (!drag) return
+    const { from, scroll } = drag
+    const travel = thumbTravel(bar)
+    if (travel <= 0) return
+    const moved = (bar.axis === "y" ? y : x) - from
+    const offset = scroll + (moved * maxScroll(bar)) / travel
+    if (bar.axis === "y") bar.element.scrollTop = offset
+    else bar.element.scrollLeft = offset
   }
 
   private canScroll(element: Element, deltaX: number, deltaY: number): boolean {
@@ -425,6 +506,20 @@ export class InputSynthesizer {
     const start = target.selectionStart ?? length
     const end = target.selectionEnd ?? length
     const collapse = (position: number) => target.setSelectionRange(position, position)
+    const value = target.value
+    // Lines are only those of a <textarea>; soft wraps are not seen.
+    const lineStart = () => value.lastIndexOf("\n", start - 1) + 1
+    const lineEnd = () => {
+      const next = value.indexOf("\n", end)
+      return next === -1 ? length : next
+    }
+
+    if (input.ctrlKey && !input.metaKey && !input.altKey && this.isApple()) {
+      const key = input.key.toLowerCase()
+      if (key === "a") collapse(lineStart())
+      else if (key === "e") collapse(lineEnd())
+      return
+    }
     const modifier = input.ctrlKey || input.metaKey
 
     switch (input.key) {
@@ -455,6 +550,11 @@ export class InputSynthesizer {
       default:
         if (modifier && input.key.toLowerCase() === "a") target.select()
     }
+  }
+
+  private isApple(): boolean {
+    const navigator = this.window.navigator as Navigator & { userAgentData?: { platform?: string } }
+    return APPLE_PLATFORM.test(navigator.userAgentData?.platform || navigator.platform || "")
   }
 
   private text(text: string): void {

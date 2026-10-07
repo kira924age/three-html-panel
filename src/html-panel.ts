@@ -10,7 +10,18 @@
 // The iframe is not sandboxed. Only show pages you trust, from URLs you choose,
 // never from user input or synced room state.
 
-import { BackSide, DoubleSide, Mesh, MeshBasicMaterial, Plane, PlaneGeometry, Vector2, Vector3, type Ray } from "three"
+import {
+  BackSide,
+  DoubleSide,
+  Mesh,
+  MeshBasicMaterial,
+  Plane,
+  PlaneGeometry,
+  Vector2,
+  Vector3,
+  type Object3DEventMap,
+  type Ray
+} from "three"
 import { FrameRenderer } from "./frame-renderer"
 import { PanelConnection } from "./panel-connection"
 import { getSharedKeyboard, type KeyboardTarget, type PanelKeyboard } from "./panel-keyboard"
@@ -42,7 +53,12 @@ export interface HtmlPanelOptions {
 
 const CARET_BLINK_MS = 530
 
-export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial> implements KeyboardTarget {
+export interface HtmlPanelEventMap extends Object3DEventMap {
+  /** `cursor` changed. */
+  cursorchange: {}
+}
+
+export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelEventMap> implements KeyboardTarget {
   readonly iframe = document.createElement("iframe")
   /** The origin the page is expected on; messages from anywhere else are ignored. */
   readonly origin: string
@@ -50,6 +66,8 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial> implements
   readonly pageHeight: number
   readonly worldWidth: number
   readonly worldHeight: number
+  /** The mouse cursor the page asks for where the pointer is, as a CSS keyword. */
+  cursor = "default"
 
   private readonly renderer: FrameRenderer
   private readonly keyboard: PanelKeyboard
@@ -115,9 +133,13 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial> implements
       width: pageWidth,
       height: pageHeight,
       readyTimeout: options.readyTimeout,
-      onConnect: () => this.setEditing(false, null),
+      onConnect: () => {
+        this.setEditing(false, null)
+        this.setCursor("default")
+      },
       onFrame: frame => this.renderer.submit(frame),
       onEditing: (editing, caret) => this.setEditing(editing, caret),
+      onCursor: cursor => this.setCursor(cursor),
       onMessage: data => options.onMessage?.(data),
       onError: error => {
         this.renderer.clear()
@@ -151,6 +173,12 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial> implements
     this.keyboard.register(iframe)
     iframe.src = url.href
     container.appendChild(iframe)
+  }
+
+  private setCursor(cursor: string): void {
+    if (cursor === this.cursor) return
+    this.cursor = cursor
+    this.dispatchEvent({ type: "cursorchange" })
   }
 
   private setEditing(editing: boolean, caret: Caret | null): void {

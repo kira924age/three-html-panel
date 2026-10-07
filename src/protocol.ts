@@ -23,6 +23,7 @@ export const MAX_SVG_LENGTH = 16 * 1024 * 1024
 const MAX_COLOR_LENGTH = 64
 const MAX_KEY_LENGTH = 64
 const MAX_TEXT_LENGTH = 64 * 1024
+const CURSOR_KEYWORD = /^[a-z][a-z-]{0,31}$/
 
 /** Posted by the agent to the parent window when it starts. */
 export interface ReadyMessage {
@@ -52,6 +53,15 @@ export interface EditingMessage {
   caret: Caret | null
 }
 
+/**
+ * The mouse cursor over the page where the pointer is. Only CSS cursor
+ * keywords: a url() cursor would have the host load whatever the page names.
+ */
+export interface CursorMessage {
+  type: "cursor"
+  cursor: string
+}
+
 /** Data for the application on the other side; the panel does not look into it. */
 export interface AppMessage {
   type: "app"
@@ -59,7 +69,7 @@ export interface AppMessage {
 }
 
 /** From the page to the host, through the port. */
-export type PageMessage = FrameMessage | EditingMessage | AppMessage
+export type PageMessage = FrameMessage | EditingMessage | CursorMessage | AppMessage
 
 /** From the host to the page, through the port. */
 export type HostMessage = PanelInput | AppMessage
@@ -118,6 +128,10 @@ export function parsePageMessage(data: unknown, limits: PageMessageLimits): Page
       if (caret === undefined) return null
       return { type: "editing", editing: data.editing, caret }
     }
+    case "cursor":
+      return typeof data.cursor === "string" && CURSOR_KEYWORD.test(data.cursor)
+        ? { type: "cursor", cursor: data.cursor }
+        : null
     case "app":
       return { type: "app", data: data.data }
     default:

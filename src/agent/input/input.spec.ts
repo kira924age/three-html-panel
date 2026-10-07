@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 import { InputSynthesizer } from "./input"
 
 let input: InputSynthesizer
@@ -9,6 +9,10 @@ beforeAll(() => {
   // jsdom has no PointerEvent.
   globalThis.PointerEvent ??= class extends MouseEvent {} as unknown as typeof PointerEvent
   input = new InputSynthesizer(document, { measure: run => run(), onChange })
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
 })
 
 beforeEach(() => {
@@ -78,6 +82,50 @@ describe("text editing", () => {
     field.focus()
     input.handle({ type: "text", text: "X" })
     expect(field.value).toBe("ab")
+  })
+
+  it("selects all with Ctrl+A outside Apple platforms", () => {
+    vi.spyOn(navigator, "platform", "get").mockReturnValue("Win32")
+    const field = document.querySelector<HTMLInputElement>("#name")!
+    field.focus()
+    field.setSelectionRange(1, 1)
+    input.handle({ type: "key", key: "a", shiftKey: false, ctrlKey: true, altKey: false, metaKey: false })
+    expect([field.selectionStart, field.selectionEnd]).toEqual([0, 2])
+  })
+
+  it("moves to the line start and end with Ctrl+A and Ctrl+E on macOS, and selects all with Cmd+A", () => {
+    vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel")
+    document.body.innerHTML = "<textarea>ab\ncde\nf</textarea>"
+    const textarea = document.querySelector("textarea")!
+    textarea.focus()
+    textarea.setSelectionRange(5, 5)
+    const press = (key: string, modifiers: { ctrlKey?: boolean; metaKey?: boolean }) =>
+      input.handle({ type: "key", key, shiftKey: false, ctrlKey: false, altKey: false, metaKey: false, ...modifiers })
+
+    press("a", { ctrlKey: true })
+    expect([textarea.selectionStart, textarea.selectionEnd]).toEqual([3, 3])
+    press("e", { ctrlKey: true })
+    expect([textarea.selectionStart, textarea.selectionEnd]).toEqual([6, 6])
+    // Typing after Ctrl+A inserts at the line start instead of replacing everything.
+    press("a", { ctrlKey: true })
+    input.handle({ type: "text", text: "X" })
+    expect(textarea.value).toBe("ab\nXcde\nf")
+    press("a", { metaKey: true })
+    expect([textarea.selectionStart, textarea.selectionEnd]).toEqual([0, 9])
+  })
+
+  it("reports the cursor under the pointer", () => {
+    document.body.innerHTML = `<button id="go" style="cursor: pointer">Go</button><p id="text">text</p>`
+    const go = document.querySelector("#go")!
+    const text = document.querySelector("#text")!
+    // jsdom cannot build the pointer events that hovering dispatches, so the hover target is set directly.
+    ;(input as unknown as { hoverTarget: Element | null }).hoverTarget = go
+    expect(input.cursor).toBe("pointer")
+    ;(input as unknown as { hoverTarget: Element | null }).hoverTarget = text
+    expect(input.cursor).toBe("default")
+    document.body.innerHTML = `<textarea></textarea>`
+    ;(input as unknown as { hoverTarget: Element | null }).hoverTarget = document.querySelector("textarea")
+    expect(input.cursor).toBe("text")
   })
 
   it("ignores text when no field has focus", () => {

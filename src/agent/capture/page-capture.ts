@@ -7,7 +7,7 @@
 // as it is created, but only takes snapshots once the agent is connected to
 // the host (start()).
 
-import { isTextField, measureCaret } from "../input/caret"
+import { isTextField, measureCaret, measureSelection } from "../input/caret"
 import { InputSynthesizer } from "../input/input"
 import type { Caret, Frame, FrameWindow, PanelInput } from "../../types"
 import { DocumentCss } from "./css"
@@ -35,6 +35,8 @@ const INVALIDATING_EVENTS = [
 export interface PageCaptureOptions {
   onFrame: (frame: Frame) => void
   onEditing: (editing: boolean, caret: Caret | null) => void
+  /** The mouse cursor changed (a CSS keyword, or "" when the pointer is not over the page). */
+  onCursor: (cursor: string) => void
 }
 
 export class PageCapture {
@@ -48,6 +50,7 @@ export class PageCapture {
   private timer = 0
   private notBefore = 0
   private lastEditing = ""
+  private lastCursor = ""
   private started = false
   private disposed = false
 
@@ -79,6 +82,7 @@ export class PageCapture {
   start(): void {
     this.started = true
     this.lastEditing = ""
+    this.lastCursor = ""
     this.css.invalidate()
     this.invalidate()
   }
@@ -133,19 +137,30 @@ export class PageCapture {
       // The viewport, including any scrollbar: exactly the iframe's size.
       const width = this.window.innerWidth
       const height = this.window.innerHeight
+      const focused = this.input.focused
+      const selection = isTextField(focused) ? this.measure(() => measureSelection(focused)) : []
       const xhtml = snapshotDocument(this.document, {
         hovered: this.input.hovered,
         active: this.input.active,
-        focused: this.input.focused,
+        focused,
+        selection,
         inlineImage: url => this.images.get(url)
       })
       this.options.onFrame({ svg: buildFrameSvg(xhtml, this.css.get(), width, height), width, height })
       this.reportEditing()
+      this.reportCursor()
     } finally {
       this.notBefore = performance.now() + this.pacer.record(performance.now() - started)
     }
     // Keep sampling while something is animating, so the panel shows it moving.
     if (this.dirty || this.hasRunningAnimations()) this.invalidate()
+  }
+
+  private reportCursor(): void {
+    const cursor = this.input.cursor
+    if (cursor === this.lastCursor) return
+    this.lastCursor = cursor
+    this.options.onCursor(cursor)
   }
 
   private reportEditing(): void {

@@ -64,6 +64,13 @@ describe("parsePageMessage", () => {
     expect(parsePageMessage({ type: "editing", editing: true }, limits)).toBeNull()
   })
 
+  it("accepts cursor keywords only", () => {
+    expect(parsePageMessage({ type: "cursor", cursor: "ew-resize" }, limits)).toEqual({ type: "cursor", cursor: "ew-resize" })
+    for (const bad of ["", "url(https://evil.example/c.png), auto", "Pointer", "a".repeat(33), 1, null]) {
+      expect(parsePageMessage({ type: "cursor", cursor: bad }, limits)).toBeNull()
+    }
+  })
+
   it("drops anything else", () => {
     for (const bad of [null, undefined, "frame", 1, [], { type: "unknown" }, { type: "ready", version: 1 }]) {
       expect(parsePageMessage(bad, limits)).toBeNull()

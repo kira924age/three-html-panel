@@ -12,6 +12,7 @@ let options: {
   onConnect: Mock
   onFrame: Mock
   onEditing: Mock
+  onCursor: Mock
   onMessage: Mock
   onError: Mock
 }
@@ -50,7 +51,14 @@ beforeEach(() => {
   document.body.appendChild(iframe)
   postToFrame = vi.fn()
   iframe.contentWindow!.postMessage = postToFrame as typeof window.postMessage
-  options = { onConnect: vi.fn(), onFrame: vi.fn(), onEditing: vi.fn(), onMessage: vi.fn(), onError: vi.fn() }
+  options = {
+    onConnect: vi.fn(),
+    onFrame: vi.fn(),
+    onEditing: vi.fn(),
+    onCursor: vi.fn(),
+    onMessage: vi.fn(),
+    onError: vi.fn()
+  }
   connection = new PanelConnection({ iframe, origin: ORIGIN, width: 800, height: 600, readyTimeout: 1000, ...options })
 })
 
@@ -112,6 +120,8 @@ describe("port messages", () => {
     port.postMessage(frame(2, { svg: 1 }))
     port.postMessage({ type: "editing", editing: true, caret: { x: 1, y: 2, height: Number.NaN, color: "red" } })
     port.postMessage({ type: "editing", editing: true, caret: { x: 1, y: 2, height: 16, color: "red" } })
+    port.postMessage({ type: "cursor", cursor: "pointer" })
+    port.postMessage({ type: "cursor", cursor: "url(https://evil.example/c.png), auto" })
     port.postMessage({ type: "app", data: { hello: 1 } })
     port.postMessage({ type: "nonsense" })
     port.postMessage(frame(3))
@@ -122,6 +132,7 @@ describe("port messages", () => {
       { svg: "<svg/>", width: 800, height: 600 }
     ])
     expect(options.onEditing.mock.calls).toEqual([[true, { x: 1, y: 2, height: 16, color: "red" }]])
+    expect(options.onCursor.mock.calls).toEqual([["pointer"]])
     expect(options.onMessage.mock.calls).toEqual([[{ hello: 1 }]])
   })
 

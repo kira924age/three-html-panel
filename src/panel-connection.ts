@@ -33,6 +33,8 @@ export interface PanelConnectionOptions {
   onConnect: () => void
   onFrame: (frame: Frame) => void
   onEditing: (editing: boolean, caret: Caret | null) => void
+  /** The mouse cursor the page wants where the pointer is (a CSS keyword). */
+  onCursor: (cursor: string) => void
   onMessage: (data: unknown) => void
   /** No agent connected in time, or the agent speaks another protocol version. */
   onError: (error: Error) => void
@@ -110,6 +112,9 @@ export class PanelConnection {
         break
       case "editing":
         this.options.onEditing(message.editing, message.caret)
+        break
+      case "cursor":
+        this.options.onCursor(message.cursor)
         break
       case "app":
         this.options.onMessage(message.data)

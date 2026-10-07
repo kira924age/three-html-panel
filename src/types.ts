@@ -23,6 +23,14 @@ export type PanelInput =
   /** Keyboard focus left the panel from the host side (the user pressed elsewhere). */
   | { type: "blur" }
 
+/** A rectangle in CSS pixels of the panel page (viewport coordinates). */
+export interface Box {
+  left: number
+  top: number
+  width: number
+  height: number
+}
+
 /** A text caret in CSS pixels of the panel page. */
 export interface Caret {
   x: number
