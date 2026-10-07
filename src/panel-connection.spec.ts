@@ -167,8 +167,8 @@ describe("port messages", () => {
     port.postMessage(frame(0)) // seq did not grow
     port.postMessage(frame(1, { width: 801 }))
     port.postMessage(frame(2, { svg: 1 }))
-    port.postMessage({ type: "editing", editing: true, caret: { x: 1, y: 2, height: Number.NaN, color: "red" } })
-    port.postMessage({ type: "editing", editing: true, caret: { x: 1, y: 2, height: 16, color: "red" } })
+    port.postMessage({ type: "editing", editing: true, caret: { x: 1, y: 2, height: Number.NaN, color: "red" }, selectedText: "" })
+    port.postMessage({ type: "editing", editing: true, caret: { x: 1, y: 2, height: 16, color: "red" }, selectedText: "" })
     port.postMessage({ type: "cursor", cursor: "pointer" })
     port.postMessage({ type: "cursor", cursor: "url(https://evil.example/c.png), auto" })
     port.postMessage({ type: "app", data: { hello: 1 } })
@@ -180,7 +180,7 @@ describe("port messages", () => {
       { svg: "<svg/>", width: 800, height: 600 },
       { svg: "<svg/>", width: 800, height: 600 }
     ])
-    expect(options.onEditing.mock.calls).toEqual([[true, { x: 1, y: 2, height: 16, color: "red" }]])
+    expect(options.onEditing.mock.calls).toEqual([[true, { x: 1, y: 2, height: 16, color: "red" }, ""]])
     expect(options.onCursor.mock.calls).toEqual([["pointer"]])
     expect(options.onMessage.mock.calls).toEqual([[{ hello: 1 }]])
   })

@@ -84,7 +84,7 @@ describe("the panel's iframe", () => {
       window.dispatchEvent(event)
       return (postMessage.mock.calls[0]![2] as MessagePort[])[0]!
     }
-    const editing = { type: "editing", editing: true, caret: { x: 1, y: 1, height: 16, color: "rgb(0, 0, 0)" } }
+    const editing = { type: "editing", editing: true, caret: { x: 1, y: 1, height: 16, color: "rgb(0, 0, 0)" }, selectedText: "" }
     const delivered = () => new Promise(resolve => setTimeout(resolve, 20))
 
     it("does not take the keyboard when sandboxed and the user did not press the panel", async () => {
@@ -106,6 +106,18 @@ describe("the panel's iframe", () => {
       port.postMessage(editing)
       await delivered()
       expect(focus).toHaveBeenCalledWith(panel)
+      port.close()
+    })
+
+    it("keeps the page's selected text for copying while editing, and forgets it after", async () => {
+      const panel = open(false, new PanelKeyboard())
+      const port = connect(panel)
+      port.postMessage({ ...editing, selectedText: "copy me" })
+      await delivered()
+      expect(panel.selectedText()).toBe("copy me")
+      port.postMessage({ type: "editing", editing: false, caret: null, selectedText: "stale" })
+      await delivered()
+      expect(panel.selectedText()).toBe("")
       port.close()
     })
 
@@ -141,7 +153,7 @@ describe("the panel's iframe", () => {
     window.dispatchEvent(ready)
     const port = (postMessage.mock.calls[0]![2] as MessagePort[])[0]!
     // The page's default size is 800x600: a caret at its centre.
-    port.postMessage({ type: "editing", editing: true, caret: { x: 400, y: 290, height: 20, color: "rgb(0, 0, 0)" } })
+    port.postMessage({ type: "editing", editing: true, caret: { x: 400, y: 290, height: 20, color: "rgb(0, 0, 0)" }, selectedText: "" })
     await new Promise(resolve => setTimeout(resolve, 20))
 
     panel.onBeforeRender(renderer, new Scene(), camera)

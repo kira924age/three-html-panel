@@ -58,7 +58,14 @@ describe("a panel iframe that takes focus", () => {
 
   it("gives it to the hidden field while a panel is being typed into", () => {
     keyboard.register(frame, { sandboxed: true })
-    const target: KeyboardTarget = { sendKey: () => {}, sendText: () => {}, sendComposition: () => {}, blurFromHost: () => {} }
+    const target: KeyboardTarget = {
+      sendKey: () => {},
+      selectedText: () => "",
+      cut: () => {},
+      sendText: () => {},
+      sendComposition: () => {},
+      blurFromHost: () => {}
+    }
     keyboard.focus(target)
     pageTakesFocus()
     const active = document.activeElement
@@ -78,6 +85,8 @@ describe("IME composition", () => {
     target = {
       calls,
       sendKey: () => {},
+      selectedText: () => "",
+      cut: () => {},
       sendText: text => calls.push(["text", text]),
       sendComposition: (text, cursor) => calls.push(["composition", text, cursor]),
       blurFromHost: () => {}
@@ -122,5 +131,69 @@ describe("IME composition", () => {
     expect(field().style.lineHeight).toBe("20px")
     keyboard.release(target)
     expect(field().style.left).toBe("0px")
+  })
+})
+
+describe("copy, cut and undo", () => {
+  const field = () => document.querySelector<HTMLTextAreaElement>("textarea[aria-hidden]")!
+  let selected: string
+  const target: KeyboardTarget & { keys: string[]; cuts: number } = {
+    keys: [],
+    cuts: 0,
+    sendKey: event => target.keys.push(event.key),
+    selectedText: () => selected,
+    cut: () => target.cuts++,
+    sendText: () => {},
+    sendComposition: () => {},
+    blurFromHost: () => {}
+  }
+
+  beforeEach(() => {
+    vi.useRealTimers()
+    selected = "hello"
+    target.keys = []
+    target.cuts = 0
+    keyboard.focus(target)
+  })
+
+  afterEach(() => keyboard.release(target))
+
+  const press = (key: string) => {
+    const event = new KeyboardEvent("keydown", { key, metaKey: true, cancelable: true })
+    field().dispatchEvent(event)
+    return event
+  }
+
+  it("gives the hidden field the target's selection to copy, and leaves the copy to the browser", async () => {
+    const event = press("c")
+    expect(event.defaultPrevented).toBe(false)
+    expect(field().value).toBe("hello")
+    expect([field().selectionStart, field().selectionEnd]).toEqual([0, 5])
+    field().dispatchEvent(new Event("copy"))
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(field().value).toBe("")
+    expect(target.keys).toEqual([])
+  })
+
+  it("copies nothing when nothing is selected", () => {
+    selected = ""
+    const event = press("c")
+    expect(event.defaultPrevented).toBe(true)
+    expect(field().value).toBe("")
+  })
+
+  it("tells the target to delete what the browser cut", async () => {
+    press("x")
+    expect(field().value).toBe("hello")
+    field().dispatchEvent(new Event("cut"))
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(target.cuts).toBe(1)
+    expect(field().value).toBe("")
+  })
+
+  it("sends undo to the target as a key (its history is the agent's)", () => {
+    const event = press("z")
+    expect(event.defaultPrevented).toBe(true)
+    expect(target.keys).toEqual(["z"])
   })
 })

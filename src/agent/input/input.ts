@@ -21,6 +21,7 @@
 
 import { caretAt, indexFromPoint, isTextField, revealIndex, verticalIndex, type Composition, type TextField } from "./caret"
 import { editAction, lineEnd, lineStart, wordAt } from "./editing"
+import { EditHistory, type FieldState } from "./history"
 import { contains, hitBox, maxScroll, scrollbarAt, scrollbarsOf, thumbTravel, type Axis, type Scrollbar } from "./scrollbars"
 import type { FrameWindow, PanelInput } from "../../types"
 
@@ -178,6 +179,7 @@ export class InputSynthesizer {
   private textDrag: { field: TextField; unit: "char" | "word" | "line"; start: number; end: number } | null = null
   /** Text being composed with the host's IME in the focused field (not in its value yet). */
   private composing: { field: TextField; composition: Composition } | null = null
+  private readonly history = new EditHistory()
   /** The horizontal position Up/Down keep to, while they keep moving the caret. */
   private goal: { field: TextField; index: number; x: number } | null = null
   /**
@@ -225,6 +227,9 @@ export class InputSynthesizer {
         this.composing = null
         this.text(input.text)
         break
+      case "cut":
+        this.cut()
+        break
       case "composition": {
         const field = this.focused
         this.composing =
@@ -241,6 +246,17 @@ export class InputSynthesizer {
   /** The focused element, if any. */
   get focused(): Element | null {
     return this.focus.current
+  }
+
+  /**
+   * The text selected in the focused field, for the host to copy (it takes the
+   * keys, so the browser's copy acts on the host's field). None from a password.
+   */
+  get selectedText(): string {
+    const field = this.focused
+    if (!isTextField(field) || (field.tagName === "INPUT" && (field as HTMLInputElement).type === "password")) return ""
+    const { selectionStart, selectionEnd } = field
+    return selectionStart === null || selectionEnd === null ? "" : field.value.slice(selectionStart, selectionEnd)
   }
 
   /** What is being composed in the focused field, if anything. Ends when focus moves on. */
@@ -402,6 +418,7 @@ export class InputSynthesizer {
 
   /** Selects from `anchor` to `focus` (the end that moves), and scrolls the field to show `focus`. */
   private select(field: TextField, anchor: number, focus: number): void {
+    this.history.breakTyping(field)
     field.setSelectionRange(Math.min(anchor, focus), Math.max(anchor, focus), focus < anchor ? "backward" : "forward")
     this.options.measure(() => revealIndex(field, focus))
   }
@@ -657,11 +674,13 @@ export class InputSynthesizer {
       this.focus.set(null)
       return
     }
+    const plain = !input.ctrlKey && !input.metaKey && !input.altKey
+    if (input.key === "Tab" && plain) {
+      this.moveFocus(input.shiftKey ? -1 : 1)
+      return
+    }
     if (!isTextField(target)) {
-      // Activate buttons and links from the keyboard.
-      if ((input.key === "Enter" || input.key === " ") && target.matches("button, a[href], [role=button]")) {
-        target.dispatchEvent(this.mouseEvent("click", { bubbles: true, cancelable: true }))
-      }
+      if (plain) this.activate(target, input.key)
       return
     }
 
@@ -681,7 +700,109 @@ export class InputSynthesizer {
     if (!action) return
     if (action.type === "select") this.select(field, action.anchor, action.focus)
     else if (action.type === "edit") this.editText(field, action.text, action.start, action.end, action.inputType)
+    else if (action.type === "undo" || action.type === "redo") this.undo(field, action.type)
     else field.form?.requestSubmit()
+  }
+
+  /** The default actions of keys on buttons, links, checkboxes and radio buttons. */
+  private activate(target: Element, key: string): void {
+    const { HTMLInputElement, HTMLElement } = this.window
+    const kind = target instanceof HTMLInputElement ? target.type : ""
+    if (kind === "checkbox" || kind === "radio") {
+      if (key === " ") (target as HTMLInputElement).click()
+      else if (kind === "radio" && /^Arrow(Up|Down|Left|Right)$/.test(key)) {
+        this.stepRadio(target as HTMLInputElement, key === "ArrowUp" || key === "ArrowLeft" ? -1 : 1)
+      }
+      return
+    }
+    if ((key === "Enter" || key === " ") && target.matches("button, a[href], [role=button]")) {
+      if (target instanceof HTMLElement) target.click()
+    }
+  }
+
+  /** Arrows in a radio group check the next (or previous) radio, as browsers do. */
+  private stepRadio(radio: HTMLInputElement, direction: -1 | 1): void {
+    const group = this.radioGroup(radio).filter(other => !other.disabled)
+    const index = group.indexOf(radio)
+    const next = group[(index + direction + group.length) % group.length]
+    if (!next || next === radio) return
+    this.focus.set(next)
+    next.click()
+  }
+
+  private radioGroup(radio: HTMLInputElement): HTMLInputElement[] {
+    if (!radio.name) return [radio]
+    const scope = radio.form ?? radio.ownerDocument
+    return Array.from(scope.querySelectorAll<HTMLInputElement>("input[type=radio]")).filter(
+      other => other.name === radio.name && other.form === radio.form
+    )
+  }
+
+  /**
+   * Tab: focus moves to the next element in tab order (a positive tabindex
+   * first, by its value, then document order), Shift+Tab to the previous one,
+   * wrapping around. A radio group is one stop, at its checked radio. A text
+   * field focused this way has its text selected, as in browsers.
+   */
+  private moveFocus(direction: -1 | 1): void {
+    const order = this.tabOrder()
+    if (order.length === 0) return
+    const current = this.focused
+    const index = current ? order.indexOf(current) : -1
+    const next =
+      index === -1 ? order[direction > 0 ? 0 : order.length - 1]! : order[(index + direction + order.length) % order.length]!
+    this.focus.set(next)
+    if (isTextField(next)) next.setSelectionRange(0, next.value.length)
+    next.scrollIntoView?.({ block: "nearest", inline: "nearest" })
+  }
+
+  private tabOrder(): Element[] {
+    const { HTMLElement, HTMLInputElement } = this.window
+    const candidates = Array.from(this.document.querySelectorAll(FOCUSABLE_SELECTOR)).filter(element => {
+      if (!(element instanceof HTMLElement) || element.tabIndex < 0 || !this.focus.isFocusable(element)) return false
+      if (element.closest("[inert]")) return false
+      // jsdom has no checkVisibility; there, everything counts as shown.
+      if (typeof element.checkVisibility === "function" && !element.checkVisibility({ visibilityProperty: true })) {
+        return false
+      }
+      if (element instanceof HTMLInputElement && element.type === "radio") {
+        // One stop per group: the checked radio, or else the first one.
+        const group = this.radioGroup(element)
+        return element === (group.find(radio => radio.checked) ?? group[0])
+      }
+      return true
+    }) as HTMLElement[]
+    const positive = candidates.filter(element => element.tabIndex > 0).sort((a, b) => a.tabIndex - b.tabIndex)
+    return [...positive, ...candidates.filter(element => element.tabIndex === 0)]
+  }
+
+  private stateOf(field: TextField): FieldState {
+    const length = field.value.length
+    return { value: field.value, start: field.selectionStart ?? length, end: field.selectionEnd ?? length }
+  }
+
+  /** Puts a field back to a state from its history, the way the browser's undo would. */
+  private undo(field: TextField, which: "undo" | "redo"): void {
+    const now = this.stateOf(field)
+    const state = which === "undo" ? this.history.undo(field, now) : this.history.redo(field, now)
+    if (!state) return
+    const inputType = which === "undo" ? "historyUndo" : "historyRedo"
+    const { InputEvent } = this.window
+    const before = new InputEvent("beforeinput", { bubbles: true, cancelable: true, composed: true, inputType, data: null })
+    if (!field.dispatchEvent(before)) return
+    field.setRangeText(state.value, 0, field.value.length)
+    field.setSelectionRange(state.start, state.end)
+    this.history.edited(field, field.value)
+    this.options.measure(() => revealIndex(field, state.end))
+    field.dispatchEvent(new InputEvent("input", { bubbles: true, composed: true, inputType, data: null }))
+  }
+
+  /** The host's field cut the selected text to the clipboard: take it out of the page's field too. */
+  private cut(): void {
+    const field = this.focused
+    if (!isTextField(field)) return
+    const { start, end } = this.stateOf(field)
+    if (start !== end) this.editText(field, "", start, end, "deleteByCut")
   }
 
   /** Up/Down keep to the horizontal position they started from, like browsers do. */
@@ -701,6 +822,12 @@ export class InputSynthesizer {
 
   private text(text: string): void {
     const target = this.focused
+    // A space is typed, not a key, as far as the host can tell. On a checkbox or a
+    // button it is the key that toggles or presses it.
+    if (text === " " && target && !isTextField(target)) {
+      this.key({ type: "key", key: " ", shiftKey: false, ctrlKey: false, altKey: false, metaKey: false })
+      return
+    }
     if (!isTextField(target) || text === "") return
     const length = target.value.length
     this.editText(target, text, target.selectionStart ?? length, target.selectionEnd ?? length, "insertText")
@@ -716,11 +843,13 @@ export class InputSynthesizer {
     const { InputEvent } = this.window
     const before = new InputEvent("beforeinput", { bubbles: true, cancelable: true, composed: true, inputType, data })
     if (!field.dispatchEvent(before)) return
+    this.history.record(field, { value: field.value, start, end: field.selectionEnd ?? end }, inputType)
     if (data !== null && field.maxLength >= 0) {
       const room = field.maxLength - (field.value.length - (end - start))
       text = text.slice(0, Math.max(0, room))
     }
     field.setRangeText(text, start, end, "end")
+    this.history.edited(field, field.value)
     this.options.measure(() => revealIndex(field, field.selectionEnd ?? field.value.length))
     field.dispatchEvent(new InputEvent("input", { bubbles: true, composed: true, inputType, data }))
   }

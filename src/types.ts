@@ -20,6 +20,8 @@ export type PanelInput =
       metaKey: boolean
     }
   | { type: "text"; text: string }
+  /** The host cut the selected text to the clipboard (its own field did): delete it in the page. */
+  | { type: "cut" }
   /** Text being composed with an IME (not committed yet), with its caret; "" when composition ends. */
   | { type: "composition"; text: string; cursor: number }
   /** Keyboard focus left the panel from the host side (the user pressed elsewhere). */

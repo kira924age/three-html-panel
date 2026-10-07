@@ -59,7 +59,7 @@ export class PanelAgent {
     emulateAnimationFrames(window as Window & typeof globalThis)
     this.capture = new PageCapture(window.document, {
       onFrame: frame => this.post({ type: "frame", seq: this.seq++, ...frame }),
-      onEditing: (editing, caret) => this.post({ type: "editing", editing, caret }),
+      onEditing: (editing, caret, selectedText) => this.post({ type: "editing", editing, caret, selectedText }),
       // "" (not over the page) goes as "default"; the host stops using it when the pointer leaves anyway.
       onCursor: cursor => this.post({ type: "cursor", cursor: cursor || "default" })
     })

@@ -114,6 +114,8 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
   private readonly onError: (error: Error) => void
   private readonly connection: PanelConnection
   private editing = false
+  /** The text selected in the page's field, as the page reported it last. */
+  private selected = ""
   /** The caret the page reported last, in its CSS pixels, for placing the IME. */
   private caretBox: Caret | null = null
   /** Where the IME was last placed, to place it again only when it moves. */
@@ -187,7 +189,10 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
         this.setCursor("default")
       },
       onFrame: frame => this.renderer.submit(frame),
-      onEditing: (editing, caret) => this.setEditing(editing, caret),
+      onEditing: (editing, caret, selectedText) => {
+        this.selected = editing ? selectedText : ""
+        this.setEditing(editing, caret)
+      },
       onCursor: cursor => this.setCursor(cursor),
       onMessage: data => options.onMessage?.(data),
       onError: error => {
@@ -328,6 +333,14 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
   sendKey(event: KeyboardEvent): void {
     const { key, shiftKey, ctrlKey, altKey, metaKey } = event
     this.send({ type: "key", key, shiftKey, ctrlKey, altKey, metaKey })
+  }
+
+  selectedText(): string {
+    return this.selected
+  }
+
+  cut(): void {
+    this.send({ type: "cut" })
   }
 
   sendComposition(text: string, cursor: number): void {

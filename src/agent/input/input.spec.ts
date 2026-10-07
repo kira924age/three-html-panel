@@ -142,6 +142,100 @@ describe("text editing", () => {
     expect(input.composition).toBeNull()
   })
 
+  it("undoes and redoes the agent's own edits, typing in a row as one step", () => {
+    vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel")
+    const field = document.querySelector<HTMLInputElement>("#name")!
+    field.focus()
+    field.setSelectionRange(2, 2)
+    const types: string[] = []
+    field.addEventListener("input", event => types.push((event as InputEvent).inputType))
+    input.handle({ type: "text", text: "c" })
+    input.handle({ type: "text", text: "d" })
+    key("Backspace")
+    expect(field.value).toBe("abc")
+    const command = (k: string, shiftKey = false) =>
+      input.handle({ type: "key", key: k, shiftKey, ctrlKey: false, altKey: false, metaKey: true })
+    command("z")
+    expect(field.value).toBe("abcd")
+    command("z")
+    expect(field.value).toBe("ab")
+    expect(field.selectionStart).toBe(2)
+    command("z", true)
+    expect(field.value).toBe("abcd")
+    expect(types.slice(-3)).toEqual(["historyUndo", "historyUndo", "historyRedo"])
+  })
+
+  it("starts a new undo step when the caret moves between typing", () => {
+    vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel")
+    const field = document.querySelector<HTMLInputElement>("#name")!
+    field.focus()
+    field.setSelectionRange(2, 2)
+    input.handle({ type: "text", text: "c" })
+    key("ArrowLeft")
+    input.handle({ type: "text", text: "d" })
+    expect(field.value).toBe("abdc")
+    input.handle({ type: "key", key: "z", shiftKey: false, ctrlKey: false, altKey: false, metaKey: true })
+    expect(field.value).toBe("abc")
+  })
+
+  it("cuts the selection when the host has cut it to the clipboard, and offers it for copying", () => {
+    const field = document.querySelector<HTMLInputElement>("#name")!
+    field.focus()
+    field.setSelectionRange(0, 1)
+    expect(input.selectedText).toBe("a")
+    input.handle({ type: "cut" })
+    expect(field.value).toBe("b")
+    document.body.innerHTML = `<input id="secret" type="password" value="hunter2">`
+    const secret = document.querySelector<HTMLInputElement>("#secret")!
+    secret.focus()
+    secret.setSelectionRange(0, 7)
+    // Never a password.
+    expect(input.selectedText).toBe("")
+  })
+
+  it("moves focus with Tab and Shift+Tab in tab order, selecting a text field's text", () => {
+    document.body.innerHTML = `
+      <input id="a" value="one"><button id="b">B</button><input id="skip" tabindex="-1">
+      <input id="c" disabled><input id="first" tabindex="1" value="x">
+      <input type="radio" name="r" id="r1"><input type="radio" name="r" id="r2" checked>`
+    const byId = (id: string) => document.getElementById(id)!
+    const tab = (shiftKey = false) =>
+      input.handle({ type: "key", key: "Tab", shiftKey, ctrlKey: false, altKey: false, metaKey: false })
+    tab()
+    expect(input.focused).toBe(byId("first"))
+    tab()
+    expect(input.focused).toBe(byId("a"))
+    expect([(byId("a") as HTMLInputElement).selectionStart, (byId("a") as HTMLInputElement).selectionEnd]).toEqual([0, 3])
+    tab()
+    expect(input.focused).toBe(byId("b"))
+    // A radio group is one stop, at its checked radio.
+    tab()
+    expect(input.focused).toBe(byId("r2"))
+    tab()
+    expect(input.focused).toBe(byId("first"))
+    tab(true)
+    expect(input.focused).toBe(byId("r2"))
+  })
+
+  it("toggles checkboxes with Space, and moves through a radio group with the arrows", () => {
+    document.body.innerHTML = `<input type="checkbox" id="c"><input type="radio" name="r" id="r1" checked><input type="radio" name="r" id="r2">`
+    const checkbox = document.getElementById("c") as HTMLInputElement
+    const changes: string[] = []
+    document.addEventListener("change", event => changes.push((event.target as Element).id))
+    checkbox.focus()
+    key(" ")
+    expect(checkbox.checked).toBe(true)
+    // The host sends a typed space as text.
+    input.handle({ type: "text", text: " " })
+    expect(checkbox.checked).toBe(false)
+    const r1 = document.getElementById("r1") as HTMLInputElement
+    r1.focus()
+    key("ArrowDown")
+    expect((document.getElementById("r2") as HTMLInputElement).checked).toBe(true)
+    expect(input.focused?.id).toBe("r2")
+    expect(changes).toEqual(["c", "c", "r2"])
+  })
+
   it("ignores text when no field has focus", () => {
     document.querySelector<HTMLButtonElement>("#go")!.focus()
     input.handle({ type: "text", text: "X" })

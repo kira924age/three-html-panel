@@ -32,6 +32,7 @@ function after(state: FieldState, action: EditAction | null): string {
     return value.slice(0, caret) + "|" + value.slice(caret)
   }
   if (action.type === "submit") return "(submit)"
+  if (action.type === "undo" || action.type === "redo") return `(${action.type})`
   const { anchor, focus } = action
   if (anchor === focus) return state.value.slice(0, focus) + "|" + state.value.slice(focus)
   const [a, b] = [Math.min(anchor, focus), Math.max(anchor, focus)]
@@ -106,6 +107,17 @@ describe("editAction", () => {
     expect(run("a|bc", key("a", { metaKey: true }))).toBe("[abc]")
     expect(run("a|bc", key("a", { ctrlKey: true }), windows)).toBe("[abc]")
     expect(run("a|bc", key("a", { metaKey: true }), windows)).toBe("(nothing)")
+  })
+
+  it("undoes with Cmd+Z on macOS and Ctrl+Z elsewhere, and redoes with Shift or Ctrl+Y", () => {
+    expect(run("ab|", key("z", { metaKey: true }))).toBe("(undo)")
+    expect(run("ab|", key("z", { metaKey: true, shiftKey: true }))).toBe("(redo)")
+    expect(run("ab|", key("z", { ctrlKey: true }), windows)).toBe("(undo)")
+    expect(run("ab|", key("z", { ctrlKey: true, shiftKey: true }), windows)).toBe("(redo)")
+    expect(run("ab|", key("y", { ctrlKey: true }), windows)).toBe("(redo)")
+    // Not the other platform's key.
+    expect(run("ab|", key("z", { ctrlKey: true }))).toBe("(nothing)")
+    expect(run("ab|", key("y", { metaKey: true }))).toBe("(nothing)")
   })
 
   it("deletes characters, words and lines", () => {

@@ -39,12 +39,19 @@ describe("parsePageMessage", () => {
   })
 
   it("accepts the editing state with a valid caret or none", () => {
-    expect(parsePageMessage({ type: "editing", editing: true, caret: caret() }, limits)).toEqual({
+    expect(parsePageMessage({ type: "editing", editing: true, caret: caret(), selectedText: "abc" }, limits)).toEqual({
       type: "editing",
       editing: true,
-      caret: caret()
+      caret: caret(),
+      selectedText: "abc"
     })
-    expect(parsePageMessage({ type: "editing", editing: false, caret: null }, limits)).not.toBeNull()
+    // The selection to copy must be a string, and not too long.
+    expect(parsePageMessage({ type: "editing", editing: true, caret: null, selectedText: 1 }, limits)).toBeNull()
+    expect(parsePageMessage({ type: "editing", editing: true, caret: null }, limits)).toBeNull()
+    expect(
+      parsePageMessage({ type: "editing", editing: true, caret: null, selectedText: "x".repeat(64 * 1024 + 1) }, limits)
+    ).toBeNull()
+    expect(parsePageMessage({ type: "editing", editing: false, caret: null, selectedText: "" }, limits)).not.toBeNull()
   })
 
   it("drops carets with numbers that are not finite or colors that are not short strings", () => {
@@ -58,10 +65,10 @@ describe("parsePageMessage", () => {
       caret({ color: 0 }),
       "caret"
     ]) {
-      expect(parsePageMessage({ type: "editing", editing: true, caret: bad }, limits)).toBeNull()
+      expect(parsePageMessage({ type: "editing", editing: true, caret: bad, selectedText: "" }, limits)).toBeNull()
     }
-    expect(parsePageMessage({ type: "editing", editing: "yes", caret: null }, limits)).toBeNull()
-    expect(parsePageMessage({ type: "editing", editing: true }, limits)).toBeNull()
+    expect(parsePageMessage({ type: "editing", editing: "yes", caret: null, selectedText: "" }, limits)).toBeNull()
+    expect(parsePageMessage({ type: "editing", editing: true, selectedText: "" }, limits)).toBeNull()
   })
 
   it("accepts cursor keywords only", () => {

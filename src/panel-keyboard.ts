@@ -16,6 +16,10 @@
 
 export interface KeyboardTarget {
   sendKey(event: KeyboardEvent): void
+  /** The text selected in the target, to copy or cut; "" if none. */
+  selectedText(): string
+  /** The selected text was cut to the clipboard: delete it in the target. */
+  cut(): void
   sendText(text: string): void
   /** Text being composed with the IME, and its caret within it; "" when composition ends. */
   sendComposition(text: string, cursor: number): void
@@ -39,8 +43,13 @@ const FORWARDED_KEYS = new Set([
   "PageUp",
   "PageDown"
 ])
-/** Shortcuts left to the browser so that they act on the hidden field (paste, mostly). */
-const BROWSER_SHORTCUTS = new Set(["c", "v", "x", "z"])
+/**
+ * Shortcuts left to the browser, acting on the hidden field: they need the
+ * clipboard, which only the browser's own copy, cut and paste can use. For copy
+ * and cut, the field is given the target's selected text first. Undo goes to
+ * the target as a key (its history is the agent's).
+ */
+const CLIPBOARD_SHORTCUTS = new Set(["c", "v", "x"])
 
 export class PanelKeyboard {
   private readonly field = document.createElement("textarea")
@@ -78,6 +87,15 @@ export class PanelKeyboard {
       if ((event as InputEvent).isComposing) this.sendComposition()
       else this.flush()
     })
+    // After the browser copied (or cut) the field's text to the clipboard. A cut
+    // also empties the field, which input above ignores (nothing to send).
+    field.addEventListener("copy", () => setTimeout(() => (field.value = ""), 0))
+    field.addEventListener("cut", () =>
+      setTimeout(() => {
+        field.value = ""
+        this.target?.cut()
+      }, 0)
+    )
     field.addEventListener("compositionend", () => {
       this.endComposition()
       this.flush()
@@ -146,7 +164,19 @@ export class PanelKeyboard {
   private readonly onKeyDown = (event: KeyboardEvent) => {
     if (!this.target || event.isComposing || event.keyCode === 229) return
     const shortcut = (event.ctrlKey || event.metaKey) && event.key.length === 1
-    if (shortcut && BROWSER_SHORTCUTS.has(event.key.toLowerCase())) return
+    const letter = event.key.toLowerCase()
+    if (shortcut && CLIPBOARD_SHORTCUTS.has(letter)) {
+      if (letter === "v") return
+      const text = this.target.selectedText()
+      // Nothing selected: copy nothing (not whatever the field holds).
+      if (!text) {
+        event.preventDefault()
+        return
+      }
+      this.field.value = text
+      this.field.select()
+      return
+    }
     if (FORWARDED_KEYS.has(event.key) || shortcut) {
       event.preventDefault()
       this.target.sendKey(event)
