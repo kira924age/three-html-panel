@@ -86,4 +86,15 @@ describe("PanelXRPointer", () => {
     pointer.update(1000)
     expect(panel.calls).toEqual([])
   })
+
+  it("ends a press still held when it is disposed", () => {
+    connect(0)
+    aim(0, true)
+    controllers[0]!.dispatchEvent({ type: "selectstart" } as never)
+    pointer.dispose()
+    expect(panel.calls.filter(call => call[1] === "up")).toEqual([["pointer", "up", new Vector2(-1, -1), false, "xr"]])
+    // Not twice: nothing is held any more.
+    pointer.dispose()
+    expect(panel.calls.filter(call => call[1] === "up")).toHaveLength(1)
+  })
 })

@@ -175,6 +175,8 @@ export class PanelPointer {
   }
 
   dispose(): void {
+    // A press still held ends here: the panel would otherwise take every later move for a drag.
+    this.pressed?.panel.pointer("up", new Vector2(-1, -1))
     this.hovered = null
     this.pressed = null
     this.updateCursor()

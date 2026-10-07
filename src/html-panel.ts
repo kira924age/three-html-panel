@@ -224,6 +224,7 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
       height: pageHeight,
       readyTimeout: options.readyTimeout,
       onConnect: () => {
+        this.pressing = false
         this.editables = []
         this.pointersSent = 0
         this.tapAnswerAt = null
@@ -376,7 +377,7 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
     const dragging = kind === "move" && this.pressing
     if (kind === "down" || kind === "up" || dragging) this.userActionUntil = performance.now() + USER_ACTION_MS
     if (kind === "down") this.pressing = true
-    else if (kind === "up") this.pressing = false
+    else if (kind === "up" || kind === "leave") this.pressing = false
     const { x, y } = uv ? this.toPage(uv) : { x: 0, y: 0 }
     this.send({ type: "pointer", kind, x, y, shiftKey, input })
   }
@@ -482,6 +483,8 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
 
   /** Takes focus away from whatever has it in the page (e.g. the user pressed elsewhere). */
   blur(): void {
+    // Pressing elsewhere: no press on this panel is held.
+    this.pressing = false
     if (!this.editing) return
     this.keyboard.release(this)
     this.editing = false

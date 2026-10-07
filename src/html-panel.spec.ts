@@ -166,6 +166,35 @@ describe("the panel's iframe", () => {
       await delivered()
       expect(focus).not.toHaveBeenCalled()
       expect(received).toContainEqual({ type: "blur" })
+
+      // A press that ended without an up (pressing another panel, the pointer leaving):
+      // moving afterwards is hovering, not dragging.
+      for (const end of [() => panel.blur(), () => panel.pointer("leave")]) {
+        panel.pointer("down", new Vector2(0.2, 0.5))
+        end()
+        focus.mockClear()
+        received.length = 0
+        at(now() + 5000)
+        panel.pointer("move", new Vector2(0.6, 0.5))
+        port.postMessage(selecting)
+        await delivered()
+        expect(focus).not.toHaveBeenCalled()
+        expect(received).toContainEqual({ type: "blur" })
+      }
+
+      // A new document (the press began in the one before).
+      panel.pointer("down", new Vector2(0.2, 0.5))
+      const next = connect(panel)
+      const nextReceived: unknown[] = []
+      next.onmessage = event => nextReceived.push(event.data)
+      focus.mockClear()
+      at(now() + 5000)
+      panel.pointer("move", new Vector2(0.6, 0.5))
+      next.postMessage(selecting)
+      await delivered()
+      expect(focus).not.toHaveBeenCalled()
+      expect(nextReceived).toContainEqual({ type: "blur" })
+      next.close()
       port.close()
     })
 
