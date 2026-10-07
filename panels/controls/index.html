@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Scene controls</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <h1>Scene controls</h1>
+    <p class="lead">This page is trusted and same-origin, so it talks to the 3D scene directly.</p>
+    <form id="form">
+      <fieldset>
+        <legend>Shape</legend>
+        <label><input type="radio" name="shape" value="knot" checked /> Torus knot</label>
+        <label><input type="radio" name="shape" value="ico" /> Icosahedron</label>
+        <label><input type="radio" name="shape" value="box" /> Box</label>
+      </fieldset>
+      <fieldset>
+        <legend>Color</legend>
+        <div class="swatches">
+          <button type="button" class="swatch" data-color="#f59e0b" style="background: #f59e0b" aria-label="Amber"></button>
+          <button type="button" class="swatch" data-color="#10b981" style="background: #10b981" aria-label="Green"></button>
+          <button type="button" class="swatch" data-color="#3b82f6" style="background: #3b82f6" aria-label="Blue"></button>
+          <button type="button" class="swatch" data-color="#ec4899" style="background: #ec4899" aria-label="Pink"></button>
+        </div>
+      </fieldset>
+      <label class="toggle"><input type="checkbox" name="spin" checked /> Spin</label>
+      <label class="field">
+        Caption
+        <input name="caption" placeholder="Shown under the object" autocomplete="off" />
+      </label>
+    </form>
+    <section class="clicks">
+      <span>Clicks on the object</span>
+      <strong id="clicks">0</strong>
+    </section>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>three-html-panel</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #1d2129;
+        font-family: system-ui, sans-serif;
+      }
+      canvas {
+        display: block;
+        touch-action: none;
+      }
+      #hud {
+        position: fixed;
+        left: 16px;
+        bottom: 16px;
+        max-width: calc(100% - 32px);
+        color: #c9d1dc;
+        font-size: 13px;
+        line-height: 1.6;
+        pointer-events: none;
+      }
+      #hud strong {
+        color: #fff;
+      }
+      #caption {
+        position: fixed;
+        left: 0;
+        top: 0;
+        color: #fff;
+        font-size: 15px;
+        font-weight: 600;
+        white-space: nowrap;
+        text-shadow: 0 1px 3px rgb(0 0 0 / 60%);
+        pointer-events: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="hud">
+      <strong>three-html-panel</strong> — two web pages running in same-origin iframes, drawn as textures.<br />
+      Drag outside the panels to orbit · wheel over a panel scrolls it · click the object
+    </div>
+    <div id="caption"></div>
+    <script type="module" src="/src/demo/main.ts"></script>
+  </body>
+</html>
