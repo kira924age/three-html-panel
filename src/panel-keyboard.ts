@@ -43,6 +43,14 @@ const FORWARDED_KEYS = new Set([
   "PageUp",
   "PageDown"
 ])
+/** beforeinput edits that soft keyboards make without telling which key it was. */
+const SOFT_KEYBOARD_KEYS: Record<string, string> = {
+  deleteContentBackward: "Backspace",
+  deleteContentForward: "Delete",
+  insertLineBreak: "Enter",
+  insertParagraph: "Enter"
+}
+
 /**
  * Shortcuts left to the browser, acting on the hidden field: they need the
  * clipboard, which only the browser's own copy, cut and paste can use. For copy
@@ -78,11 +86,16 @@ export class PanelKeyboard {
       height: "1px",
       opacity: "0",
       pointerEvents: "none",
-      resize: "none"
+      resize: "none",
+      // iOS zooms the page into a field with text under 16px when it gets focus.
+      fontSize: "16px"
     })
     container.appendChild(field)
 
     field.addEventListener("keydown", this.onKeyDown)
+    // Soft keyboards often send keydown with no key (Unidentified, keyCode 229)
+    // for Backspace and Enter; what they do shows in beforeinput instead.
+    field.addEventListener("beforeinput", this.onBeforeInput)
     field.addEventListener("input", event => {
       if ((event as InputEvent).isComposing) this.sendComposition()
       else this.flush()
@@ -191,7 +204,7 @@ export class PanelKeyboard {
   placeIme(caret: { x: number; y: number; height: number } | null): void {
     const style = this.field.style
     if (!caret) {
-      Object.assign(style, { left: "0", top: "0", height: "1px", fontSize: "", lineHeight: "" })
+      Object.assign(style, { left: "0", top: "0", height: "1px", fontSize: "16px", lineHeight: "" })
       return
     }
     const height = Math.max(1, caret.height)
@@ -219,6 +232,13 @@ export class PanelKeyboard {
     const target = this.composingFor
     this.composingFor = null
     target?.sendComposition("", 0)
+  }
+
+  private readonly onBeforeInput = (event: InputEvent) => {
+    const key = SOFT_KEYBOARD_KEYS[event.inputType]
+    if (!key || !this.target || event.isComposing) return
+    event.preventDefault()
+    this.target.sendKey(new KeyboardEvent("keydown", { key }))
   }
 
   private flush(): void {

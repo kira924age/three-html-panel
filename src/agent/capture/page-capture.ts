@@ -9,10 +9,10 @@
 
 import { composedValue, isTextField, measureCaret, measureComposition, measureSelection } from "../input/caret"
 import { InputSynthesizer } from "../input/input"
-import type { Caret, Frame, FrameWindow, PanelInput } from "../../types"
+import type { Box, Caret, Frame, FrameWindow, PanelInput } from "../../types"
 import { DocumentCss } from "./css"
 import { ImageInliner } from "./images"
-import { MAX_TEXT_LENGTH } from "../../protocol"
+import { MAX_EDITABLES, MAX_TEXT_LENGTH } from "../../protocol"
 import { RenderPacer } from "./pacer"
 import { buildFrameSvg, isSampledLive, snapshotDocument } from "./snapshot"
 
@@ -37,9 +37,12 @@ export interface PageCaptureOptions {
   onFrame: (frame: Frame) => void
   /**
    * Whether an element has focus (keys should come to the page), a text field's
-   * caret, and its selected text (for the host to copy).
+   * caret, its selected text (for the host to copy), and how many presses and
+   * releases have been handled. Also sent after every release, changed or not.
    */
-  onEditing: (editing: boolean, caret: Caret | null, selectedText: string) => void
+  onEditing: (editing: boolean, caret: Caret | null, selectedText: string, pointers: number) => void
+  /** Where the text fields are now (CSS px, in view), when that changed. */
+  onEditables: (boxes: Box[]) => void
   /** The mouse cursor changed (a CSS keyword, or "" when the pointer is not over the page). */
   onCursor: (cursor: string) => void
 }
@@ -56,6 +59,9 @@ export class PageCapture {
   private notBefore = 0
   private lastEditing = ""
   private lastCursor = ""
+  private lastEditables = ""
+  /** Presses and releases handled for this document (see onEditing). */
+  private pointers = 0
   private started = false
   private disposed = false
 
@@ -88,12 +94,19 @@ export class PageCapture {
     this.started = true
     this.lastEditing = ""
     this.lastCursor = ""
+    this.lastEditables = ""
     this.css.invalidate()
     this.invalidate()
   }
 
   handle(input: PanelInput): void {
-    if (!this.disposed) this.input.handle(input)
+    if (this.disposed) return
+    this.input.handle(input)
+    if (input.type !== "pointer" || (input.kind !== "down" && input.kind !== "up")) return
+    this.pointers++
+    // The host waits for the page's answer to a tap (did it focus a text field?).
+    // Moves and leaves after it are not counted: they could come before the answer.
+    if (input.kind === "up") this.lastEditing = ""
   }
 
   dispose(): void {
@@ -177,12 +190,32 @@ export class PageCapture {
       }))
       this.options.onFrame({ svg: buildFrameSvg(xhtml, this.css.get(), width, height), width, height })
       this.reportEditing()
+      this.reportEditables(width, height)
       this.reportCursor()
     } finally {
       this.notBefore = performance.now() + this.pacer.record(performance.now() - started)
     }
     // Keep sampling while something is animating, so the panel shows it moving.
     if (this.dirty || this.hasLiveAnimations()) this.invalidate()
+  }
+
+  /** The text fields in view, for the host to open a soft keyboard on a tap right away. */
+  private reportEditables(width: number, height: number): void {
+    const boxes: Box[] = []
+    for (const field of Array.from(this.document.querySelectorAll("input, textarea"))) {
+      if (boxes.length === MAX_EDITABLES) break
+      if (!isTextField(field)) continue
+      const rect = field.getBoundingClientRect()
+      const left = Math.max(0, rect.left)
+      const top = Math.max(0, rect.top)
+      const right = Math.min(width, rect.right)
+      const bottom = Math.min(height, rect.bottom)
+      if (right > left && bottom > top) boxes.push({ left, top, width: right - left, height: bottom - top })
+    }
+    const key = JSON.stringify(boxes)
+    if (key === this.lastEditables) return
+    this.lastEditables = key
+    this.options.onEditables(boxes)
   }
 
   private reportCursor(): void {
@@ -203,6 +236,6 @@ export class PageCapture {
     const key = JSON.stringify([editing, caret, selectedText])
     if (key === this.lastEditing) return
     this.lastEditing = key
-    this.options.onEditing(editing, caret, selectedText)
+    this.options.onEditing(editing, caret, selectedText, this.pointers)
   }
 }

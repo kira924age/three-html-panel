@@ -134,6 +134,43 @@ describe("connecting", () => {
     )
   })
 
+  it("answers every tap: an editing report, counting the pointer inputs handled, follows each release", async () => {
+    document.body.innerHTML = `<p>no field here</p>`
+    // jsdom has no layout, and refuses the `view` the agent gives the events it makes.
+    document.elementFromPoint = () => document.querySelector("p")
+    const { MouseEvent: Mouse, PointerEvent: Pointer } = window
+    window.MouseEvent = class extends Mouse {
+      constructor(type: string, init?: MouseEventInit) {
+        super(type, { ...init, view: null })
+      }
+    }
+    window.PointerEvent = class extends Pointer {
+      constructor(type: string, init?: PointerEventInit) {
+        super(type, { ...init, view: null })
+      }
+    }
+    start()
+    const host = connect()
+    const received: { type: string; editing?: boolean; pointers?: number }[] = []
+    host.onmessage = event => received.push(event.data)
+    const editing = () => received.filter(message => message.type === "editing")
+    host.postMessage({ type: "pointer", kind: "down", x: 5, y: 5, input: "touch" })
+    host.postMessage({ type: "pointer", kind: "up", x: 5, y: 5, input: "touch" })
+    // Nothing is focused, so nothing changed for the host: it is still told.
+    await vi.waitFor(() => expect(editing().at(-1)).toMatchObject({ editing: false, pointers: 2 }))
+    const before = editing().length
+    host.postMessage({ type: "pointer", kind: "down", x: 5, y: 5, input: "touch" })
+    host.postMessage({ type: "pointer", kind: "move", x: 6, y: 6, input: "touch" })
+    host.postMessage({ type: "pointer", kind: "up", x: 6, y: 6, input: "touch" })
+    // Moves and leaves are not counted: only presses and releases.
+    host.postMessage({ type: "pointer", kind: "leave", x: 0, y: 0 })
+    await vi.waitFor(() => expect(editing().at(-1)).toMatchObject({ editing: false, pointers: 4 }))
+    expect(editing().length).toBeGreaterThan(before)
+    delete (document as { elementFromPoint?: unknown }).elementFromPoint
+    window.MouseEvent = Mouse
+    window.PointerEvent = Pointer
+  })
+
   it("offers no selection for copying when it is too long to send, rather than a part of it", async () => {
     document.body.innerHTML = `<textarea id="long"></textarea>`
     const field = document.querySelector<HTMLTextAreaElement>("#long")!
@@ -163,6 +200,23 @@ describe("connecting", () => {
     document.getElementById("docs")!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }))
     await delivered()
     expect(received).toContainEqual({ type: "open", url: "https://example.com/docs" })
+  })
+
+  it("reports where the text fields are, for the host to open a soft keyboard on a tap", async () => {
+    document.body.innerHTML = `<input id="name"><input id="below"><button>Go</button>`
+    document.querySelector("#name")!.getBoundingClientRect = () => new DOMRect(10, 20, 100, 30)
+    // Scrolled out of view: not reported.
+    document.querySelector("#below")!.getBoundingClientRect = () => new DOMRect(10, 5000, 100, 30)
+    start()
+    const host = connect()
+    const received: { type: string; boxes?: unknown }[] = []
+    host.onmessage = event => received.push(event.data)
+    await vi.waitFor(() =>
+      expect(received.find(message => message.type === "editables")).toEqual({
+        type: "editables",
+        boxes: [{ left: 10, top: 20, width: 100, height: 30 }]
+      })
+    )
   })
 
   it("does not send anything before it is connected", async () => {

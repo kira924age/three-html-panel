@@ -134,6 +134,38 @@ describe("IME composition", () => {
   })
 })
 
+describe("soft keyboards", () => {
+  const field = () => document.querySelector<HTMLTextAreaElement>("textarea[aria-hidden]")!
+
+  it("uses 16px text, so that iOS does not zoom in when the field gets focus", () => {
+    new PanelKeyboard()
+    const fields = document.querySelectorAll<HTMLTextAreaElement>("textarea[aria-hidden]")
+    expect(fields[fields.length - 1]!.style.fontSize).toBe("16px")
+    keyboard.placeIme({ x: 1, y: 1, height: 10 })
+    keyboard.placeIme(null)
+    expect(field().style.fontSize).toBe("16px")
+  })
+
+  it("turns Backspace and Enter that only show in beforeinput into keys", () => {
+    vi.useRealTimers()
+    const keys: string[] = []
+    const target: KeyboardTarget = {
+      sendKey: event => keys.push(event.key),
+      selectedText: () => "",
+      cut: () => {},
+      sendText: () => {},
+      sendComposition: () => {},
+      blurFromHost: () => {}
+    }
+    keyboard.focus(target)
+    for (const inputType of ["deleteContentBackward", "insertLineBreak", "insertText"]) {
+      field().dispatchEvent(new InputEvent("beforeinput", { inputType, cancelable: true }))
+    }
+    keyboard.release(target)
+    expect(keys).toEqual(["Backspace", "Enter"])
+  })
+})
+
 describe("copy, cut and undo", () => {
   const field = () => document.querySelector<HTMLTextAreaElement>("textarea[aria-hidden]")!
   let selected: string

@@ -72,11 +72,19 @@ Tested in desktop Chrome. The basic flow (hover, adding a note, typing Japanese,
 On the host:
 
 ```ts
-import { HtmlPanel, PanelPointer } from "./src"
+import { HtmlPanel, PanelPointer, PanelXRPointer } from "./src"
 
 const panel = new HtmlPanel({ url: "https://panels.example/notes/", width: 960, height: 640, size: 1.6, sandbox: true })
 scene.add(panel)
 new PanelPointer(camera, renderer.domElement, () => [panel])
+
+// VR: controllers point at panels; call update() every frame.
+renderer.xr.enabled = true
+const xrPointer = new PanelXRPointer(renderer, () => [panel])
+renderer.setAnimationLoop(() => {
+  xrPointer.update()
+  renderer.render(scene, camera)
+})
 ```
 
 If the page's agent does not connect within 15 seconds (`readyTimeout`), the panel is cleared and `onError` is called.
@@ -156,6 +164,11 @@ Paths are under `src/`; the agent's are under `src/agent/`.
 | Synthetic presses do not select text | Drag to select; double press selects a word, triple a line; Shift extends | `agent/input/input.ts` |
 | A text field's selection and own scroll are not in the image | Draw the selection (the page's `::selection` color if set); leave out the text scrolled past and pad the rest into place | `agent/input/caret.ts`, `agent/capture/snapshot.ts` |
 | Scrollbars in the image stay at the top and cannot be grabbed | Hide them; draw the agent's own from the scroll position; drag the thumb, page by pressing (and holding) the track | `agent/input/scrollbars.ts`, `agent/input/input.ts` |
+| Synthetic touches do not scroll | A finger (or VR controller) drag scrolls what touch-action allows, after an 8px slop, sending the page pointercancel as browsers do; a mouse drag does not | `agent/input/pan.ts`, `agent/input/input.ts` |
+| iOS opens the soft keyboard only for focus moved during a touch's handling | The agent reports where its text fields are; on a touchend over one, the host focuses its hidden field right then (and cancels the touchend, so the following mouse events do not take focus back). The field keeps 16px text and its corner, so iOS neither zooms nor scrolls the scene | `panel-pointer.ts`, `html-panel.ts`, `panel-keyboard.ts` |
+| Soft keyboards send Backspace and Enter without a key | Take them from beforeinput | `panel-keyboard.ts` |
+| Phones are slow to draw pages at 2x | Default to 1x on phones (coarse pointer, small screen) | `html-panel.ts` |
+| VR controllers | Ray from each controller: hover, the trigger presses, a drag scrolls, the thumbstick scrolls like a wheel | `panel-xr-pointer.ts` |
 | The host's cursor does not follow the page | The agent reports the cursor under the pointer (the text cursor over text, too); the host sets it on the canvas | `agent/input/input.ts`, `panel-pointer.ts` |
 | Focus in an iframe is lost whenever the host takes focus back | Virtual focus: `focus()`, `blur()`, `document.activeElement` are replaced in the page; keys go through a hidden field in the host | `agent/input/input.ts`, `panel-keyboard.ts` |
 | No caret is drawn in an image | Measure it with a mirror element; draw a thin plane over the panel | `agent/input/caret.ts`, `html-panel.ts` |
@@ -171,7 +184,9 @@ Paths are under `src/`; the agent's are under `src/agent/`.
 - Text inside a scroll container that is not wrapped in an element does not scroll.
 - `contenteditable` editing is not implemented.
 - A text field scrolled by part of a line leaves that line out of the image until it is scrolled fully into view.
-- Mobile soft keyboards and WebXR controllers are not wired up.
+- Phones, tablets and VR were tried in Chrome's and WebKit's touch emulation and in unit tests only, not on real devices or headsets. In particular, whether iOS opens its keyboard on a tap, and how controllers feel in a headset, are untested.
+- No text input in VR: an immersive session shows no system keyboard for the host's hidden field.
+- A tap opens the soft keyboard for any text field under it, even one covered by another element of the page (the host only knows where the fields are).
 - A same-site page's scripts and the capture share the host's main thread; a cross-site page usually runs in its own process.
 - [HTML-in-Canvas](https://github.com/WICG/html-in-canvas) would remove most of the copying once browsers ship it.
 

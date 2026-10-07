@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { PerspectiveCamera, Scene, Vector2, type WebGLRenderer } from "three"
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest"
-import { HtmlPanel, PANEL_SANDBOX, splitAlpha } from "./html-panel"
+import { HtmlPanel, PANEL_SANDBOX, defaultPixelRatio, splitAlpha } from "./html-panel"
 import { PanelKeyboard } from "./panel-keyboard"
 
 describe("splitAlpha", () => {
@@ -11,6 +11,22 @@ describe("splitAlpha", () => {
     expect(splitAlpha("rgb(10 20 30 / 50%)")).toEqual({ rgb: "rgb(10, 20, 30)", alpha: 0.5 })
     expect(splitAlpha("transparent").alpha).toBe(0)
     expect(splitAlpha("#ff0000")).toEqual({ rgb: "#ff0000", alpha: 1 })
+  })
+})
+
+describe("defaultPixelRatio", () => {
+  it("is 1 on phones (coarse pointer, small screen) and 2 elsewhere", () => {
+    const set = (coarse: boolean, shortSide: number) => {
+      vi.stubGlobal("matchMedia", (query: string) => ({ matches: coarse && query.includes("coarse") }))
+      vi.stubGlobal("screen", { width: shortSide, height: shortSide * 2 })
+    }
+    set(true, 390)
+    expect(defaultPixelRatio()).toBe(1)
+    set(true, 1024)
+    expect(defaultPixelRatio()).toBe(2)
+    set(false, 390)
+    expect(defaultPixelRatio()).toBe(2)
+    vi.unstubAllGlobals()
   })
 })
 
@@ -57,6 +73,15 @@ describe("the panel's iframe", () => {
     expect(tokens).not.toContain("allow-popups-to-escape-sandbox")
   })
 
+  it("draws at 1x on phones, by default", () => {
+    vi.stubGlobal("matchMedia", (query: string) => ({ matches: query.includes("coarse") }))
+    vi.stubGlobal("screen", { width: 390, height: 844 })
+    const panel = open()
+    vi.unstubAllGlobals()
+    // The default page is 800 CSS px wide.
+    expect((panel.material.map!.image as HTMLCanvasElement).width).toBe(800)
+  })
+
   it("is not sandboxed by default", () => {
     const panel = open()
     expect(sandboxAtSrc).toEqual([null])
@@ -84,7 +109,7 @@ describe("the panel's iframe", () => {
       window.dispatchEvent(event)
       return (postMessage.mock.calls[0]![2] as MessagePort[])[0]!
     }
-    const editing = { type: "editing", editing: true, caret: { x: 1, y: 1, height: 16, color: "rgb(0, 0, 0)" }, selectedText: "" }
+    const editing = { type: "editing", editing: true, caret: { x: 1, y: 1, height: 16, color: "rgb(0, 0, 0)" }, selectedText: "", pointers: 0 }
     const delivered = () => new Promise(resolve => setTimeout(resolve, 20))
 
     it("does not take the keyboard when sandboxed and the user did not press the panel", async () => {
@@ -115,7 +140,7 @@ describe("the panel's iframe", () => {
       port.postMessage({ ...editing, selectedText: "copy me" })
       await delivered()
       expect(panel.selectedText()).toBe("copy me")
-      port.postMessage({ type: "editing", editing: false, caret: null, selectedText: "stale" })
+      port.postMessage({ type: "editing", editing: false, caret: null, selectedText: "stale", pointers: 0 })
       await delivered()
       expect(panel.selectedText()).toBe("")
       port.close()
@@ -164,6 +189,99 @@ describe("the panel's iframe", () => {
       port.close()
     })
 
+    describe("a tap on a text field", () => {
+      afterEach(() => {
+        vi.useRealTimers()
+      })
+
+      /** A sandboxed panel whose page has a 200x40 field at its top left, tapped there (down and up sent). */
+      async function tapped() {
+        const keyboard = new PanelKeyboard()
+        const focus = vi.spyOn(keyboard, "focus")
+        const release = vi.spyOn(keyboard, "release")
+        const panel = open(true, keyboard)
+        const port = connect(panel)
+        const received: unknown[] = []
+        port.onmessage = event => received.push(event.data)
+        port.postMessage({ type: "editables", boxes: [{ left: 0, top: 0, width: 200, height: 40 }] })
+        await delivered()
+        const field = new Vector2(0.05, 0.98)
+        panel.pointer("down", field, false, "touch")
+        panel.pointer("up", field, false, "touch")
+        return { panel, port, focus, release, received, field }
+      }
+      const answer = (editing: boolean, pointers: number) => ({
+        type: "editing",
+        editing,
+        caret: editing ? { x: 5, y: 5, height: 16, color: "rgb(0, 0, 0)" } : null,
+        selectedText: "",
+        pointers
+      })
+
+      it("takes the keyboard only over a text field", async () => {
+        const { panel, port, focus } = await tapped()
+        expect(panel.focusForTyping(new Vector2(0.9, 0.1))).toBe(false)
+        expect(focus).not.toHaveBeenCalled()
+        expect(panel.focusForTyping(new Vector2(0.05, 0.98))).toBe(true)
+        expect(focus).toHaveBeenCalledWith(panel)
+        port.close()
+      })
+
+      it("lets it go when the page's answer to the tap shows no focus", async () => {
+        const { panel, port, release, field } = await tapped()
+        panel.focusForTyping(field)
+        port.postMessage(answer(false, 2))
+        await delivered()
+        expect(release).toHaveBeenCalledWith(panel)
+        port.close()
+      })
+
+      it("keeps it when the page answers late, even sandboxed (a slow page)", async () => {
+        const { panel, port, release, received, field } = await tapped()
+        panel.focusForTyping(field)
+        // Past the second in which a sandboxed page may take the keyboard on its own.
+        vi.spyOn(performance, "now").mockReturnValue(performance.now() + 3000)
+        port.postMessage(answer(true, 2))
+        await delivered()
+        expect(release).not.toHaveBeenCalled()
+        expect(received).not.toContainEqual({ type: "blur" })
+        port.close()
+      })
+
+      it("takes the answer to the release, whatever moves and leaves came after it", async () => {
+        const { panel, port, release, field } = await tapped()
+        // PanelPointer ends a touch's hover right after its release.
+        panel.pointer("leave")
+        panel.pointer("move", field, false, "touch")
+        panel.focusForTyping(field)
+        port.postMessage(answer(false, 2))
+        await delivered()
+        expect(release).toHaveBeenCalledWith(panel)
+        port.close()
+      })
+
+      it("does not take an earlier report for the answer", async () => {
+        const { panel, port, release, field } = await tapped()
+        panel.focusForTyping(field)
+        // Sent before the page handled the tap's release.
+        port.postMessage(answer(false, 1))
+        await delivered()
+        expect(release).not.toHaveBeenCalled()
+        port.close()
+      })
+
+      it("lets it go if the page never answers", async () => {
+        const { panel, port, release, field } = await tapped()
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] })
+        panel.focusForTyping(field)
+        vi.advanceTimersByTime(4999)
+        expect(release).not.toHaveBeenCalled()
+        vi.advanceTimersByTime(1)
+        expect(release).toHaveBeenCalledWith(panel)
+        port.close()
+      })
+    })
+
     it("takes the keyboard when not sandboxed, as before", async () => {
       const keyboard = new PanelKeyboard()
       const focus = vi.spyOn(keyboard, "focus")
@@ -196,7 +314,7 @@ describe("the panel's iframe", () => {
     window.dispatchEvent(ready)
     const port = (postMessage.mock.calls[0]![2] as MessagePort[])[0]!
     // The page's default size is 800x600: a caret at its centre.
-    port.postMessage({ type: "editing", editing: true, caret: { x: 400, y: 290, height: 20, color: "rgb(0, 0, 0)" }, selectedText: "" })
+    port.postMessage({ type: "editing", editing: true, caret: { x: 400, y: 290, height: 20, color: "rgb(0, 0, 0)" }, selectedText: "", pointers: 0 })
     await new Promise(resolve => setTimeout(resolve, 20))
 
     panel.onBeforeRender(renderer, new Scene(), camera)
@@ -208,6 +326,15 @@ describe("the panel's iframe", () => {
     // Unchanged: not placed again.
     panel.onBeforeRender(renderer, new Scene(), camera)
     expect(placeIme).toHaveBeenCalledTimes(1)
+
+    // With a finger, the field stays in its corner (iOS would scroll to it).
+    placeIme.mockClear()
+    panel.pointer("down", new Vector2(0.5, 0.5), false, "touch")
+    camera.position.x = 0.1
+    camera.updateMatrixWorld()
+    panel.onBeforeRender(renderer, new Scene(), camera)
+    expect(placeIme).not.toHaveBeenCalled()
+    panel.pointer("down", new Vector2(0.5, 0.5), false, "mouse")
 
     // Once keys no longer go to the panel, its caret does not move the IME.
     keyboard.release(panel)
