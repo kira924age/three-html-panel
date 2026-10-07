@@ -396,6 +396,37 @@ describe("the caret, cut to what shows", () => {
     }
   })
 
+  it("is not cut by boxes outside its containing block's chain (a positioned popup), but is by those in it", () => {
+    document.body.innerHTML = `
+      <div id="positioned" style="position: relative; overflow-x: hidden; overflow-y: hidden">
+        <div id="toolbar" style="overflow-x: hidden; overflow-y: hidden">
+          <div id="dropdown" style="position: absolute"><input id="search"></div>
+        </div>
+      </div>
+      <div id="shell" style="overflow-x: hidden; overflow-y: hidden">
+        <div id="dialog" style="position: fixed"><input id="name"></div>
+        <div id="moved" style="transform: translateX(0px); overflow-x: hidden; overflow-y: hidden">
+          <div style="position: fixed"><input id="inside"></div>
+        </div>
+      </div>`
+    const $ = (id: string) => document.querySelector(`#${id}`)!
+    box($("positioned"), 0, 0, 400, 300)
+    box($("toolbar"), 0, 0, 400, 40)
+    box($("search"), 10, 50, 100, 20)
+    // Below the toolbar, which does not clip it; inside the positioned box, which does.
+    expect(visibleBoxOf($("search"))).toEqual({ left: 10, top: 50, width: 100, height: 20 })
+    box($("search"), 10, 290, 100, 20)
+    expect(visibleBoxOf($("search"))).toEqual({ left: 10, top: 290, width: 100, height: 10 })
+
+    box($("shell"), 0, 0, 200, 100)
+    box($("name"), 300, 300, 100, 20)
+    expect(visibleBoxOf($("name"))).toEqual({ left: 300, top: 300, width: 100, height: 20 })
+    // A transform makes a box the containing block of fixed elements in it: it clips them.
+    box($("moved"), 0, 0, 200, 100)
+    box($("inside"), 150, 90, 100, 20)
+    expect(visibleBoxOf($("inside"))).toEqual({ left: 150, top: 90, width: 50, height: 10 })
+  })
+
   it("hides the caret of a field whose line a box above it hides", () => {
     document.body.innerHTML = `<div id="note" style="overflow-x: hidden; overflow-y: hidden"><input id="name" value="hello"></div>`
     const note = document.querySelector("#note")!

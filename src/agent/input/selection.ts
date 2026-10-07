@@ -116,10 +116,6 @@ export function selectedRange(window: FrameWindow): Range | null {
 }
 
 /**
- * The part of the viewport an element shows its content in: the viewport,
- * cut by every ancestor that clips what overflows it.
- */
-/**
  * Whether an element hides what overflows its padding box. Overflow does not
  * apply to an inline box (nor to display: contents, which has none), whatever
  * its computed value.
@@ -128,25 +124,61 @@ function clipsOverflow(style: CSSStyleDeclaration): boolean {
   return !/^(inline|contents)$/.test(style.display) && (style.overflowX !== "visible" || style.overflowY !== "visible")
 }
 
-function clipOf(element: Element | null, viewport: Box, cache: Map<Element, Box>): Box {
-  if (!element) return viewport
+/** Whether an element is the containing block of its position: fixed descendants (else the viewport is). */
+function holdsFixed(style: CSSStyleDeclaration): boolean {
+  const s = style as CSSStyleDeclaration & { backdropFilter?: string }
+  return (
+    (s.transform !== "" && s.transform !== "none") ||
+    (s.perspective !== "" && s.perspective !== "none") ||
+    (s.filter !== "" && s.filter !== "none") ||
+    (s.backdropFilter !== undefined && s.backdropFilter !== "" && s.backdropFilter !== "none") ||
+    /\b(paint|layout|strict|content)\b/.test(s.contain ?? "") ||
+    /\b(transform|perspective|filter)\b/.test(s.willChange ?? "")
+  )
+}
+
+/**
+ * The ancestor whose content an element's box is part of, for clipping: its
+ * containing block's chain. A positioned element skips the boxes in between,
+ * whose overflow does not clip it; null for the viewport.
+ */
+function clippingParentOf(element: Element, style: CSSStyleDeclaration): Element | null {
+  const window = windowOf(element)
+  const { position } = style
+  let ancestor = element.parentElement
+  if (position !== "fixed" && position !== "absolute") return ancestor
+  for (; ancestor; ancestor = ancestor.parentElement) {
+    const ancestorStyle = window.getComputedStyle(ancestor)
+    if (holdsFixed(ancestorStyle)) return ancestor
+    if (position === "absolute" && ancestorStyle.position !== "static") return ancestor
+  }
+  return null
+}
+
+/** What clips an element's own box: its clipping parents' overflow, up to the viewport. */
+function clipAbove(element: Element, viewport: Box, cache: Map<Element, Box>): Box {
+  const parent = clippingParentOf(element, windowOf(element).getComputedStyle(element))
+  return parent ? clipInside(parent, viewport, cache) : viewport
+}
+
+/**
+ * The part of the viewport where an element's in-flow content shows: what
+ * clips the element itself, cut by its padding box if it hides overflow.
+ */
+function clipInside(element: Element, viewport: Box, cache: Map<Element, Box>): Box {
   const cached = cache.get(element)
   if (cached) return cached
-  const window = windowOf(element)
-  const parentClip = clipOf(element.parentElement, viewport, cache)
-  let clip = parentClip
-  const style = window.getComputedStyle(element)
-  if (element !== element.ownerDocument.documentElement && element !== element.ownerDocument.body) {
-    if (clipsOverflow(style)) {
-      const rect = element.getBoundingClientRect()
-      const own = {
-        left: rect.left + element.clientLeft,
-        top: rect.top + element.clientTop,
-        width: element.clientWidth,
-        height: element.clientHeight
-      }
-      clip = intersect(parentClip, own)
-    }
+  let clip = clipAbove(element, viewport, cache)
+  const document = element.ownerDocument
+  // The document's own overflow is the viewport's.
+  if (element !== document.documentElement && element !== document.body && clipsOverflow(windowOf(element).getComputedStyle(element))) {
+    const rect = element.getBoundingClientRect()
+    clip = intersect(clip, {
+      left: rect.left + element.clientLeft,
+      top: rect.top + element.clientTop,
+      width: element.clientWidth,
+      height: element.clientHeight
+    })
   }
   cache.set(element, clip)
   return clip
@@ -161,7 +193,7 @@ function clipOf(element: Element | null, viewport: Box, cache: Map<Element, Box>
 export function visibleBoxOf(element: Element): Box {
   const document = element.ownerDocument
   const viewport = { left: 0, top: 0, width: document.documentElement.clientWidth, height: document.documentElement.clientHeight }
-  const outer = clipOf(element.parentElement, viewport, new Map())
+  const outer = clipAbove(element, viewport, new Map())
   const style = windowOf(element).getComputedStyle(element)
   if (!element.matches("input, textarea") && !clipsOverflow(style)) return outer
   const rect = element.getBoundingClientRect()
@@ -217,7 +249,7 @@ export function selectionBoxes(window: FrameWindow, range: Range): Box[] {
     part.setStart(text, text === range.startContainer ? range.startOffset : 0)
     part.setEnd(text, text === range.endContainer ? range.endOffset : text.length)
     if (part.collapsed) continue
-    const clip = clipOf(parent, viewport, clips)
+    const clip = clipInside(parent, viewport, clips)
     for (const rect of Array.from(part.getClientRects())) {
       const box = intersect(clip, { left: rect.left, top: rect.top, width: rect.width, height: rect.height })
       if (box.width > 0 && box.height > 0) boxes.push(box)
