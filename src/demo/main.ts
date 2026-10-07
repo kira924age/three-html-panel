@@ -44,12 +44,16 @@ controls.update()
 const panelBase: string = import.meta.env.VITE_PANEL_ORIGIN || location.href
 const pageUrl = (path: string) => new URL(path, panelBase)
 
-const notes = new HtmlPanel({ url: pageUrl("panels/notes/"), width: 960, height: 640, size: 1.6 })
+// Both pages run sandboxed (their server sends the same sandbox, see
+// vite.panels.config.ts): neither can reach the scene's cookies, storage or
+// document, nor take its keyboard.
+const notes = new HtmlPanel({ url: pageUrl("panels/notes/"), width: 960, height: 640, size: 1.6, sandbox: true })
 notes.position.set(-0.75, 1.45, 0)
 notes.rotation.y = 0.3
 
 const sceneControls = new HtmlPanel({
   url: pageUrl("panels/controls/"),
+  sandbox: true,
   width: 480,
   height: 640,
   size: 1.0,

@@ -8,8 +8,11 @@
 // focused while the host keeps focus.
 //
 // Focus can still end up in an iframe (an element the browser focuses on its
-// own, before the panel took over the page's focus handling). Whenever a panel
-// iframe has focus, it is put back, so keys keep reaching the host.
+// own, before the panel took over the page's focus handling, or a page that
+// calls focus() to take the keyboard). Whenever a panel iframe has focus, it is
+// put back, so keys keep reaching the host. A page that is not trusted
+// (sandboxed) must never keep it: then the iframe is blurred when there is
+// nothing to give focus back to.
 
 export interface KeyboardTarget {
   sendKey(event: KeyboardEvent): void
@@ -39,7 +42,8 @@ const BROWSER_SHORTCUTS = new Set(["c", "v", "x", "z"])
 
 export class PanelKeyboard {
   private readonly field = document.createElement("textarea")
-  private readonly frames = new Set<HTMLIFrameElement>()
+  /** Panel iframes, and whether each is sandboxed (its page is not trusted). */
+  private readonly frames = new Map<HTMLIFrameElement, { sandboxed: boolean }>()
   private target: KeyboardTarget | null = null
   private lastHostFocus: HTMLElement | null = null
 
@@ -79,12 +83,27 @@ export class PanelKeyboard {
       },
       true
     )
+    // Focus leaving for a panel shows as blur on the host's window (Chrome,
+    // Safari), or only as focusout of the element that had it (Firefox).
     window.addEventListener("blur", () => setTimeout(this.checkFocus, 0))
+    document.addEventListener(
+      "focusout",
+      () => {
+        // A panel that keeps taking focus gets each key typed until focus is
+        // back: take it back as soon as possible (Firefox allows it here). Only
+        // then; other moves are still in transit now, and are looked at later.
+        queueMicrotask(() => {
+          if (this.frameFocused()) this.checkFocus()
+        })
+        setTimeout(this.checkFocus, 0)
+      },
+      true
+    )
   }
 
   /** Watches a panel iframe so that it never keeps focus. */
-  register(frame: HTMLIFrameElement): void {
-    this.frames.add(frame)
+  register(frame: HTMLIFrameElement, options: { sandboxed?: boolean } = {}): void {
+    this.frames.set(frame, { sandboxed: options.sandboxed === true })
   }
 
   unregister(frame: HTMLIFrameElement): void {
@@ -96,6 +115,11 @@ export class PanelKeyboard {
     this.target = target
     this.field.value = ""
     if (document.activeElement !== this.field) this.field.focus({ preventScroll: true })
+  }
+
+  /** Whether keys go to `target` now. */
+  isTarget(target: KeyboardTarget): boolean {
+    return this.target === target
   }
 
   /** Stops sending keys to `target`, if it is the current one. */
@@ -121,13 +145,23 @@ export class PanelKeyboard {
     if (text && this.target) this.target.sendText(text)
   }
 
+  private frameFocused(): boolean {
+    const active = document.activeElement
+    return active instanceof HTMLIFrameElement && this.frames.has(active)
+  }
+
   private readonly checkFocus = () => {
     const active = document.activeElement
-    if (active instanceof HTMLIFrameElement && this.frames.has(active)) {
-      // A panel took focus: give it back. Never call blur() on the iframe:
-      // that also blurs the element focused inside the page, which is how a
-      // press on a panel's text field focuses it in the first place.
-      if (!this.target && this.lastHostFocus?.isConnected) this.lastHostFocus.focus({ preventScroll: true })
+    const frame = active instanceof HTMLIFrameElement ? this.frames.get(active) : undefined
+    if (frame) {
+      // A panel took focus: give it back, to the hidden field while typing into
+      // a panel, or else where focus was in the host.
+      if (this.target) this.field.focus({ preventScroll: true })
+      else if (this.lastHostFocus?.isConnected) this.lastHostFocus.focus({ preventScroll: true })
+      // With nowhere to go, a sandboxed panel loses focus all the same. A
+      // trusted one is left the hidden field, as before (the page's focus is
+      // virtual anyway, see input/input.ts).
+      else if (frame.sandboxed) (active as HTMLIFrameElement).blur()
       else this.field.focus({ preventScroll: true })
       return
     }
