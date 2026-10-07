@@ -154,6 +154,17 @@ describe("connecting", () => {
     await vi.waitFor(() => expect(lastEditing()).toMatchObject({ selectedText: "xxx" }), { timeout: 3000 })
   })
 
+  it("hands a link the user follows to the host", async () => {
+    document.body.innerHTML = `<a id="docs" href="https://example.com/docs">Docs</a>`
+    start()
+    const host = connect()
+    const received: { type: string; url?: string }[] = []
+    host.onmessage = event => received.push(event.data)
+    document.getElementById("docs")!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }))
+    await delivered()
+    expect(received).toContainEqual({ type: "open", url: "https://example.com/docs" })
+  })
+
   it("does not send anything before it is connected", async () => {
     start()
     sendToHost({ shape: "box" })

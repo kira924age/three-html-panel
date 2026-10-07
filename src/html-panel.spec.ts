@@ -121,6 +121,49 @@ describe("the panel's iframe", () => {
       port.close()
     })
 
+    it("opens a link the page hands over only right after the user acted on the panel, and only http(s)", async () => {
+      const onLink = vi.fn()
+      sandboxAtSrc = []
+      const panel = new HtmlPanel({ url: "https://panel.example/page/", sandbox: false, onLink, readyTimeout: 60_000 })
+      panels.push(panel)
+      const port = connect(panel)
+      // On its own: ignored.
+      port.postMessage({ type: "open", url: "https://example.com/" })
+      await delivered()
+      expect(onLink).not.toHaveBeenCalled()
+
+      panel.pointer("down", new Vector2(0.5, 0.5))
+      port.postMessage({ type: "open", url: "javascript:alert(1)" })
+      port.postMessage({ type: "open", url: "https://example.com/" })
+      await delivered()
+      expect(onLink).toHaveBeenCalledTimes(1)
+      expect((onLink.mock.calls[0]![0] as URL).href).toBe("https://example.com/")
+      port.close()
+    })
+
+    it("counts a key the user pressed in the panel (Enter on a focused link) as acting on it", async () => {
+      const onLink = vi.fn()
+      const panel = new HtmlPanel({ url: "https://panel.example/page/", onLink, readyTimeout: 60_000 })
+      panels.push(panel)
+      const port = connect(panel)
+      panel.sendKey(new KeyboardEvent("keydown", { key: "Enter" }))
+      port.postMessage({ type: "open", url: "https://example.com/" })
+      await delivered()
+      expect(onLink).toHaveBeenCalledTimes(1)
+      port.close()
+    })
+
+    it("opens links in a new tab, without a way back to the host, by default", async () => {
+      const windowOpen = vi.spyOn(window, "open").mockReturnValue(null)
+      const panel = open(false)
+      const port = connect(panel)
+      panel.pointer("up", new Vector2(0.5, 0.5))
+      port.postMessage({ type: "open", url: "https://example.com/" })
+      await delivered()
+      expect(windowOpen).toHaveBeenCalledWith("https://example.com/", "_blank", "noopener,noreferrer")
+      port.close()
+    })
+
     it("takes the keyboard when not sandboxed, as before", async () => {
       const keyboard = new PanelKeyboard()
       const focus = vi.spyOn(keyboard, "focus")
