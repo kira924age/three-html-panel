@@ -140,6 +140,9 @@ Paths are under `src/`; the agent's are under `src/agent/`.
 | Images inside the SVG are not loaded | Inline them as data URLs | `agent/capture/images.ts` |
 | Synthetic events lack default actions | Hover/enter/leave, pointer capture, click vs drag, dblclick, wheel scroll | `agent/input/input.ts` |
 | Synthetic keys do not edit text | Caret moves, Shift selection, words (`Intl.Segmenter`), visual lines for Up/Down, deletion, the platform's bindings (macOS: Option/Cmd and the Emacs keys; elsewhere: Ctrl) | `agent/input/editing.ts` |
+| The browser's undo does not see the agent's edits | Keep an undo history per field (typing in a row is one step; dropped if the page changes the value itself) | `agent/input/history.ts` |
+| Copy and cut need the clipboard, which only the host's field can reach | The agent reports the selected text (never a password's); on Cmd/Ctrl+C or X the host puts it in its hidden field and lets the browser copy or cut it, then the agent deletes a cut selection | `panel-keyboard.ts`, `agent/input/input.ts` |
+| Tab, Space and arrows on controls have no default action | Tab moves focus in tab order (one stop per radio group); Space toggles checkboxes and presses buttons; arrows move through a radio group. Keys go to a panel while any element in it has focus, not only a text field | `agent/input/input.ts` |
 | Synthetic presses do not select text | Drag to select; double press selects a word, triple a line; Shift extends | `agent/input/input.ts` |
 | A text field's selection and own scroll are not in the image | Draw the selection (the page's `::selection` color if set); leave out the text scrolled past and pad the rest into place | `agent/input/caret.ts`, `agent/capture/snapshot.ts` |
 | Scrollbars in the image stay at the top and cannot be grabbed | Hide them; draw the agent's own from the scroll position; drag the thumb, page by pressing (and holding) the track | `agent/input/scrollbars.ts`, `agent/input/input.ts` |
@@ -157,7 +160,6 @@ Paths are under `src/`; the agent's are under `src/agent/`.
 - Only what CSS and the DOM describe is drawn: no `<video>`, no cross-origin iframes inside the page, no native widgets such as `<select>` popups, and `::before`/`::after` animations stay frozen.
 - Text inside a scroll container that is not wrapped in an element does not scroll.
 - `contenteditable` editing is not implemented.
-- Copy and cut from a panel's text field do not work: the host's hidden field, which takes the keys, does not have the selected text. Pasting does.
 - A text field scrolled by part of a line leaves that line out of the image until it is scrolled fully into view.
 - WebKit (Safari) misplaces `box-shadow` (a focus ring, say) when it draws the SVG scaled into the canvas. Rendering the page with `zoom` instead avoids it, but makes WebKit and Firefox lay out `system-ui` text narrower than in the page, so the image would no longer match where the page puts things; that is worse, so the shadows stay misplaced in WebKit.
 - Mobile soft keyboards and WebXR controllers are not wired up.

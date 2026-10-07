@@ -121,6 +121,39 @@ describe("connecting", () => {
     expect(received).toContainEqual({ type: "pong" })
   })
 
+  it("asks for the keys while any element has focus, with a caret only for a text field", async () => {
+    document.body.innerHTML = `<button id="go">Go</button>`
+    start()
+    const host = connect()
+    const received: { type: string; editing?: boolean; caret?: unknown }[] = []
+    host.onmessage = event => received.push(event.data)
+    document.querySelector<HTMLButtonElement>("#go")!.focus()
+    host.postMessage({ type: "key", key: "Shift", shiftKey: true, ctrlKey: false, altKey: false, metaKey: false })
+    await vi.waitFor(() =>
+      expect(received.filter(message => message.type === "editing").at(-1)).toMatchObject({ editing: true, caret: null })
+    )
+  })
+
+  it("offers no selection for copying when it is too long to send, rather than a part of it", async () => {
+    document.body.innerHTML = `<textarea id="long"></textarea>`
+    const field = document.querySelector<HTMLTextAreaElement>("#long")!
+    field.value = "x".repeat(64 * 1024 + 1)
+    start()
+    const host = connect()
+    const received: { type: string; selectedText?: string }[] = []
+    host.onmessage = event => received.push(event.data)
+    field.focus()
+    field.setSelectionRange(0, field.value.length)
+    const lastEditing = () => received.filter(message => message.type === "editing").at(-1)
+    // A frame of this much text is slow, so the agent spaces the next ones out: wait for them.
+    host.postMessage({ type: "key", key: "Shift", shiftKey: true, ctrlKey: false, altKey: false, metaKey: false })
+    await vi.waitFor(() => expect(lastEditing()).toMatchObject({ editing: true, selectedText: "" }), { timeout: 3000 })
+
+    field.setSelectionRange(0, 3)
+    host.postMessage({ type: "key", key: "Shift", shiftKey: true, ctrlKey: false, altKey: false, metaKey: false })
+    await vi.waitFor(() => expect(lastEditing()).toMatchObject({ selectedText: "xxx" }), { timeout: 3000 })
+  })
+
   it("does not send anything before it is connected", async () => {
     start()
     sendToHost({ shape: "box" })

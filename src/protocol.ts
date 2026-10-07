@@ -25,7 +25,8 @@ export const MAX_PAGE_LENGTH = 4096
 export const MAX_SVG_LENGTH = 16 * 1024 * 1024
 const MAX_COLOR_LENGTH = 64
 const MAX_KEY_LENGTH = 64
-const MAX_TEXT_LENGTH = 64 * 1024
+/** The longest text sent either way: typed or pasted text, and a selection to copy. */
+export const MAX_TEXT_LENGTH = 64 * 1024
 const CURSOR_KEYWORD = /^[a-z][a-z-]{0,31}$/
 
 /** Posted by the agent to the parent window when it starts. */
@@ -49,11 +50,18 @@ export interface FrameMessage {
   svg: string
 }
 
-/** Whether a text field in the page has focus, and where its caret is. */
+/**
+ * Whether an element in the page has focus, so that keys should go to the page
+ * (a text field, but also a button or a checkbox, for Enter, Space and Tab), and
+ * where a text field's caret is.
+ */
 export interface EditingMessage {
   type: "editing"
   editing: boolean
+  /** Only for a text field. */
   caret: Caret | null
+  /** The text selected in the field, for the host to copy when the user asks to. */
+  selectedText: string
 }
 
 /**
@@ -129,7 +137,9 @@ export function parsePageMessage(data: unknown, limits: PageMessageLimits): Page
       if (typeof data.editing !== "boolean") return null
       const caret = parseCaret(data.caret)
       if (caret === undefined) return null
-      return { type: "editing", editing: data.editing, caret }
+      const { selectedText } = data
+      if (typeof selectedText !== "string" || selectedText.length > MAX_TEXT_LENGTH) return null
+      return { type: "editing", editing: data.editing, caret, selectedText }
     }
     case "pong":
       return { type: "pong" }
@@ -184,6 +194,8 @@ export function parseHostMessage(data: unknown): HostMessage | null {
     }
     case "blur":
       return { type: "blur" }
+    case "cut":
+      return { type: "cut" }
     case "ping":
       return { type: "ping" }
     case "app":

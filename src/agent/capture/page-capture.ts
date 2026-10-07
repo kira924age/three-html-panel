@@ -12,6 +12,7 @@ import { InputSynthesizer } from "../input/input"
 import type { Caret, Frame, FrameWindow, PanelInput } from "../../types"
 import { DocumentCss } from "./css"
 import { ImageInliner } from "./images"
+import { MAX_TEXT_LENGTH } from "../../protocol"
 import { RenderPacer } from "./pacer"
 import { buildFrameSvg, isSampledLive, snapshotDocument } from "./snapshot"
 
@@ -34,7 +35,11 @@ const INVALIDATING_EVENTS = [
 
 export interface PageCaptureOptions {
   onFrame: (frame: Frame) => void
-  onEditing: (editing: boolean, caret: Caret | null) => void
+  /**
+   * Whether an element has focus (keys should come to the page), a text field's
+   * caret, and its selected text (for the host to copy).
+   */
+  onEditing: (editing: boolean, caret: Caret | null, selectedText: string) => void
   /** The mouse cursor changed (a CSS keyword, or "" when the pointer is not over the page). */
   onCursor: (cursor: string) => void
 }
@@ -189,11 +194,15 @@ export class PageCapture {
 
   private reportEditing(): void {
     const focused = this.input.focused
-    const editing = isTextField(focused)
-    const caret = editing ? this.measure(() => measureCaret(focused, this.input.composition)) : null
-    const key = JSON.stringify([editing, caret])
+    // Any focused element takes keys: Enter and Space on a button, Tab anywhere.
+    const editing = focused !== null
+    const caret = isTextField(focused) ? this.measure(() => measureCaret(focused, this.input.composition)) : null
+    // A selection too long to send is not offered for copying at all, rather than cut short.
+    const selected = this.input.selectedText
+    const selectedText = selected.length <= MAX_TEXT_LENGTH ? selected : ""
+    const key = JSON.stringify([editing, caret, selectedText])
     if (key === this.lastEditing) return
     this.lastEditing = key
-    this.options.onEditing(editing, caret)
+    this.options.onEditing(editing, caret, selectedText)
   }
 }

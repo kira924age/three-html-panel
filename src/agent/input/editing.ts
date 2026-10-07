@@ -8,9 +8,10 @@
 // - everywhere: arrows, Home/End, PageUp/PageDown, Shift to extend,
 //   Backspace/Delete, Enter
 // - macOS/iOS: Option+arrows by word, Cmd+arrows to line/document boundaries,
-//   Option/Cmd+Backspace, and the Emacs keys Ctrl+A/E/B/F/P/N/H/D/K; Cmd+A selects all
+//   Option/Cmd+Backspace, and the Emacs keys Ctrl+A/E/B/F/P/N/H/D/K; Cmd+A selects
+//   all; Cmd+Z undoes, Shift+Cmd+Z redoes
 // - elsewhere: Ctrl+arrows by word, Ctrl+Home/End, Ctrl+Backspace/Delete; Ctrl+A
-//   selects all
+//   selects all; Ctrl+Z undoes, Ctrl+Y and Shift+Ctrl+Z redo
 //
 // Lines for Up/Down are visual lines (soft wraps included); they come from the
 // caller, which can measure the field. Home/End and the line keys use lines
@@ -38,6 +39,8 @@ export type EditAction =
   /** Replace [start, end) with `text`. */
   | { type: "edit"; start: number; end: number; text: string; inputType: string }
   | { type: "submit" }
+  | { type: "undo" }
+  | { type: "redo" }
 
 export interface EditContext {
   apple: boolean
@@ -207,10 +210,16 @@ export function editAction(field: FieldState, input: KeyInput, context: EditCont
       return multiline ? { type: "edit", start, end, text: "\n", inputType: "insertLineBreak" } : { type: "submit" }
   }
 
-  // Select all: Cmd+A on macOS, Ctrl+A elsewhere.
-  const selectAll = apple ? input.metaKey && !input.ctrlKey : input.ctrlKey && !input.metaKey
-  if (selectAll && !input.altKey && input.key.toLowerCase() === "a") {
-    return { type: "select", anchor: 0, focus: value.length }
+  // Select all, undo and redo: with Cmd on macOS, Ctrl elsewhere.
+  const command = (apple ? input.metaKey && !input.ctrlKey : input.ctrlKey && !input.metaKey) && !input.altKey
+  if (!command) return null
+  switch (input.key.toLowerCase()) {
+    case "a":
+      return { type: "select", anchor: 0, focus: value.length }
+    case "z":
+      return { type: input.shiftKey ? "redo" : "undo" }
+    case "y":
+      return apple ? null : { type: "redo" }
   }
   return null
 }
