@@ -191,6 +191,91 @@ describe("connecting", () => {
     await vi.waitFor(() => expect(lastEditing()).toMatchObject({ selectedText: "xxx" }), { timeout: 3000 })
   })
 
+  it("asks for the keys while the page's text is selected, offering it for copying", async () => {
+    document.body.innerHTML = `<p id="text">some   words</p>`
+    // jsdom has no layout.
+    Range.prototype.getClientRects ??= () => [] as unknown as DOMRectList
+    start()
+    const host = connect()
+    const received: { type: string; editing?: boolean; selectedText?: string }[] = []
+    host.onmessage = event => received.push(event.data)
+    getSelection()!.selectAllChildren(document.querySelector("#text")!)
+    host.postMessage({ type: "key", key: "Shift", shiftKey: true, ctrlKey: false, altKey: false, metaKey: false })
+    await vi.waitFor(() =>
+      expect(received.filter(message => message.type === "editing").at(-1)).toMatchObject({
+        editing: true,
+        selectedText: "some words"
+      })
+    )
+    getSelection()!.removeAllRanges()
+  })
+
+  it("measures the page's selection again only when the page changes, not on every frame an animation asks for", async () => {
+    document.body.innerHTML = `<p id="text">some words</p>`
+    const rects = vi.fn(() => [] as unknown as DOMRectList)
+    const original = Range.prototype.getClientRects
+    Range.prototype.getClientRects = rects
+    // An endless animation keeps frames coming.
+    const animation = {
+      effect: { target: document.body, pseudoElement: null, getKeyframes: () => [], getTiming: () => ({ iterations: Infinity }) },
+      playState: "running"
+    }
+    document.getAnimations = () => [animation as unknown as Animation]
+    try {
+      start()
+      const host = connect()
+      const frames: unknown[] = []
+      const editing: { selectedText: string }[] = []
+      host.onmessage = event => {
+        if (event.data.type === "frame") frames.push(event.data)
+        if (event.data.type === "editing") editing.push(event.data)
+      }
+      // The user's selection (a key press after it makes it theirs).
+      getSelection()!.selectAllChildren(document.querySelector("#text")!)
+      host.postMessage({ type: "key", key: "Shift", shiftKey: true, ctrlKey: false, altKey: false, metaKey: false })
+      await vi.waitFor(() => expect(rects).toHaveBeenCalled())
+      const measured = rects.mock.calls.length
+      const seen = frames.length
+      await vi.waitFor(() => expect(frames.length).toBeGreaterThan(seen + 2), { timeout: 3000 })
+      expect(rects.mock.calls.length).toBe(measured)
+      // The selected text itself changes (the selection's ends stay): it is built again.
+      ;(document.querySelector("#text")!.firstChild as Text).data = "other words"
+      await vi.waitFor(() => expect(rects.mock.calls.length).toBeGreaterThan(measured))
+      await vi.waitFor(() => expect(editing.at(-1)?.selectedText).toBe("other words"))
+    } finally {
+      delete (document as { getAnimations?: unknown }).getAnimations
+      Range.prototype.getClientRects = original
+      getSelection()!.removeAllRanges()
+    }
+  })
+
+  it("reports a contenteditable element as a text field too", async () => {
+    document.body.innerHTML = `<div id="editor" contenteditable="true"><p>text</p></div>`
+    const editor = document.querySelector<HTMLElement>("#editor")!
+    editor.getBoundingClientRect = () => new DOMRect(10, 20, 200, 80)
+    // jsdom has no isContentEditable.
+    Object.defineProperty(HTMLElement.prototype, "isContentEditable", {
+      configurable: true,
+      get(this: HTMLElement) {
+        return this.closest("[contenteditable=true]") !== null
+      }
+    })
+    try {
+      start()
+      const host = connect()
+      const received: { type: string; boxes?: unknown }[] = []
+      host.onmessage = event => received.push(event.data)
+      await vi.waitFor(() =>
+        expect(received.find(message => message.type === "editables")).toEqual({
+          type: "editables",
+          boxes: [{ left: 10, top: 20, width: 200, height: 80 }]
+        })
+      )
+    } finally {
+      delete (HTMLElement.prototype as { isContentEditable?: boolean }).isContentEditable
+    }
+  })
+
   it("hands a link the user follows to the host", async () => {
     document.body.innerHTML = `<a id="docs" href="https://example.com/docs">Docs</a>`
     start()

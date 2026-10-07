@@ -5,6 +5,7 @@ import type { HtmlPanel } from "./html-panel"
 import { PanelPointer } from "./panel-pointer"
 
 let canvas: HTMLCanvasElement
+let pointer: PanelPointer
 let panel: HtmlPanel & { focusForTyping: ReturnType<typeof vi.fn>; pointer: ReturnType<typeof vi.fn> }
 
 beforeEach(() => {
@@ -26,7 +27,7 @@ beforeEach(() => {
   const camera = new PerspectiveCamera(60, 800 / 600, 0.01, 10)
   camera.position.set(0, 0, 1)
   camera.updateMatrixWorld()
-  new PanelPointer(camera, canvas, () => [panel])
+  pointer = new PanelPointer(camera, canvas, () => [panel])
 })
 
 const at = (type: string, pointerType: string) =>
@@ -81,5 +82,14 @@ describe("PanelPointer", () => {
     touch("touchstart", [down], [down])
     touch("touchend", [], [{ identifier: 2, clientX: 400, clientY: 300 }])
     expect(panel.focusForTyping).not.toHaveBeenCalled()
+  })
+
+  it("ends a press still held when it is disposed", () => {
+    canvas.dispatchEvent(at("pointerdown", "mouse"))
+    pointer.dispose()
+    expect(panel.pointer).toHaveBeenLastCalledWith("up", new Vector2(-1, -1))
+    panel.pointer.mockClear()
+    pointer.dispose()
+    expect(panel.pointer).not.toHaveBeenCalledWith("up", expect.anything())
   })
 })

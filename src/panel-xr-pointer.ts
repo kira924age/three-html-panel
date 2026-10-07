@@ -106,6 +106,8 @@ export class PanelXRPointer {
 
   dispose(): void {
     for (const cleanup of this.cleanups.splice(0)) cleanup()
+    // A press still held ends here: the panel would otherwise take every later move for a drag.
+    this.pressed?.panel.pointer("up", new Vector2(-1, -1), false, "xr")
     this.pressed = null
     this.hover(null)
   }

@@ -134,6 +134,70 @@ describe("the panel's iframe", () => {
       port.close()
     })
 
+    it("counts dragging in the panel as acting on it, however long the press, but not hovering", async () => {
+      const keyboard = new PanelKeyboard()
+      const focus = vi.spyOn(keyboard, "focus")
+      const panel = open(true, keyboard)
+      const port = connect(panel)
+      const received: unknown[] = []
+      port.onmessage = event => received.push(event.data)
+      const now = vi.spyOn(performance, "now")
+      const at = (time: number) => now.mockReturnValue(time)
+      const selecting = { ...editing, caret: null, selectedText: "some text" }
+
+      // Pressed, held still for a while, then dragged: selecting text only now.
+      at(10_000)
+      panel.pointer("down", new Vector2(0.2, 0.5))
+      at(12_000)
+      panel.pointer("move", new Vector2(0.4, 0.5))
+      port.postMessage(selecting)
+      await delivered()
+      expect(focus).toHaveBeenCalledWith(panel)
+      expect(received).not.toContainEqual({ type: "blur" })
+
+      // Released: moving over the panel afterwards is hovering, not acting on it.
+      panel.pointer("up", new Vector2(0.4, 0.5))
+      panel.blur()
+      focus.mockClear()
+      received.length = 0
+      at(20_000)
+      panel.pointer("move", new Vector2(0.6, 0.5))
+      port.postMessage(selecting)
+      await delivered()
+      expect(focus).not.toHaveBeenCalled()
+      expect(received).toContainEqual({ type: "blur" })
+
+      // A press that ended without an up (pressing another panel, the pointer leaving):
+      // moving afterwards is hovering, not dragging.
+      for (const end of [() => panel.blur(), () => panel.pointer("leave")]) {
+        panel.pointer("down", new Vector2(0.2, 0.5))
+        end()
+        focus.mockClear()
+        received.length = 0
+        at(now() + 5000)
+        panel.pointer("move", new Vector2(0.6, 0.5))
+        port.postMessage(selecting)
+        await delivered()
+        expect(focus).not.toHaveBeenCalled()
+        expect(received).toContainEqual({ type: "blur" })
+      }
+
+      // A new document (the press began in the one before).
+      panel.pointer("down", new Vector2(0.2, 0.5))
+      const next = connect(panel)
+      const nextReceived: unknown[] = []
+      next.onmessage = event => nextReceived.push(event.data)
+      focus.mockClear()
+      at(now() + 5000)
+      panel.pointer("move", new Vector2(0.6, 0.5))
+      next.postMessage(selecting)
+      await delivered()
+      expect(focus).not.toHaveBeenCalled()
+      expect(nextReceived).toContainEqual({ type: "blur" })
+      next.close()
+      port.close()
+    })
+
     it("keeps the page's selected text for copying while editing, and forgets it after", async () => {
       const panel = open(false, new PanelKeyboard())
       const port = connect(panel)
