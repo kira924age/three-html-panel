@@ -6,6 +6,7 @@
 // the position of each character can be read from the layout.
 
 import type { Box, Caret, FrameWindow } from "../../types"
+import { clipCaret, visibleBoxOf } from "./selection"
 
 export type TextField = HTMLInputElement | HTMLTextAreaElement
 
@@ -139,9 +140,10 @@ function placeMarker(field: TextField, mirror: HTMLDivElement, text: string, ind
 }
 
 /**
- * Where the caret of a focused text field is, in the page's CSS pixels. None
- * while text is selected (browsers do not draw the caret then either), or when
- * the caret is scrolled out of view. While composing, it is the IME's caret.
+ * Where the caret of a focused text field is, in the page's CSS pixels, cut to
+ * what shows of the field. None while text is selected (browsers do not draw
+ * the caret then either), or when the caret is scrolled out of view. While
+ * composing, it is the IME's caret.
  */
 export function measureCaret(field: TextField, composition?: Composition | null): Caret | null {
   let caret: { x: number; y: number; height: number }
@@ -152,12 +154,13 @@ export function measureCaret(field: TextField, composition?: Composition | null)
     if (field.selectionStart !== field.selectionEnd) return null
     caret = caretAt(field, field.selectionEnd ?? field.value.length)
   }
-  const { x, y, height } = caret
-  const rect = field.getBoundingClientRect()
-  if (x < rect.left - 1 || x > rect.right + 1 || y + height < rect.top || y > rect.bottom) return null
+  // A field clips its text to its padding box, and its ancestors may clip it too
+  // (a scrolled line half out of view, a field in a box that hides what overflows).
+  const shown = clipCaret(caret, visibleBoxOf(field))
+  if (!shown) return null
   const computed = windowOf(field).getComputedStyle(field)
   const color = computed.caretColor === "auto" ? computed.color : computed.caretColor
-  return { x, y, height, color }
+  return { ...shown, color }
 }
 
 /** The part of a field that shows its content: the padding box, in the page's CSS pixels. */

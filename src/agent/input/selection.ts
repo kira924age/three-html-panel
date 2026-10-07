@@ -143,6 +143,32 @@ function clipOf(element: Element | null, viewport: Box, cache: Map<Element, Box>
   return clip
 }
 
+/**
+ * The part of the viewport where an element's content shows: its padding box
+ * (a text field clips its text there), cut by every ancestor that clips what
+ * overflows it.
+ */
+export function visibleBoxOf(element: Element): Box {
+  const document = element.ownerDocument
+  const viewport = { left: 0, top: 0, width: document.documentElement.clientWidth, height: document.documentElement.clientHeight }
+  const rect = element.getBoundingClientRect()
+  const own = { left: rect.left + element.clientLeft, top: rect.top + element.clientTop, width: element.clientWidth, height: element.clientHeight }
+  return intersect(clipOf(element.parentElement, viewport, new Map()), own)
+}
+
+/**
+ * A caret cut to what shows of it, as browsers draw it: the part outside the
+ * box is not drawn (a line scrolled half out of a field). Null if none shows.
+ */
+export function clipCaret<T extends { x: number; y: number; height: number }>(caret: T, box: Box): T | null {
+  // A caret at the very edge of the box (the end of a full line) still shows.
+  if (caret.x < box.left - 1 || caret.x > box.left + box.width + 1) return null
+  const top = Math.max(caret.y, box.top)
+  const bottom = Math.min(caret.y + caret.height, box.top + box.height)
+  if (bottom - top < 1) return null
+  return { ...caret, y: top, height: bottom - top }
+}
+
 function intersect(a: Box, b: Box): Box {
   const left = Math.max(a.left, b.left)
   const top = Math.max(a.top, b.top)

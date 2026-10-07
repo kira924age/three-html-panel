@@ -249,6 +249,47 @@ describe("connecting", () => {
     }
   })
 
+  it("reports an editable's caret only where it shows, cut to the editable", async () => {
+    document.body.innerHTML = `<div id="editor" contenteditable="true">hello</div>`
+    const editor = document.querySelector<HTMLElement>("#editor")!
+    editor.getBoundingClientRect = () => new DOMRect(10, 20, 200, 40)
+    Object.defineProperties(editor, { clientWidth: { value: 200 }, clientHeight: { value: 40 } })
+    Object.defineProperties(document.documentElement, {
+      clientWidth: { configurable: true, value: 800 },
+      clientHeight: { configurable: true, value: 600 }
+    })
+    // Where the character after the caret is: the line, scrolled half out of the bottom.
+    let line = new DOMRect(30, 50, 8, 20)
+    const original = Range.prototype.getClientRects
+    Range.prototype.getClientRects = () => [line] as unknown as DOMRectList
+    Object.defineProperty(HTMLElement.prototype, "isContentEditable", {
+      configurable: true,
+      get(this: HTMLElement) {
+        return this.closest("[contenteditable=true]") !== null
+      }
+    })
+    try {
+      start()
+      const host = connect()
+      const received: { type: string; caret?: { y: number; height: number } | null }[] = []
+      host.onmessage = event => received.push(event.data)
+      editor.focus()
+      getSelection()!.collapse(editor.firstChild!, 2)
+      const lastCaret = () => received.filter(message => message.type === "editing").at(-1)?.caret
+      const shift = () => host.postMessage({ type: "key", key: "Shift", shiftKey: true, ctrlKey: false, altKey: false, metaKey: false })
+      shift()
+      await vi.waitFor(() => expect(lastCaret()).toMatchObject({ y: 50, height: 10 }))
+      // Out of the editable altogether: no caret.
+      line = new DOMRect(30, 100, 8, 20)
+      shift()
+      await vi.waitFor(() => expect(lastCaret()).toBeNull())
+    } finally {
+      Range.prototype.getClientRects = original
+      delete (HTMLElement.prototype as { isContentEditable?: boolean }).isContentEditable
+      getSelection()!.removeAllRanges()
+    }
+  })
+
   it("reports a contenteditable element as a text field too", async () => {
     document.body.innerHTML = `<div id="editor" contenteditable="true"><p>text</p></div>`
     const editor = document.querySelector<HTMLElement>("#editor")!
