@@ -119,6 +119,15 @@ export function selectedRange(window: FrameWindow): Range | null {
  * The part of the viewport an element shows its content in: the viewport,
  * cut by every ancestor that clips what overflows it.
  */
+/**
+ * Whether an element hides what overflows its padding box. Overflow does not
+ * apply to an inline box (nor to display: contents, which has none), whatever
+ * its computed value.
+ */
+function clipsOverflow(style: CSSStyleDeclaration): boolean {
+  return !/^(inline|contents)$/.test(style.display) && (style.overflowX !== "visible" || style.overflowY !== "visible")
+}
+
 function clipOf(element: Element | null, viewport: Box, cache: Map<Element, Box>): Box {
   if (!element) return viewport
   const cached = cache.get(element)
@@ -128,7 +137,7 @@ function clipOf(element: Element | null, viewport: Box, cache: Map<Element, Box>
   let clip = parentClip
   const style = window.getComputedStyle(element)
   if (element !== element.ownerDocument.documentElement && element !== element.ownerDocument.body) {
-    if (style.overflowX !== "visible" || style.overflowY !== "visible") {
+    if (clipsOverflow(style)) {
       const rect = element.getBoundingClientRect()
       const own = {
         left: rect.left + element.clientLeft,
@@ -154,10 +163,7 @@ export function visibleBoxOf(element: Element): Box {
   const viewport = { left: 0, top: 0, width: document.documentElement.clientWidth, height: document.documentElement.clientHeight }
   const outer = clipOf(element.parentElement, viewport, new Map())
   const style = windowOf(element).getComputedStyle(element)
-  const clips =
-    element.matches("input, textarea") ||
-    (!/^(inline|contents)$/.test(style.display) && (style.overflowX !== "visible" || style.overflowY !== "visible"))
-  if (!clips) return outer
+  if (!element.matches("input, textarea") && !clipsOverflow(style)) return outer
   const rect = element.getBoundingClientRect()
   const own = { left: rect.left + element.clientLeft, top: rect.top + element.clientTop, width: element.clientWidth, height: element.clientHeight }
   return intersect(outer, own)

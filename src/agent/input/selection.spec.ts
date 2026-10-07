@@ -3,7 +3,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import type { FrameWindow } from "../../types"
 import { InputSynthesizer } from "./input"
 import { measureCaret } from "./caret"
-import { clipCaret, selectedText, visibleBoxOf } from "./selection"
+import { clipCaret, selectedText, selectionBoxes, visibleBoxOf } from "./selection"
 
 // jsdom rejects the `view` the agent passes (Vitest's window is not jsdom's
 // Window); events are made here without it.
@@ -369,6 +369,31 @@ describe("the caret, cut to what shows", () => {
     expect(visibleBoxOf(document.querySelector("#inline")!)).toEqual(page)
     expect(visibleBoxOf(document.querySelector("#spills")!)).toEqual(page)
     expect(visibleBoxOf(document.querySelector("#scrolls")!)).toEqual({ left: 10, top: 10, width: 100, height: 20 })
+  })
+
+  it("is not cut by an inline ancestor, whatever its overflow says", () => {
+    document.body.innerHTML = `
+      <div id="page" style="overflow-x: hidden; overflow-y: hidden">
+        <span id="truncate" style="display: inline; overflow-x: hidden; overflow-y: hidden"><input id="field"></span>
+      </div>`
+    box(document.querySelector("#page")!, 0, 0, 400, 300)
+    box(document.querySelector("#truncate")!, 10, 10, 0, 0)
+    box(document.querySelector("#field")!, 10, 10, 100, 20)
+    expect(visibleBoxOf(document.querySelector("#field")!)).toEqual({ left: 10, top: 10, width: 100, height: 20 })
+  })
+
+  it("highlights selected text in an inline element whatever its overflow says", () => {
+    document.body.innerHTML = `<p id="para"><a id="link" style="display: inline; overflow-x: hidden; overflow-y: hidden">linked text</a></p>`
+    box(document.querySelector("#link")!, 10, 10, 0, 0)
+    const original = Range.prototype.getClientRects
+    Range.prototype.getClientRects = () => [new DOMRect(10, 10, 60, 18)] as unknown as DOMRectList
+    try {
+      const range = document.createRange()
+      range.selectNodeContents(document.querySelector("#link")!)
+      expect(selectionBoxes(window as unknown as FrameWindow, range)).toEqual([{ left: 10, top: 10, width: 60, height: 18 }])
+    } finally {
+      Range.prototype.getClientRects = original
+    }
   })
 
   it("hides the caret of a field whose line a box above it hides", () => {
