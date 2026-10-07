@@ -134,6 +134,40 @@ describe("connecting", () => {
     )
   })
 
+  it("answers every tap: an editing report, counting the pointer inputs handled, follows each release", async () => {
+    document.body.innerHTML = `<p>no field here</p>`
+    // jsdom has no layout, and refuses the `view` the agent gives the events it makes.
+    document.elementFromPoint = () => document.querySelector("p")
+    const { MouseEvent: Mouse, PointerEvent: Pointer } = window
+    window.MouseEvent = class extends Mouse {
+      constructor(type: string, init?: MouseEventInit) {
+        super(type, { ...init, view: null })
+      }
+    }
+    window.PointerEvent = class extends Pointer {
+      constructor(type: string, init?: PointerEventInit) {
+        super(type, { ...init, view: null })
+      }
+    }
+    start()
+    const host = connect()
+    const received: { type: string; editing?: boolean; pointers?: number }[] = []
+    host.onmessage = event => received.push(event.data)
+    const editing = () => received.filter(message => message.type === "editing")
+    host.postMessage({ type: "pointer", kind: "down", x: 5, y: 5, input: "touch" })
+    host.postMessage({ type: "pointer", kind: "up", x: 5, y: 5, input: "touch" })
+    // Nothing is focused, so nothing changed for the host: it is still told.
+    await vi.waitFor(() => expect(editing().at(-1)).toMatchObject({ editing: false, pointers: 2 }))
+    const before = editing().length
+    host.postMessage({ type: "pointer", kind: "down", x: 5, y: 5, input: "touch" })
+    host.postMessage({ type: "pointer", kind: "up", x: 5, y: 5, input: "touch" })
+    await vi.waitFor(() => expect(editing().at(-1)).toMatchObject({ editing: false, pointers: 4 }))
+    expect(editing().length).toBeGreaterThan(before)
+    delete (document as { elementFromPoint?: unknown }).elementFromPoint
+    window.MouseEvent = Mouse
+    window.PointerEvent = Pointer
+  })
+
   it("offers no selection for copying when it is too long to send, rather than a part of it", async () => {
     document.body.innerHTML = `<textarea id="long"></textarea>`
     const field = document.querySelector<HTMLTextAreaElement>("#long")!

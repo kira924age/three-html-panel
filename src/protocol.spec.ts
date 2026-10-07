@@ -39,19 +39,22 @@ describe("parsePageMessage", () => {
   })
 
   it("accepts the editing state with a valid caret or none", () => {
-    expect(parsePageMessage({ type: "editing", editing: true, caret: caret(), selectedText: "abc" }, limits)).toEqual({
+    expect(parsePageMessage({ type: "editing", editing: true, caret: caret(), selectedText: "abc", pointers: 3 }, limits)).toEqual({
       type: "editing",
       editing: true,
       caret: caret(),
-      selectedText: "abc"
+      selectedText: "abc",
+      pointers: 3
     })
+    expect(parsePageMessage({ type: "editing", editing: true, caret: null, selectedText: "", pointers: -1 }, limits)).toBeNull()
+    expect(parsePageMessage({ type: "editing", editing: true, caret: null, selectedText: "" }, limits)).toBeNull()
     // The selection to copy must be a string, and not too long.
-    expect(parsePageMessage({ type: "editing", editing: true, caret: null, selectedText: 1 }, limits)).toBeNull()
+    expect(parsePageMessage({ type: "editing", editing: true, caret: null, selectedText: 1, pointers: 0 }, limits)).toBeNull()
     expect(parsePageMessage({ type: "editing", editing: true, caret: null }, limits)).toBeNull()
     expect(
-      parsePageMessage({ type: "editing", editing: true, caret: null, selectedText: "x".repeat(64 * 1024 + 1) }, limits)
+      parsePageMessage({ type: "editing", editing: true, caret: null, selectedText: "x".repeat(64 * 1024 + 1), pointers: 0 }, limits)
     ).toBeNull()
-    expect(parsePageMessage({ type: "editing", editing: false, caret: null, selectedText: "" }, limits)).not.toBeNull()
+    expect(parsePageMessage({ type: "editing", editing: false, caret: null, selectedText: "", pointers: 0 }, limits)).not.toBeNull()
   })
 
   it("drops carets with numbers that are not finite or colors that are not short strings", () => {
@@ -65,10 +68,10 @@ describe("parsePageMessage", () => {
       caret({ color: 0 }),
       "caret"
     ]) {
-      expect(parsePageMessage({ type: "editing", editing: true, caret: bad, selectedText: "" }, limits)).toBeNull()
+      expect(parsePageMessage({ type: "editing", editing: true, caret: bad, selectedText: "", pointers: 0 }, limits)).toBeNull()
     }
-    expect(parsePageMessage({ type: "editing", editing: "yes", caret: null, selectedText: "" }, limits)).toBeNull()
-    expect(parsePageMessage({ type: "editing", editing: true, selectedText: "" }, limits)).toBeNull()
+    expect(parsePageMessage({ type: "editing", editing: "yes", caret: null, selectedText: "", pointers: 0 }, limits)).toBeNull()
+    expect(parsePageMessage({ type: "editing", editing: true, selectedText: "", pointers: 0 }, limits)).toBeNull()
   })
 
   it("accepts cursor keywords only", () => {

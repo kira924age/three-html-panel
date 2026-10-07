@@ -25,10 +25,14 @@ import type { PointerInput } from "./types"
 const inputOf = (event: PointerEvent): PointerInput => (event.pointerType === "mouse" ? "mouse" : "touch")
 
 const LINE_HEIGHT_PX = 16
+/** A touch that moves farther (CSS px of the canvas) is a drag (a scroll), not a tap. */
+const TAP_SLOP_PX = 10
 
 export class PanelPointer {
   private readonly raycaster = new Raycaster()
   private hovered: HtmlPanel | null = null
+  /** Where the current single touch started, to tell a tap from a drag. */
+  private touchStart: { id: number; x: number; y: number } | null = null
   private pressed: { panel: HtmlPanel; pointerId: number } | null = null
   /** The panel whose cursor the canvas shows, and the canvas's own cursor to restore. */
   private cursorPanel: HtmlPanel | null = null
@@ -48,6 +52,7 @@ export class PanelPointer {
     element.addEventListener("wheel", this.onWheel, { capture: true, passive: false })
     // Keep keyboard focus where it is (the panel keyboard) when pressing a panel.
     element.addEventListener("mousedown", this.onMouseDown, true)
+    element.addEventListener("touchstart", this.onTouchStart, { capture: true, passive: true })
     element.addEventListener("touchend", this.onTouchEnd, { capture: true, passive: false })
   }
 
@@ -110,9 +115,19 @@ export class PanelPointer {
     if (!this.pressed) this.hover(null)
   }
 
+  private readonly onTouchStart = (event: TouchEvent) => {
+    const touch = event.touches.length === 1 ? event.touches[0] : undefined
+    this.touchStart = touch ? { id: touch.identifier, x: touch.clientX, y: touch.clientY } : null
+  }
+
   private readonly onTouchEnd = (event: TouchEvent) => {
     const touch = event.changedTouches[0]
+    const start = this.touchStart
+    this.touchStart = null
     if (!touch || event.touches.length > 0) return
+    // Only a tap: a drag that ends over a text field was a scroll (or a drag in the page).
+    if (!start || start.id !== touch.identifier) return
+    if (Math.hypot(touch.clientX - start.x, touch.clientY - start.y) > TAP_SLOP_PX) return
     const hit = this.pick(touch)
     if (!hit?.panel.focusForTyping(hit.uv)) return
     // The browser would follow with compatibility mouse events on the canvas, and
@@ -170,6 +185,7 @@ export class PanelPointer {
     this.element.removeEventListener("pointerleave", this.onPointerLeave)
     this.element.removeEventListener("wheel", this.onWheel, true)
     this.element.removeEventListener("mousedown", this.onMouseDown, true)
+    this.element.removeEventListener("touchstart", this.onTouchStart, true)
     this.element.removeEventListener("touchend", this.onTouchEnd, true)
   }
 }

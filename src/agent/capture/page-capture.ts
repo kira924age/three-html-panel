@@ -37,9 +37,10 @@ export interface PageCaptureOptions {
   onFrame: (frame: Frame) => void
   /**
    * Whether an element has focus (keys should come to the page), a text field's
-   * caret, and its selected text (for the host to copy).
+   * caret, its selected text (for the host to copy), and how many pointer inputs
+   * have been handled. Also sent after every release, changed or not.
    */
-  onEditing: (editing: boolean, caret: Caret | null, selectedText: string) => void
+  onEditing: (editing: boolean, caret: Caret | null, selectedText: string, pointers: number) => void
   /** Where the text fields are now (CSS px, in view), when that changed. */
   onEditables: (boxes: Box[]) => void
   /** The mouse cursor changed (a CSS keyword, or "" when the pointer is not over the page). */
@@ -59,6 +60,8 @@ export class PageCapture {
   private lastEditing = ""
   private lastCursor = ""
   private lastEditables = ""
+  /** Pointer inputs handled for this document (see onEditing). */
+  private pointers = 0
   private started = false
   private disposed = false
 
@@ -97,7 +100,12 @@ export class PageCapture {
   }
 
   handle(input: PanelInput): void {
-    if (!this.disposed) this.input.handle(input)
+    if (this.disposed) return
+    this.input.handle(input)
+    if (input.type !== "pointer") return
+    this.pointers++
+    // The host waits for the page's answer to a tap (did it focus a text field?).
+    if (input.kind === "up") this.lastEditing = ""
   }
 
   dispose(): void {
@@ -227,6 +235,6 @@ export class PageCapture {
     const key = JSON.stringify([editing, caret, selectedText])
     if (key === this.lastEditing) return
     this.lastEditing = key
-    this.options.onEditing(editing, caret, selectedText)
+    this.options.onEditing(editing, caret, selectedText, this.pointers)
   }
 }

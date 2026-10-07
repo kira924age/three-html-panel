@@ -83,6 +83,8 @@ export const PANEL_SANDBOX = "allow-scripts allow-forms allow-popups"
  * field, which the agent reports as editing) or open a link.
  */
 const USER_ACTION_MS = 1000
+/** If the page never answers a tap that took the keyboard (it hangs), the keyboard is let go after this. */
+const TAP_ANSWER_TIMEOUT_MS = 5000
 
 /**
  * Texture pixels per CSS pixel. Phones get 1: drawing and uploading a page at
@@ -147,6 +149,9 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
   /** What drove the pointer last: the IME is placed at the caret only for a mouse. */
   private lastInput: PointerInput = "mouse"
   private keyboardTimer = 0
+  /** Pointer inputs sent to the current document, and the count a tap's answer must have reached. */
+  private pointersSent = 0
+  private tapAnswerAt: number | null = null
   /** Where the IME was last placed, to place it again only when it moves. */
   private imePlacement = ""
   private readonly scratch = new Vector3()
@@ -215,12 +220,15 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
       readyTimeout: options.readyTimeout,
       onConnect: () => {
         this.editables = []
+        this.pointersSent = 0
+        this.tapAnswerAt = null
         this.setEditing(false, null)
         this.setCursor("default")
       },
       onFrame: frame => this.renderer.submit(frame),
-      onEditing: (editing, caret, selectedText) => {
+      onEditing: (editing, caret, selectedText, pointers) => {
         this.selected = editing ? selectedText : ""
+        this.answerTap(editing, pointers)
         this.setEditing(editing, caret)
       },
       onCursor: cursor => this.setCursor(cursor),
@@ -357,6 +365,7 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
 
   pointer(kind: PointerKind, uv: Vector2 | null = null, shiftKey = false, input: PointerInput = "mouse"): void {
     if (kind === "down") this.lastInput = input
+    this.pointersSent++
     // Only presses and releases (the user acting on this panel) open the window, not hovering.
     if (kind === "down" || kind === "up") this.userActionUntil = performance.now() + USER_ACTION_MS
     const { x, y } = uv ? this.toPage(uv) : { x: 0, y: 0 }
@@ -412,8 +421,9 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
    * For a tap on the panel at `uv`, while the touch is still being handled: if it
    * lands on a text field, takes the keyboard now. iOS shows the soft keyboard
    * only for focus moved during a touch's own handling, which is long over when
-   * the page hears of the tap. True if it did. If the page then does not focus
-   * a field (the tap was on something over it, say), the keyboard is let go.
+   * the page hears of the tap. True if it did. If the page's answer to the tap
+   * shows no focus (the tap was on something over the field, say), the keyboard
+   * is let go then, however long the page took to answer.
    */
   focusForTyping(uv: Vector2): boolean {
     const { x, y } = this.toPage(uv)
@@ -422,11 +432,23 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
     }
     this.userActionUntil = performance.now() + USER_ACTION_MS
     this.keyboard.focus(this)
+    // The tap's release went out before this touchend: its answer has counted it.
+    this.tapAnswerAt = this.pointersSent
     window.clearTimeout(this.keyboardTimer)
     this.keyboardTimer = window.setTimeout(() => {
+      if (this.tapAnswerAt === null) return
+      this.tapAnswerAt = null
       if (!this.editing) this.keyboard.release(this)
-    }, USER_ACTION_MS)
+    }, TAP_ANSWER_TIMEOUT_MS)
     return true
+  }
+
+  /** An editing report: if it answers the tap that took the keyboard, keep the keyboard only if a field has focus. */
+  private answerTap(editing: boolean, pointers: number): void {
+    if (this.tapAnswerAt === null || pointers < this.tapAnswerAt) return
+    this.tapAnswerAt = null
+    window.clearTimeout(this.keyboardTimer)
+    if (!editing && !this.editing) this.keyboard.release(this)
   }
 
   /** A point of the page (CSS pixels) on screen (client pixels of the canvas's page), or null behind the camera. */

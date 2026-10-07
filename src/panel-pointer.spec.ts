@@ -32,13 +32,19 @@ beforeEach(() => {
 const at = (type: string, pointerType: string) =>
   new PointerEvent(type, { clientX: 400, clientY: 300, button: 0, pointerId: 1, pointerType, bubbles: true, cancelable: true })
 
-/** A touchend at the middle of the canvas. */
-function touchEnd(): Event {
-  const event = new Event("touchend", { cancelable: true })
-  Object.defineProperty(event, "changedTouches", { value: [{ clientX: 400, clientY: 300 }] })
-  Object.defineProperty(event, "touches", { value: [] })
+function touch(type: string, touches: object[], changedTouches: object[]): Event {
+  const event = new Event(type, { cancelable: true })
+  Object.defineProperty(event, "touches", { value: touches })
+  Object.defineProperty(event, "changedTouches", { value: changedTouches })
   canvas.dispatchEvent(event)
   return event
+}
+
+/** A finger put down at the middle of the canvas and lifted at (x, y). Returns the touchend. */
+function tap(x = 400, y = 300): Event {
+  const down = { identifier: 1, clientX: 400, clientY: 300 }
+  touch("touchstart", [down], [down])
+  return touch("touchend", [], [{ identifier: 1, clientX: x, clientY: y }])
 }
 
 describe("PanelPointer", () => {
@@ -54,10 +60,26 @@ describe("PanelPointer", () => {
     ])
   })
 
-  it("takes the keyboard during a touchend on a text field, and stops the mouse events after it", () => {
-    expect(touchEnd().defaultPrevented).toBe(true)
+  it("takes the keyboard during a tap on a text field, and stops the mouse events after it", () => {
+    expect(tap().defaultPrevented).toBe(true)
     expect(panel.focusForTyping).toHaveBeenCalledTimes(1)
     panel.focusForTyping.mockReturnValue(false)
-    expect(touchEnd().defaultPrevented).toBe(false)
+    expect(tap().defaultPrevented).toBe(false)
+  })
+
+  it("does not take the keyboard when a finger that moved (a scroll) is lifted over a text field", () => {
+    expect(tap(400, 340).defaultPrevented).toBe(false)
+    expect(panel.focusForTyping).not.toHaveBeenCalled()
+    // Within the slop, it is still a tap.
+    tap(405, 305)
+    expect(panel.focusForTyping).toHaveBeenCalledTimes(1)
+  })
+
+  it("does not take the keyboard for a touchend without its touchstart, or for another finger", () => {
+    touch("touchend", [], [{ identifier: 1, clientX: 400, clientY: 300 }])
+    const down = { identifier: 1, clientX: 400, clientY: 300 }
+    touch("touchstart", [down], [down])
+    touch("touchend", [], [{ identifier: 2, clientX: 400, clientY: 300 }])
+    expect(panel.focusForTyping).not.toHaveBeenCalled()
   })
 })

@@ -83,6 +83,12 @@ export interface EditingMessage {
   caret: Caret | null
   /** The text selected in the field, for the host to copy when the user asks to. */
   selectedText: string
+  /**
+   * How many pointer inputs the agent has handled for this document. A report
+   * follows every release, so the host can tell the page's answer to a tap from
+   * an earlier report.
+   */
+  pointers: number
 }
 
 /**
@@ -181,9 +187,10 @@ export function parsePageMessage(data: unknown, limits: PageMessageLimits): Page
       if (typeof data.editing !== "boolean") return null
       const caret = parseCaret(data.caret)
       if (caret === undefined) return null
-      const { selectedText } = data
+      const { selectedText, pointers } = data
       if (typeof selectedText !== "string" || selectedText.length > MAX_TEXT_LENGTH) return null
-      return { type: "editing", editing: data.editing, caret, selectedText }
+      if (!Number.isSafeInteger(pointers) || (pointers as number) < 0) return null
+      return { type: "editing", editing: data.editing, caret, selectedText, pointers: pointers as number }
     }
     case "pong":
       return { type: "pong" }

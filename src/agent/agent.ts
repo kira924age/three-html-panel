@@ -62,7 +62,8 @@ export class PanelAgent {
     this.stopLinks = interceptLinks(window as Window & typeof globalThis, url => this.post({ type: "open", url }))
     this.capture = new PageCapture(window.document, {
       onFrame: frame => this.post({ type: "frame", seq: this.seq++, ...frame }),
-      onEditing: (editing, caret, selectedText) => this.post({ type: "editing", editing, caret, selectedText }),
+      onEditing: (editing, caret, selectedText, pointers) =>
+        this.post({ type: "editing", editing, caret, selectedText, pointers }),
       onEditables: boxes => this.post({ type: "editables", boxes }),
       // "" (not over the page) goes as "default"; the host stops using it when the pointer leaves anyway.
       onCursor: cursor => this.post({ type: "cursor", cursor: cursor || "default" })
