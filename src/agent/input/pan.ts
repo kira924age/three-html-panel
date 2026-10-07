@@ -6,6 +6,10 @@
 // Like a touch, the drag scrolls only in the directions the touch-action of the
 // pressed element and its ancestors allows; where the page sets
 // touch-action: none (a note's drag bar), the drag is the page's.
+//
+// While a drag may still scroll, the mouse events are held back, as browsers do
+// for a touch: a tap gets mousedown, mouseup and click (and focus) when it is
+// released; a drag gets none (input.ts).
 
 export type { PointerInput } from "../../types"
 

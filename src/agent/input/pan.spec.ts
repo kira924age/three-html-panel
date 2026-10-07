@@ -107,4 +107,61 @@ describe("dragging to scroll", () => {
     pointer("up", 30)
     expect(box.scrollTop).toBe(0)
   })
+
+  describe("mouse events, as browsers send them for a touch", () => {
+    let log: string[]
+    let button: HTMLButtonElement
+    const record = (event: Event) => log.push(event.type)
+    const TYPES = ["pointerdown", "pointerup", "pointercancel", "mousedown", "mousemove", "mouseup", "click"]
+
+    beforeEach(() => {
+      box.innerHTML = `<button id="go">Go</button>`
+      button = box.querySelector("#go")!
+      document.elementFromPoint = () => button
+      log = []
+      for (const type of TYPES) document.addEventListener(type, record)
+    })
+    afterEach(() => {
+      for (const type of TYPES) document.removeEventListener(type, record)
+    })
+
+    it("gives a drag that scrolls no mouse events, and focuses nothing", () => {
+      pointer("down", 60)
+      expect(input.focused).not.toBe(button)
+      pointer("move", 30)
+      pointer("up", 30)
+      expect(box.scrollTop).toBe(30)
+      expect(log).toEqual(["pointerdown", "pointercancel"])
+      expect(input.focused).not.toBe(button)
+    })
+
+    it("gives a tap its mouse events after the release, and focuses then", () => {
+      pointer("down", 60)
+      // Within the slop: still a tap.
+      pointer("move", 59)
+      expect(log).toEqual(["pointerdown"])
+      expect(input.focused).not.toBe(button)
+      pointer("up", 59)
+      expect(log).toEqual(["pointerdown", "pointerup", "mousedown", "mouseup", "click"])
+      expect(input.focused).toBe(button)
+    })
+
+    it("gives a drag the page captured no mouse events", () => {
+      pointer("down", 60)
+      button.setPointerCapture(1)
+      pointer("move", 30)
+      pointer("up", 30)
+      expect(log).toEqual(["pointerdown", "pointerup"])
+    })
+
+    it("sends mousedown at once where the drag is the page's (touch-action: none), with its mouseup", () => {
+      button.style.touchAction = "none"
+      pointer("down", 60)
+      expect(log).toEqual(["pointerdown", "mousedown"])
+      expect(input.focused).toBe(button)
+      pointer("move", 30)
+      pointer("up", 30)
+      expect(log).toEqual(["pointerdown", "mousedown", "mousemove", "pointerup", "mouseup"])
+    })
+  })
 })

@@ -173,6 +173,12 @@ interface Press {
   moved: boolean
   /** False when the page cancelled pointerdown, which suppresses the mouse events. */
   mouseEvents: boolean
+  /**
+   * The mousedown held back while a finger or controller drag may still scroll:
+   * like a touch in browsers, the mouse events (and focusing) come only if the
+   * press ends without moving.
+   */
+  deferred: { detail: number; shiftKey: boolean } | null
 }
 
 export class InputSynthesizer {
@@ -530,13 +536,21 @@ export class InputSynthesizer {
 
     const init = this.pointerInit(x, y, 1)
     const pointerOk = target.dispatchEvent(this.pointerEvent("pointerdown", init))
-    this.press = { target, x, y, moved: false, mouseEvents: pointerOk }
+    this.press = { target, x, y, moved: false, mouseEvents: pointerOk, deferred: null }
     // A finger or controller drag scrolls, unless the page took the press (cancelled it).
     if (input !== "mouse" && pointerOk) this.pan = this.startPan(target, x, y)
+    if (this.pan) {
+      this.press.deferred = { detail: count, shiftKey }
+      return
+    }
     // Cancelling pointerdown suppresses the compatibility mouse events, and with
     // them the default action of mousedown (focusing).
-    if (pointerOk && target.dispatchEvent(this.mouseEvent("mousedown", { ...init, detail: count, shiftKey }))) {
-      this.focusAt(target, x, y, count, shiftKey)
+    if (pointerOk) this.mouseDown(target, x, y, count, shiftKey)
+  }
+
+  private mouseDown(target: Element, x: number, y: number, detail: number, shiftKey: boolean): void {
+    if (target.dispatchEvent(this.mouseEvent("mousedown", { ...this.pointerInit(x, y, 1), detail, shiftKey }))) {
+      this.focusAt(target, x, y, detail, shiftKey)
     }
   }
 
@@ -558,7 +572,7 @@ export class InputSynthesizer {
     const destination = this.captureTarget?.isConnected ? this.captureTarget : target
     const init = this.pointerInit(x, y, press ? 1 : 0)
     destination.dispatchEvent(this.pointerEvent("pointermove", init))
-    if (!press || press.mouseEvents) destination.dispatchEvent(this.mouseEvent("mousemove", init))
+    if (!press || (press.mouseEvents && !press.deferred)) destination.dispatchEvent(this.mouseEvent("mousemove", init))
     if (press && this.textDrag?.field.isConnected) this.dragText(x, y)
   }
 
@@ -583,7 +597,15 @@ export class InputSynthesizer {
     const destination = this.captureTarget?.isConnected ? this.captureTarget : target
     const init = this.pointerInit(x, y, 0)
     destination.dispatchEvent(this.pointerEvent("pointerup", init))
-    if (!press || press.mouseEvents) destination.dispatchEvent(this.mouseEvent("mouseup", init))
+    // A held-back press: a tap gets its mouse events now, a drag none.
+    const deferred = press?.deferred
+    let mouseEvents = !press || press.mouseEvents
+    if (press && deferred) {
+      mouseEvents = !press.moved
+      if (mouseEvents) this.mouseDown(press.target, press.x, press.y, deferred.detail, deferred.shiftKey)
+      this.textDrag = null
+    }
+    if (mouseEvents) destination.dispatchEvent(this.mouseEvent("mouseup", init))
     if (this.captureTarget) {
       this.captureTarget.dispatchEvent(this.pointerEvent("lostpointercapture", init))
       this.captureTarget = null
