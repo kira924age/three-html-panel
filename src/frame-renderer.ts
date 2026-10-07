@@ -20,7 +20,7 @@ export interface FrameRendererOptions {
 /** The longest canvas side; some mobile GPUs cannot hold larger textures. */
 const MAX_CANVAS_LENGTH = 4096
 
-function loadSvg(svg: string): Promise<HTMLImageElement> {
+export function loadSvg(svg: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const image = new Image()
     image.decoding = "async"
@@ -29,6 +29,82 @@ function loadSvg(svg: string): Promise<HTMLImageElement> {
     image.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg)
   })
 }
+
+/**
+ * A frame with a box-shadow ring, like a focus ring: an element at (100, 60),
+ * 100x50, ringed 4px wide. At 2x, the ring's left side covers x 192..200.
+ */
+const PROBE_SVG =
+  `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300">` +
+  `<foreignObject x="0" y="0" width="100%" height="100%"><div xmlns="http://www.w3.org/1999/xhtml" ` +
+  `style="position:absolute;left:100px;top:60px;width:100px;height:50px;box-shadow:0 0 0 4px rgb(0,0,255)"></div>` +
+  `</foreignObject></svg>`
+const PROBE_POINT = { x: 196, y: 170 }
+
+export type Scaling = "drawImage" | "bitmap"
+
+/** Whether the probe's ring is where it should be on a canvas the probe frame was drawn on at 2x. */
+function ringInPlace(context: CanvasRenderingContext2D): boolean {
+  const [red, green, blue] = context.getImageData(PROBE_POINT.x, PROBE_POINT.y, 1, 1).data
+  return blue! > 200 && red! < 80 && green! < 80
+}
+
+function probeCanvas(): CanvasRenderingContext2D | null {
+  const canvas = document.createElement("canvas")
+  canvas.width = 800
+  canvas.height = 600
+  return canvas.getContext("2d")
+}
+
+/**
+ * How to scale frames to the canvas. drawImage, unless it draws box-shadows in
+ * the wrong place (WebKit does, when it scales an SVG image) and
+ * createImageBitmap's resize draws them right (WebKit does) without making the
+ * canvas unreadable (Chrome would taint it; WebGL refuses a tainted canvas).
+ * Tried once with the probe frame; anything unexpected keeps drawImage.
+ */
+export async function probeScaling(load: (svg: string) => Promise<HTMLImageElement> = loadSvg): Promise<Scaling> {
+  try {
+    const image = await load(PROBE_SVG)
+    const direct = probeCanvas()
+    if (!direct) return "drawImage"
+    direct.drawImage(image, 0, 0, 800, 600)
+    if (ringInPlace(direct) || typeof createImageBitmap !== "function") return "drawImage"
+    const bitmap = await createImageBitmap(image, { resizeWidth: 800, resizeHeight: 600, resizeQuality: "high" })
+    const viaBitmap = probeCanvas()
+    if (!viaBitmap) return "drawImage"
+    viaBitmap.drawImage(bitmap, 0, 0)
+    bitmap.close()
+    return ringInPlace(viaBitmap) ? "bitmap" : "drawImage"
+  } catch {
+    return "drawImage"
+  }
+}
+
+/**
+ * Scales frames to the canvas the way probeScaling chose, probed once. If a
+ * bitmap fails later anyway (a real frame is larger than the probe's, and
+ * Safari can refuse one under its memory limit), that frame and all the next
+ * ones are drawn with drawImage: shadows misplaced rather than no frames.
+ */
+export class FrameScaler {
+  private scaling: Promise<Scaling> | null = null
+
+  constructor(private readonly probe: () => Promise<Scaling> = probeScaling) {}
+
+  /** What to draw for `image` at width x height: the image itself, or a bitmap to close after drawing. */
+  async scale(image: HTMLImageElement, width: number, height: number): Promise<CanvasImageSource> {
+    if ((await (this.scaling ??= this.probe())) !== "bitmap") return image
+    try {
+      return await createImageBitmap(image, { resizeWidth: width, resizeHeight: height, resizeQuality: "high" })
+    } catch {
+      this.scaling = Promise.resolve("drawImage")
+      return image
+    }
+  }
+}
+
+const sharedScaler = new FrameScaler()
 
 export class FrameRenderer {
   readonly canvas = document.createElement("canvas")
@@ -81,10 +157,17 @@ export class FrameRenderer {
       this.pending = null
       try {
         const image = await loadSvg(frame.svg)
-        if (this.disposed) continue
+        const { width, height } = this.canvas
+        const source = await sharedScaler.scale(image, width, height)
+        if (this.disposed) {
+          if (source !== image) (source as ImageBitmap).close()
+          continue
+        }
         this.context.fillStyle = this.options.background
-        this.context.fillRect(0, 0, this.canvas.width, this.canvas.height)
-        this.context.drawImage(image, 0, 0, this.canvas.width, this.canvas.height)
+        this.context.fillRect(0, 0, width, height)
+        // At the canvas's size either way (a browser that ignored the resize still fits).
+        this.context.drawImage(source, 0, 0, width, height)
+        if (source !== image) (source as ImageBitmap).close()
         this.texture.needsUpdate = true
         this.options.onDraw?.()
       } catch {

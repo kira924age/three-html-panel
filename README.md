@@ -132,6 +132,7 @@ Paths are under `src/`; the agent's are under `src/agent/`.
 |---|---|---|
 | The host cannot read a cross-origin page | An agent in the page captures it and talks to the host over a `MessagePort` | `agent/agent.ts`, `panel-connection.ts`, `protocol.ts` |
 | WebGL cannot display HTML | Copy the DOM into SVG `<foreignObject>`, decode it as an image, draw it into a canvas | `agent/capture/snapshot.ts`, `frame-renderer.ts` |
+| WebKit (Safari) misplaces `box-shadow` (a focus ring, a card's shadow) when `drawImage` scales an SVG image | Probe it once; where it happens, scale with `createImageBitmap`'s resize instead, which draws them right (not in Chrome, where that taints the canvas, nor in Firefox, where it is slower) | `frame-renderer.ts` |
 | The image does not see the page's CSS | Collect all rules; keep only matching `@media`; re-fetch cross-origin stylesheets with CORS (with `Accept: text/css`, or Vite's dev server answers with JS) | `agent/capture/css.ts` |
 | `:hover`, `:focus` never match in an image | Mark elements with attributes and rewrite the selectors | `agent/capture/css.ts`, `agent/capture/snapshot.ts` |
 | Form state, scroll position are not in the markup | Copy `value`/`checked`, shift children of scrolled boxes | `agent/capture/snapshot.ts` |
@@ -161,7 +162,6 @@ Paths are under `src/`; the agent's are under `src/agent/`.
 - Text inside a scroll container that is not wrapped in an element does not scroll.
 - `contenteditable` editing is not implemented.
 - A text field scrolled by part of a line leaves that line out of the image until it is scrolled fully into view.
-- WebKit (Safari) misplaces `box-shadow` (a focus ring, say) when it draws the SVG scaled into the canvas. Rendering the page with `zoom` instead avoids it, but makes WebKit and Firefox lay out `system-ui` text narrower than in the page, so the image would no longer match where the page puts things; that is worse, so the shadows stay misplaced in WebKit.
 - Mobile soft keyboards and WebXR controllers are not wired up.
 - A same-site page's scripts and the capture share the host's main thread; a cross-site page usually runs in its own process.
 - [HTML-in-Canvas](https://github.com/WICG/html-in-canvas) would remove most of the copying once browsers ship it.
