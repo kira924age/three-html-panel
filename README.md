@@ -58,13 +58,13 @@ pnpm dev
 - http://localhost:5173: the 3D scene. Open this one.
 - http://localhost:5174: the panel pages, on purpose another origin. It adds the agent to every page under `panels/` (`vite.panels.config.ts`).
 
-The ports come from `.env.development`. The demo shows three pages, all with `sandbox: true`:
+These origins are the defaults (`originsFor` in `vite.panels.config.ts`). To change them, set `VITE_HOST_ORIGIN` and `VITE_PANEL_ORIGIN` in the environment or in an untracked `.env.development.local` (see `.env.example`); `.env` files are kept out of the repository. The demo shows three pages, all with `sandbox: true`:
 
 - `panels/notes/`: a sticky-note board (drag, double-click, typing, hover, a CSS animation, scrolling). It is an ordinary page with no knowledge of the panel.
 - `panels/controls/`: a form that drives the 3D object next to it (shape, color, spin, caption), and counts clicks on the object. Being on another origin, it cannot reach the scene's window; it uses the agent's app messages (see below).
 - `panels/reader/`: text to select and copy, drop-down lists (`<select>`, with groups), a contenteditable box, and a video.
 
-`pnpm build` then `pnpm preview` serves the build the same way: the scene on http://localhost:4173, the panel pages on http://localhost:4174 (`.env.production`).
+`pnpm build` then `pnpm preview` serves the build the same way: the scene on http://localhost:4173, the panel pages on http://localhost:4174 (or `.env.production.local`).
 
 Tested in desktop Chrome. On every pull request, `pnpm e2e` drives the notes and reader pages in Playwright's Chromium, Firefox and WebKit builds (headless): typing, dragging a note, selecting and copying text, the lists, editing, the caret, a video, and Japanese input (Chromium only). The pages run in a host page with one flat panel (`e2e/harness/`). It starts the dev servers itself, or uses those of a running `pnpm dev`; install the browsers once with `pnpm exec playwright install`. See Limitations for WebKit. Touch and VR input were checked in emulation only.
 

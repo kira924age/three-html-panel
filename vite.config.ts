@@ -1,6 +1,6 @@
 import { resolve } from "node:path"
-import { createServer, defineConfig, loadEnv, preview, type Plugin, type PreviewServer, type ViteDevServer } from "vite"
-import { AGENT_BUILD_FILE, injectPanelAgent, panelServerConfig } from "./vite.panels.config.ts"
+import { createServer, defineConfig, preview, type Plugin, type PreviewServer, type ViteDevServer } from "vite"
+import { AGENT_BUILD_FILE, injectPanelAgent, originsFor, panelServerConfig } from "./vite.panels.config.ts"
 
 type PanelServer = ViteDevServer | PreviewServer
 
@@ -74,13 +74,18 @@ function panelServer(): Plugin {
 }
 
 export default defineConfig(({ mode }) => {
-  const env = loadEnv(mode, import.meta.dirname, "VITE_")
-  const hostPort = Number(new URL(env.VITE_HOST_ORIGIN!).port)
+  const origins = originsFor(mode)
+  const hostPort = Number(new URL(origins.host).port)
   return {
     base: "./",
     server: { port: hostPort, strictPort: true },
     preview: { port: hostPort, strictPort: true },
-    plugins: [panelServer(), injectPanelAgent(env.VITE_HOST_ORIGIN!)],
+    // The scene's pages load the panel pages from the panel server's origin.
+    define: {
+      "import.meta.env.VITE_HOST_ORIGIN": JSON.stringify(origins.host),
+      "import.meta.env.VITE_PANEL_ORIGIN": JSON.stringify(origins.panel)
+    },
+    plugins: [panelServer(), injectPanelAgent(origins.host)],
     build: {
       // three.js alone is about 500 kB.
       chunkSizeWarningLimit: 800,
