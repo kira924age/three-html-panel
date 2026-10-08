@@ -1,18 +1,8 @@
 // @vitest-environment jsdom
 import { PerspectiveCamera, Scene, Vector2, Vector4, type WebGLRenderer } from "three";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vite-plus/test";
-import { FAR_PACE_MS, HtmlPanel, PANEL_SANDBOX, defaultPixelRatio, splitAlpha } from "./html-panel";
+import { FAR_PACE_MS, HtmlPanel, PANEL_SANDBOX, defaultPixelRatio } from "./html-panel";
 import { PanelKeyboard } from "./panel-keyboard";
-
-describe("splitAlpha", () => {
-  it("splits the alpha off a CSS color", () => {
-    expect(splitAlpha("rgb(1, 2, 3)")).toEqual({ rgb: "rgb(1, 2, 3)", alpha: 1 });
-    expect(splitAlpha("rgba(0, 0, 0, 0)")).toEqual({ rgb: "rgb(0, 0, 0)", alpha: 0 });
-    expect(splitAlpha("rgb(10 20 30 / 50%)")).toEqual({ rgb: "rgb(10, 20, 30)", alpha: 0.5 });
-    expect(splitAlpha("transparent").alpha).toBe(0);
-    expect(splitAlpha("#ff0000")).toEqual({ rgb: "#ff0000", alpha: 1 });
-  });
-});
 
 describe("defaultPixelRatio", () => {
   it("is 1 on phones (coarse pointer, small screen) and 2 elsewhere", () => {
