@@ -18,19 +18,16 @@ Show existing web pages — scripts included, from any origin — as interactive
 
 The page runs in an `<iframe>` and loads a small script, the **agent**. The agent copies the page into an SVG `<foreignObject>`, which the host draws into a texture, and replays the host's input in the page as DOM events. The host never reads the page's document.
 
-## Quick start
+## Install
 
 ```bash
-pnpm install
-pnpm dev
+npm install three-html-panel three
 ```
-
-Open http://localhost:5173. The demo's pages (`panels/`) are served from http://localhost:5174, another origin, with the agent added.
 
 ## Usage
 
 ```ts
-import { HtmlPanel, PanelPointer } from "./src";
+import { HtmlPanel, PanelPointer } from "three-html-panel";
 
 const panel = new HtmlPanel({
   url: "https://panels.example/notes/",
@@ -64,23 +61,30 @@ For VR, add a `PanelXRPointer` (call its `update()` every frame) and give it a `
 
 ### Adding the agent to a page
 
-The agent must come before the page's own scripts, and names the host's origin:
+The agent must run before the page's own scripts, and names the host's origin. With a tag, first in `<head>` (from a CDN, or from your server out of `node_modules/three-html-panel/lib/`):
 
 ```html
 <script
   type="module"
-  src="https://panels.example/agent.js"
+  src="https://cdn.jsdelivr.net/npm/three-html-panel@0.1/lib/agent-script.js"
   data-host-origin="https://host.example"
 ></script>
 ```
 
-`pnpm build` emits it as `dist/agent.js`. For pages you cannot edit, a server or proxy can insert the tag; `injectPanelAgent()` in `vite.panels.config.ts` does this for the demo.
+Or first in the page's own bundle:
+
+```ts
+import { startAgent } from "three-html-panel/agent";
+startAgent({ hostOrigin: "https://host.example" });
+```
+
+For pages you cannot edit, a server or proxy can insert the tag; `injectPanelAgent()` in `vite.panels.config.ts` does this for the demo.
 
 ### Messages between page and host
 
 ```ts
 // In the page
-import { onHostMessage, sendToHost } from "./src/agent/page";
+import { onHostMessage, sendToHost } from "three-html-panel/page";
 sendToHost({ color: "#3b82f6" });
 onHostMessage((data) => console.log(data));
 
@@ -130,10 +134,12 @@ These rely on the scene being rendered every frame. Without WebGL (a panel that 
 ## Development
 
 ```bash
-pnpm dev        # the demo
+pnpm install
+pnpm dev        # the demo: open http://localhost:5173 (its pages are served from :5174, another origin)
 pnpm test       # unit tests
 pnpm e2e        # Chromium, Firefox and WebKit (Playwright); install them once: pnpm exec playwright install
-pnpm build
+pnpm pack:lib   # the npm package, into lib/
+pnpm build      # the demo, into dist/
 vp check        # format, lint and types
 ```
 
