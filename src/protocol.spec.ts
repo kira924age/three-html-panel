@@ -123,6 +123,13 @@ describe("parseReady", () => {
 })
 
 describe("parseHostMessage", () => {
+  it("accepts whether the host draws the panel, as a boolean only", () => {
+    expect(parseHostMessage({ type: "visibility", visible: false })).toEqual({ type: "visibility", visible: false })
+    expect(parseHostMessage({ type: "visibility", visible: true })).toEqual({ type: "visibility", visible: true })
+    expect(parseHostMessage({ type: "visibility", visible: "false" })).toBeNull()
+    expect(parseHostMessage({ type: "visibility" })).toBeNull()
+  })
+
   it("accepts panel input and drops malformed input", () => {
     expect(parseHostMessage({ type: "pointer", kind: "down", x: 1, y: 2 })).toEqual({
       type: "pointer",

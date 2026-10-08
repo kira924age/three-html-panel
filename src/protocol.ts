@@ -134,8 +134,17 @@ export type PageMessage =
   | AppMessage
   | { type: "pong" }
 
+/**
+ * The host draws the panel (visible), or has not for a while (out of view,
+ * behind the camera, hidden): the page need not send frames meanwhile.
+ */
+export interface VisibilityMessage {
+  type: "visibility"
+  visible: boolean
+}
+
 /** From the host to the page, through the port. */
-export type HostMessage = PanelInput | AppMessage | { type: "ping" }
+export type HostMessage = PanelInput | AppMessage | VisibilityMessage | { type: "ping" }
 
 type Fields = Record<string, unknown>
 
@@ -271,6 +280,8 @@ export function parseHostMessage(data: unknown): HostMessage | null {
       return { type: "cut" }
     case "ping":
       return { type: "ping" }
+    case "visibility":
+      return typeof data.visible === "boolean" ? { type: "visibility", visible: data.visible } : null
     case "app":
       return { type: "app", data: data.data }
     default:

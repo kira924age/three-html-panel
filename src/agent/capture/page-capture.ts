@@ -89,6 +89,12 @@ export class PageCapture {
   private selectionTextCache: { key: SelectionKey; text: string } | null = null
   private started = false
   private disposed = false
+  /**
+   * The host does not draw the panel (it said so): no frames are captured, and
+   * animations and videos are not sampled, until it does again. The editing
+   * state, the editables and the cursor are still reported.
+   */
+  private hidden = false
 
   constructor(
     private readonly document: Document,
@@ -120,6 +126,8 @@ export class PageCapture {
    */
   start(): void {
     this.started = true
+    // A new connection starts shown; the host says so if not.
+    this.hidden = false
     this.lastEditing = ""
     // The host waits for the new document's picture: send the next frame, whatever it looks like.
     this.lastSvg = ""
@@ -127,6 +135,13 @@ export class PageCapture {
     this.lastEditables = ""
     this.css.invalidate()
     this.invalidate()
+  }
+
+  /** Whether the host draws the panel. Shown again, the page is captured as it is now. */
+  setVisible(visible: boolean): void {
+    if (this.disposed || visible === !this.hidden) return
+    this.hidden = !visible
+    if (visible) this.invalidate()
   }
 
   handle(input: PanelInput): void {
@@ -196,55 +211,7 @@ export class PageCapture {
       // The viewport, including any scrollbar: exactly the iframe's size.
       const width = this.window.innerWidth
       const height = this.window.innerHeight
-      const focused = this.input.focused
-      const composing = this.input.composition
-      const host = focused && editingHostOf(focused) === focused ? focused : null
-      // While composing, the selection is what the composition replaces: not drawn.
-      // Outside text fields, the page's own selection is drawn (its text, or an editable's).
-      const range = isTextField(focused) || (host && composing) ? null : selectedRange(this.window)
-      const selection = isTextField(focused)
-        ? composing
-          ? []
-          : this.measure(() => measureSelection(focused))
-        : range
-          ? this.selectionBoxes(range)
-          : []
-      const composition =
-        isTextField(focused) && composing
-          ? {
-              field: focused,
-              value: composedValue(focused, composing).value,
-              boxes: this.measure(() => measureComposition(focused, composing)),
-              color: this.window.getComputedStyle(focused).color
-            }
-          : null
-      // The page's ::selection color, if it sets one.
-      const selectionColor = isTextField(focused)
-        ? this.window.getComputedStyle(focused, "::selection").backgroundColor
-        : range
-          ? selectionColorAt(this.window, range)
-          : undefined
-      // The snapshot measures scrolled text fields with a mirror (caret.ts).
-      const xhtml = this.measure(() => snapshotDocument(this.document, {
-        hovered: this.input.hovered,
-        active: this.input.active,
-        focused,
-        selection,
-        selectionColor,
-        // The page's selection, when the keys do not go to it (the host took them, or the page made it).
-        selectionInactive: range !== null && !this.input.hasSelection && !(host && host.contains(range.startContainer)),
-        composition,
-        inlineComposition: host && composing ? this.inlineComposition(composing.text) : null,
-        scrollbar: this.input.scrollbarState,
-        selectPopup: this.input.popupView,
-        listBoxSelection: isListBox(focused) ? this.listBoxRows(focused) : [],
-        inlineImage: url => this.images.get(url)
-      }))
-      const svg = buildFrameSvg(xhtml, this.css.get(), width, height)
-      if (svg !== this.lastSvg) {
-        this.lastSvg = svg
-        this.options.onFrame({ svg, width, height })
-      }
+      if (!this.hidden) this.sendFrame(width, height)
       this.reportEditing()
       this.reportEditables(width, height)
       this.reportCursor()
@@ -252,7 +219,60 @@ export class PageCapture {
       this.notBefore = performance.now() + this.pacer.record(performance.now() - started)
     }
     // Keep sampling while something is animating or a video plays, so the panel shows it moving.
-    if (this.dirty || this.hasLiveAnimations() || this.hasPlayingVideo()) this.invalidate()
+    if (this.dirty || (!this.hidden && (this.hasLiveAnimations() || this.hasPlayingVideo()))) this.invalidate()
+  }
+
+  /** Captures the page and sends it, unless it looks as it did in the frame sent last. */
+  private sendFrame(width: number, height: number): void {
+    const focused = this.input.focused
+    const composing = this.input.composition
+    const host = focused && editingHostOf(focused) === focused ? focused : null
+    // While composing, the selection is what the composition replaces: not drawn.
+    // Outside text fields, the page's own selection is drawn (its text, or an editable's).
+    const range = isTextField(focused) || (host && composing) ? null : selectedRange(this.window)
+    const selection = isTextField(focused)
+      ? composing
+        ? []
+        : this.measure(() => measureSelection(focused))
+      : range
+        ? this.selectionBoxes(range)
+        : []
+    const composition =
+      isTextField(focused) && composing
+        ? {
+            field: focused,
+            value: composedValue(focused, composing).value,
+            boxes: this.measure(() => measureComposition(focused, composing)),
+            color: this.window.getComputedStyle(focused).color
+          }
+        : null
+    // The page's ::selection color, if it sets one.
+    const selectionColor = isTextField(focused)
+      ? this.window.getComputedStyle(focused, "::selection").backgroundColor
+      : range
+        ? selectionColorAt(this.window, range)
+        : undefined
+    // The snapshot measures scrolled text fields with a mirror (caret.ts).
+    const xhtml = this.measure(() => snapshotDocument(this.document, {
+      hovered: this.input.hovered,
+      active: this.input.active,
+      focused,
+      selection,
+      selectionColor,
+      // The page's selection, when the keys do not go to it (the host took them, or the page made it).
+      selectionInactive: range !== null && !this.input.hasSelection && !(host && host.contains(range.startContainer)),
+      composition,
+      inlineComposition: host && composing ? this.inlineComposition(composing.text) : null,
+      scrollbar: this.input.scrollbarState,
+      selectPopup: this.input.popupView,
+      listBoxSelection: isListBox(focused) ? this.listBoxRows(focused) : [],
+      inlineImage: url => this.images.get(url)
+    }))
+    const svg = buildFrameSvg(xhtml, this.css.get(), width, height)
+    if (svg !== this.lastSvg) {
+      this.lastSvg = svg
+      this.options.onFrame({ svg, width, height })
+    }
   }
 
   /** The boxes of the page's selection, measured again only when it or the page changed. */
