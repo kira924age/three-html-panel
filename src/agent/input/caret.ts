@@ -73,12 +73,21 @@ function withMirror<T>(field: TextField, measure: (mirror: HTMLDivElement) => T)
   // A single-line input never wraps; a textarea wraps like the field does.
   mirror.style.whiteSpace = isInput ? "pre" : "pre-wrap"
   if (isInput) mirror.style.width = "auto"
-  else if (field.clientWidth > 0) {
-    // Its lines are as wide as its content box less any scrollbar: a classic
-    // scrollbar (Windows, Linux) takes its room from the text, the mirror has none.
-    const padding = (parseFloat(computed.paddingLeft) || 0) + (parseFloat(computed.paddingRight) || 0)
-    mirror.style.boxSizing = "content-box"
-    mirror.style.width = `${Math.max(0, field.clientWidth - padding)}px`
+  else {
+    // A classic scrollbar (Windows, Linux) takes its room from the text; the
+    // mirror has none, so it is made that much narrower. The width stays
+    // fractional (clientWidth and offsetWidth are rounded): a line that just
+    // fits must wrap where the field's does.
+    const length = (property: string) => parseFloat(computed.getPropertyValue(property)) || 0
+    const borders = length("border-left-width") + length("border-right-width")
+    const paddings = length("padding-left") + length("padding-right")
+    const scrollbar = field.offsetWidth - field.clientWidth - Math.round(borders)
+    const width = parseFloat(computed.width)
+    if (scrollbar > 0 && Number.isFinite(width)) {
+      const content = computed.boxSizing === "border-box" ? width - paddings - borders : width
+      mirror.style.boxSizing = "content-box"
+      mirror.style.width = `${Math.max(0, content - scrollbar)}px`
+    }
   }
   document.body.appendChild(mirror)
   try {
