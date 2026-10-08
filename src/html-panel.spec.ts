@@ -46,7 +46,9 @@ describe("the panel's iframe", () => {
     const src = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, "src")!;
     Object.defineProperty(HTMLIFrameElement.prototype, "src", {
       configurable: true,
-      get: src.get,
+      get(this: HTMLIFrameElement) {
+        return src.get!.call(this) as string;
+      },
       set(this: HTMLIFrameElement, value: string) {
         sandboxAtSrc.push(this.getAttribute("sandbox"));
         // jsdom would try to load the page; the attribute is what matters here.

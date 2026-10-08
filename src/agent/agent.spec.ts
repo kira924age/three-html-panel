@@ -6,6 +6,7 @@ import {
   describe,
   expect,
   it,
+  onTestFinished,
   vi,
   type Mock,
 } from "vite-plus/test";
@@ -15,6 +16,16 @@ import { RenderPacer } from "./capture/pacer";
 import { onHostMessage, sendToHost } from "./page";
 
 const HOST = "https://host.example";
+
+/** Gives Range a getClientRects (jsdom has none) for a test; returns what undoes it. */
+function stubRangeRects(rects: () => DOMRectList): () => void {
+  const before = Object.getOwnPropertyDescriptor(Range.prototype, "getClientRects");
+  Range.prototype.getClientRects = rects;
+  return () => {
+    if (before) Object.defineProperty(Range.prototype, "getClientRects", before);
+    else delete (Range.prototype as { getClientRects?: unknown }).getClientRects;
+  };
+}
 
 let parent: { postMessage: Mock };
 let agent: PanelAgent | null = null;
@@ -270,7 +281,8 @@ describe("connecting", () => {
   it("asks for the keys while the page's text is selected, offering it for copying", async () => {
     document.body.innerHTML = `<p id="text">some   words</p>`;
     // jsdom has no layout.
-    Range.prototype.getClientRects ??= () => [] as unknown as DOMRectList;
+    const restoreRects = stubRangeRects(() => [] as unknown as DOMRectList);
+    onTestFinished(restoreRects);
     start();
     const host = connect();
     const received: { type: string; editing?: boolean; selectedText?: string }[] = [];
@@ -296,8 +308,7 @@ describe("connecting", () => {
   it("measures the page's selection again only when the page changes, not on every frame an animation asks for", async () => {
     document.body.innerHTML = `<p id="text">some words</p>`;
     const rects = vi.fn(() => [] as unknown as DOMRectList);
-    const original = Range.prototype.getClientRects;
-    Range.prototype.getClientRects = rects;
+    const restoreRects = stubRangeRects(rects);
     // An endless animation keeps frames coming.
     const animation = {
       effect: {
@@ -342,7 +353,7 @@ describe("connecting", () => {
     } finally {
       captures.mockRestore();
       delete (document as { getAnimations?: unknown }).getAnimations;
-      Range.prototype.getClientRects = original;
+      restoreRects();
       getSelection()!.removeAllRanges();
     }
   });
@@ -359,8 +370,7 @@ describe("connecting", () => {
     });
     // Where the character after the caret is: the line, scrolled half out of the bottom.
     let line = new DOMRect(30, 50, 8, 20);
-    const original = Range.prototype.getClientRects;
-    Range.prototype.getClientRects = () => [line] as unknown as DOMRectList;
+    const restoreRects = stubRangeRects(() => [line] as unknown as DOMRectList);
     Object.defineProperty(HTMLElement.prototype, "isContentEditable", {
       configurable: true,
       get(this: HTMLElement) {
@@ -392,7 +402,7 @@ describe("connecting", () => {
       shift();
       await vi.waitFor(() => expect(lastCaret()).toBeNull());
     } finally {
-      Range.prototype.getClientRects = original;
+      restoreRects();
       delete (HTMLElement.prototype as { isContentEditable?: boolean }).isContentEditable;
       getSelection()!.removeAllRanges();
     }
