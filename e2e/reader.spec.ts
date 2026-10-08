@@ -1,4 +1,4 @@
-// The reader page (panels/reader): selecting and copying the page's text, a
+// The reader page (examples/sites/reader): selecting and copying the page's text, a
 // <select>'s list, editing a contenteditable box, and a video.
 
 import { expect, test } from "@playwright/test";

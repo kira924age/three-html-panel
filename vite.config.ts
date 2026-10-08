@@ -10,6 +10,7 @@ import {
 } from "vite-plus";
 import {
   AGENT_BUILD_FILE,
+  SITES_DIR,
   injectPanelAgent,
   originsFor,
   panelServerConfig,
@@ -76,13 +77,17 @@ function panelServer(): Plugin {
         await dev.listen();
         return dev;
       });
-      server.config.logger.info(`  panel pages: ${panels.resolvedUrls?.local[0] ?? "?"}panels/`);
+      server.config.logger.info(
+        `  panel pages: ${panels.resolvedUrls?.local[0] ?? "?"}${SITES_DIR}/`,
+      );
       closePanelServerWith(server, panels);
     },
     async configurePreviewServer(server) {
       // The build's panel pages, from the same dist/ but another origin.
       const panels = await replacePanelServer(() => preview(panelServerConfig(server.config.mode)));
-      server.config.logger.info(`  panel pages: ${panels.resolvedUrls?.local[0] ?? "?"}panels/`);
+      server.config.logger.info(
+        `  panel pages: ${panels.resolvedUrls?.local[0] ?? "?"}${SITES_DIR}/`,
+      );
       closePanelServerWith(server, panels);
     },
   };
@@ -132,9 +137,9 @@ export default defineConfig(({ mode }) => {
       rolldownOptions: {
         input: {
           main: resolve(import.meta.dirname, "index.html"),
-          notes: resolve(import.meta.dirname, "panels/notes/index.html"),
-          controls: resolve(import.meta.dirname, "panels/controls/index.html"),
-          reader: resolve(import.meta.dirname, "panels/reader/index.html"),
+          notes: resolve(import.meta.dirname, SITES_DIR, "notes/index.html"),
+          controls: resolve(import.meta.dirname, SITES_DIR, "controls/index.html"),
+          reader: resolve(import.meta.dirname, SITES_DIR, "reader/index.html"),
           agent: resolve(import.meta.dirname, "src/agent/entry.ts"),
         },
         output: {

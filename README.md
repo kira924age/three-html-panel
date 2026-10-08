@@ -145,6 +145,8 @@ vp check        # format, lint and types
 
 `E2E_NO_WEBGL=1 pnpm e2e` runs the end-to-end tests without WebGL, as headless Firefox on Linux does.
 
+The library is `src/` (the agent, which runs in panel pages, is `src/agent/`). The demo is in `examples/`: `examples/showcase/` is the 3D scene (`index.html` loads it), and `examples/sites/` holds the pages it shows as panels, served from the other origin. The end-to-end tests drive those pages in `e2e/harness/`, a scene with one flat panel.
+
 ## License
 
 MIT
