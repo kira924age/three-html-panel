@@ -26,6 +26,16 @@ beforeAll(() => {
 let input: InputSynthesizer;
 const doc = document as Document & { caretRangeFromPoint?: (x: number, y: number) => Range | null };
 
+/** Gives Range a getClientRects (jsdom has none) for a test; returns what undoes it. */
+function stubRangeRects(rects: () => DOMRectList): () => void {
+  const before = Object.getOwnPropertyDescriptor(Range.prototype, "getClientRects");
+  Range.prototype.getClientRects = rects;
+  return () => {
+    if (before) Object.defineProperty(Range.prototype, "getClientRects", before);
+    else delete (Range.prototype as { getClientRects?: unknown }).getClientRects;
+  };
+}
+
 beforeAll(() => {
   input = new InputSynthesizer(document, { measure: (run) => run(), onChange: () => {} });
 });
@@ -193,8 +203,9 @@ describe("the caret of text being composed in an editable", () => {
     // The block is 110 px wide at x = 0 (content 4..104); "hello" ends at x = 90.
     editor.getBoundingClientRect = () => new DOMRect(0, 0, 110, 40);
     Object.defineProperties(editor, { clientWidth: { value: 110 }, clientLeft: { value: 0 } });
-    const original = Range.prototype.getClientRects;
-    Range.prototype.getClientRects = () => [new DOMRect(82, 0, 8, 20)] as unknown as DOMRectList;
+    const restoreRects = stubRangeRects(
+      () => [new DOMRect(82, 0, 8, 20)] as unknown as DOMRectList,
+    );
     try {
       const end = { node: editor.firstChild!, offset: 5 };
       // jsdom has no canvas: each character measures 8 px.
@@ -203,7 +214,7 @@ describe("the caret of text being composed in an editable", () => {
       expect(caretAtPoint(end, "ab")).toMatchObject({ x: 12, y: 20 });
       expect(caretAtPoint(end, "abc")).toMatchObject({ x: 20, y: 20 });
     } finally {
-      Range.prototype.getClientRects = original;
+      restoreRects();
     }
   });
 });
@@ -463,8 +474,9 @@ describe("the caret, cut to what shows", () => {
   it("highlights selected text in an inline element whatever its overflow says", () => {
     document.body.innerHTML = `<p id="para"><a id="link" style="display: inline; overflow-x: hidden; overflow-y: hidden">linked text</a></p>`;
     box(document.querySelector("#link")!, 10, 10, 0, 0);
-    const original = Range.prototype.getClientRects;
-    Range.prototype.getClientRects = () => [new DOMRect(10, 10, 60, 18)] as unknown as DOMRectList;
+    const restoreRects = stubRangeRects(
+      () => [new DOMRect(10, 10, 60, 18)] as unknown as DOMRectList,
+    );
     try {
       const range = document.createRange();
       range.selectNodeContents(document.querySelector("#link")!);
@@ -472,7 +484,7 @@ describe("the caret, cut to what shows", () => {
         { left: 10, top: 10, width: 60, height: 18 },
       ]);
     } finally {
-      Range.prototype.getClientRects = original;
+      restoreRects();
     }
   });
 

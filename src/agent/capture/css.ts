@@ -146,15 +146,8 @@ export class DocumentCss {
   }
 
   private serializeRules(rules: CSSRuleList, out: string[]): void {
-    const {
-      CSSStyleRule,
-      CSSMediaRule,
-      CSSSupportsRule,
-      CSSImportRule,
-      CSSKeyframesRule,
-      CSS,
-      matchMedia,
-    } = this.window;
+    const { CSSStyleRule, CSSMediaRule, CSSSupportsRule, CSSImportRule, CSSKeyframesRule, CSS } =
+      this.window;
     for (const rule of Array.from(rules)) {
       if (rule instanceof CSSStyleRule) {
         // Nested rules (CSS nesting) are serialized with the parent; rewrite the whole text then.
@@ -164,12 +157,13 @@ export class DocumentCss {
             : `${rewriteSelector(rule.selectorText)}{${rule.style.cssText}}`,
         );
       } else if (rule instanceof CSSMediaRule) {
-        if (matchMedia(rule.conditionText).matches) this.serializeRules(rule.cssRules, out);
+        if (this.window.matchMedia(rule.conditionText).matches)
+          this.serializeRules(rule.cssRules, out);
       } else if (rule instanceof CSSSupportsRule) {
         if (CSS.supports(rule.conditionText)) this.serializeRules(rule.cssRules, out);
       } else if (rule instanceof CSSImportRule) {
         const sheet = rule.styleSheet;
-        if (sheet && matchMedia(rule.media.mediaText || "all").matches)
+        if (sheet && this.window.matchMedia(rule.media.mediaText || "all").matches)
           this.serializeSheet(sheet, out);
       } else if (rule instanceof CSSKeyframesRule) {
         // Animations are frozen, so keyframes are never used.

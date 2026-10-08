@@ -134,14 +134,22 @@ export class VirtualFocus {
     private readonly onChange: () => void,
   ) {
     this.window = document.defaultView as FrameWindow;
-    const self = this;
     const proto = this.window.HTMLElement.prototype;
+    // The browser's own blur, kept to call on elements that took real focus.
+    // oxlint-disable-next-line typescript/unbound-method -- called with .call on an element
     const realBlur = proto.blur;
+    // The page's elements call these with themselves as `this`: no arrow functions.
+    const focusElement = (element: HTMLElement) => {
+      if (this.isFocusable(element)) this.set(element);
+    };
+    const blurElement = (element: HTMLElement) => {
+      if (this.element === element) this.set(null);
+    };
     proto.focus = function (this: HTMLElement) {
-      if (self.isFocusable(this)) self.set(this);
+      focusElement(this);
     };
     proto.blur = function (this: HTMLElement) {
-      if (self.element === this) self.set(null);
+      blurElement(this);
     };
 
     // The agent should run before the page's scripts. If it was loaded later,
@@ -588,20 +596,26 @@ export class InputSynthesizer {
    * way keep receiving moves after the pointer leaves the element.
    */
   private patchPointerCapture(): void {
-    const self = this;
     const proto = this.window.Element.prototype;
+    // The browser's own, kept for the pointers it created: called with .call on an element.
+    // oxlint-disable-next-line typescript/unbound-method -- see above
     const { setPointerCapture, releasePointerCapture, hasPointerCapture } = proto;
+    const capturedBy = () => this.captureTarget;
+    const capture = (element: Element | null) => {
+      this.captureTarget = element;
+    };
+    // The page's elements call these with themselves as `this`: no arrow functions.
     proto.setPointerCapture = function (pointerId: number) {
       if (pointerId !== POINTER_ID) return setPointerCapture.call(this, pointerId);
-      self.captureTarget = this;
+      capture(this);
     };
     proto.releasePointerCapture = function (pointerId: number) {
       if (pointerId !== POINTER_ID) return releasePointerCapture.call(this, pointerId);
-      if (self.captureTarget === this) self.captureTarget = null;
+      if (capturedBy() === this) capture(null);
     };
     proto.hasPointerCapture = function (pointerId: number) {
       if (pointerId !== POINTER_ID) return hasPointerCapture.call(this, pointerId);
-      return self.captureTarget === this;
+      return capturedBy() === this;
     };
   }
 

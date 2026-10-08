@@ -30,6 +30,21 @@ const key = (key: string) =>
     metaKey: false,
   });
 
+describe("pointer capture of the synthetic pointer", () => {
+  it("is held by the element that took it, until it lets it go", () => {
+    const [field, button] = [document.querySelector("#name")!, document.querySelector("#go")!];
+    expect(button.hasPointerCapture(1)).toBe(false);
+    button.setPointerCapture(1);
+    expect(button.hasPointerCapture(1)).toBe(true);
+    expect(field.hasPointerCapture(1)).toBe(false);
+    // Another element letting go does not release it.
+    field.releasePointerCapture(1);
+    expect(button.hasPointerCapture(1)).toBe(true);
+    button.releasePointerCapture(1);
+    expect(button.hasPointerCapture(1)).toBe(false);
+  });
+});
+
 describe("virtual focus", () => {
   it("focus() from the page moves the virtual focus and dispatches focus events", () => {
     const field = document.querySelector<HTMLInputElement>("#name")!;
@@ -50,6 +65,14 @@ describe("virtual focus", () => {
     field.focus();
     key("Escape");
     expect(input.focused).toBeNull();
+  });
+
+  it("focus() on an element that cannot take focus leaves the focus where it is", () => {
+    document.body.insertAdjacentHTML("beforeend", `<div id="plain">text</div>`);
+    const field = document.querySelector<HTMLInputElement>("#name")!;
+    field.focus();
+    document.querySelector<HTMLElement>("#plain")!.focus();
+    expect(input.focused).toBe(field);
   });
 
   it("loses focus when the element is removed", () => {

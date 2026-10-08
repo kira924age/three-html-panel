@@ -18,6 +18,8 @@ export function emulateAnimationFrames(view: View, intervalMs = FRAME_INTERVAL_M
   const apply = Reflect.apply;
   const setTimer = view.setTimeout;
   const performance = view.performance;
+  // Called with Reflect.apply on performance below.
+  // oxlint-disable-next-line typescript/unbound-method -- see above
   const now = performance.now;
   const reportError = (error: unknown) =>
     apply(setTimer, view, [
