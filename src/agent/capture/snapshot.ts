@@ -623,6 +623,61 @@ function drawSelectPopup(root: HTMLElement, view: PopupView): void {
   root.appendChild(list);
 }
 
+const BACKGROUND_PROPERTIES = [
+  "background-color",
+  "background-image",
+  "background-repeat",
+  "background-position",
+  "background-size",
+  "background-origin",
+  "background-clip",
+  "background-attachment",
+];
+
+/**
+ * Browsers paint the root's background over the whole page, and the body's
+ * there instead when the root has none, not painting it on the body then (CSS
+ * Backgrounds 3, "The Canvas Background"). The copy is not a document's root
+ * inside the foreignObject, so a body's background would only cover the body:
+ * it is moved to the copy of the root, which fills the page, as browsers do.
+ */
+function propagateBodyBackground(
+  document: Document,
+  root: HTMLElement,
+  inlineImage: (url: string) => string | null,
+): void {
+  const view = document.defaultView;
+  const body = document.body;
+  if (!view || body?.tagName !== "BODY") return;
+  const rootStyle = view.getComputedStyle(document.documentElement);
+  if (!TRANSPARENT.test(rootStyle.backgroundColor) || rootStyle.backgroundImage !== "none") return;
+  const bodyStyle = view.getComputedStyle(body);
+  if (TRANSPARENT.test(bodyStyle.backgroundColor) && bodyStyle.backgroundImage === "none") return;
+  const bodyCopy = root.querySelector<HTMLElement>(":scope > body");
+  if (!bodyCopy) return;
+  for (const property of BACKGROUND_PROPERTIES) {
+    let value = bodyStyle.getPropertyValue(property);
+    // Images the copy can show: data URLs (one not loaded yet comes with a later frame).
+    if (property === "background-image") value = inlineBackgroundImages(value, inlineImage);
+    if (value) root.style.setProperty(property, value);
+  }
+  bodyCopy.style.setProperty("background", "none", "important");
+}
+
+/** A computed background-image with its URLs as data URLs; none while one is not loaded. */
+function inlineBackgroundImages(
+  value: string,
+  inlineImage: (url: string) => string | null,
+): string {
+  let missing = false;
+  const inlined = value.replace(/url\((["']?)(.*?)\1\)/g, (_match, _quote, url: string) => {
+    const dataUrl = inlineImage(url);
+    if (!dataUrl) missing = true;
+    return `url("${dataUrl ?? ""}")`;
+  });
+  return missing ? "none" : inlined;
+}
+
 /** Serializes the page as XHTML (an <html> element with the XHTML namespace). */
 export function snapshotDocument(document: Document, options: SnapshotOptions): string {
   const snapshotter = new Snapshotter(document, options);
@@ -630,6 +685,7 @@ export function snapshotDocument(document: Document, options: SnapshotOptions): 
   root.style.setProperty("width", `${document.documentElement.clientWidth}px`);
   root.style.setProperty("height", `${document.documentElement.clientHeight}px`);
   root.style.setProperty("overflow", "hidden");
+  propagateBodyBackground(document, root, options.inlineImage);
   // In the root, not <body>: a scrolled <body> is translated, which would move fixed boxes with it.
   // The highlight is drawn over the text, not under it: the page's color (often
   // opaque) is multiplied in, which keeps dark text on a light field readable.

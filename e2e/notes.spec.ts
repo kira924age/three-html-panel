@@ -247,3 +247,22 @@ test("stops the page's frames while the panel is out of view, and shows it as it
     .poll(() => page.evaluate(() => window.harness.frames), { timeout: 15_000 })
     .toBeGreaterThan(hidden);
 });
+
+test("paints a page's body background over the whole panel, as browsers do", async () => {
+  // A short page whose background is the body's (the root's is transparent).
+  await panel.frame.evaluate(() => {
+    document.body.innerHTML = "<p>short</p>";
+    document.documentElement.style.background = "transparent";
+    document.body.style.height = "auto";
+    document.body.style.background = "rgb(37, 99, 235)";
+  });
+  await panel.ifDrawn(() =>
+    expect
+      .poll(async () => {
+        // Far below the body's content: only a propagated background reaches here.
+        const [red, green, blue] = await panel.pixel(900, 600);
+        return red < 80 && green > 70 && green < 130 && blue > 200;
+      })
+      .toBe(true),
+  );
+});
