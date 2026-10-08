@@ -12,6 +12,7 @@ import {
 } from "vite-plus/test";
 import { PROTOCOL_VERSION } from "../protocol";
 import { parseOrigin, readHostOrigin, startAgent, type PanelAgent } from "./agent";
+import { PageCapture } from "./capture/page-capture";
 import { RenderPacer } from "./capture/pacer";
 import { onHostMessage, sendToHost } from "./page";
 
@@ -53,10 +54,10 @@ const start = (hostOrigin: string | null = HOST) =>
   (agent = startAgent({ hostOrigin, parent: parent as unknown as Window }));
 
 /** Delivers `connect` to the page's window, as if posted by `source` from `origin`. */
-function connect(origin = HOST, source: unknown = parent): MessagePort {
+function connect(origin = HOST, source: unknown = parent, optimizeHover?: boolean): MessagePort {
   channel = new MessageChannel();
   const event = new MessageEvent("message", {
-    data: { type: "connect", version: PROTOCOL_VERSION },
+    data: { type: "connect", version: PROTOCOL_VERSION, optimizeHover },
     origin,
   });
   Object.defineProperty(event, "source", { value: source });
@@ -654,4 +655,15 @@ describe("frames", () => {
     await vi.waitFor(() => expect(second).toHaveLength(1));
     expect(second[0]!.svg).toBe(first[0]!.svg);
   });
+});
+
+it("applies the host hover option before starting capture", () => {
+  const captureStart = vi.spyOn(PageCapture.prototype, "start");
+  try {
+    start();
+    connect(HOST, parent, false);
+    expect(captureStart).toHaveBeenCalledWith(false);
+  } finally {
+    captureStart.mockRestore();
+  }
 });

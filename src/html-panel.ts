@@ -74,6 +74,12 @@ export interface HtmlPanelOptions {
    * panel takes input without being rendered (no WebGL).
    */
   pauseWhenHidden?: boolean;
+  /**
+   * Skips captures for unpressed pointer moves when hover state is unchanged.
+   * Default true. Set false for pages that draw to canvas or change other
+   * non-DOM visual state in pointer handlers.
+   */
+  optimizeHover?: boolean;
 }
 
 const CARET_BLINK_MS = 530;
@@ -292,6 +298,7 @@ export class HtmlPanel
       width: pageWidth,
       height: pageHeight,
       readyTimeout: options.readyTimeout,
+      optimizeHover: options.optimizeHover,
       onConnect: () => {
         this.pressing = false;
         this.editables = [];

@@ -162,7 +162,8 @@ export class PageCapture {
    * Starts sending frames, or sends everything again: a frame and the editing
    * state, as if seen for the first time (after a new connection).
    */
-  start(): void {
+  start(optimizeHover = true): void {
+    this.input.optimizeHover = optimizeHover;
     this.started = true;
     // A new connection starts shown, at full pace; the host says so if not.
     this.hidden = false;
