@@ -95,6 +95,8 @@ If the page's agent does not connect within 15 seconds (`readyTimeout`), the pan
 
 A panel that has not been drawn facing the camera for a second (out of view, seen from behind, `visible = false`, out of the scene) tells its page to stop capturing: an animation or a video playing in it costs nothing meanwhile, and frames that come anyway are kept, not drawn. The first time it is drawn facing the camera again, the page is captured as it is then; until that frame comes, the panel shows what it showed before. This relies on the scene being rendered in a loop, as above. Where a panel takes input without ever being rendered (no WebGL), pass `pauseWhenHidden: false`.
 
+A panel drawn small (under a quarter of its page's size on screen, along its longer side, by every view that draws it for a quarter of a second: a minimap or a mirror drawing it small does not count while the main view draws it large) asks its page for a frame at most every 200 ms instead of as often as the page manages; drawn over 0.3 of its size by any view, for all of them again at once. A camera of a stereo pair (WebXR) is measured by its own viewport. Input to such a panel is answered at that pace too.
+
 ### Adding the agent to a page
 
 The page loads the agent **before its own scripts**, and names the host's origin. The agent posts nothing anywhere else; without a valid `data-host-origin` (an exact origin, not `*`) it does not start.

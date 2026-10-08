@@ -448,6 +448,69 @@ describe("frames", () => {
     }
   })
 
+  it("captures at most as often as the host's pace, and as before at pace 0", async () => {
+    const animation = {
+      effect: { target: document.body, pseudoElement: null, getKeyframes: () => [], getTiming: () => ({ iterations: Infinity }) },
+      playState: "running"
+    }
+    document.getAnimations = () => [animation as unknown as Animation]
+    const at: number[] = []
+    const captures = vi.spyOn(RenderPacer.prototype, "record").mockImplementation(function (this: RenderPacer) {
+      at.push(performance.now())
+      // As if each capture took no time: the pacer's own shortest interval.
+      return 16
+    })
+    const gaps = (from: number) => at.slice(from + 1).map((time, i) => time - at[from + i]!)
+    try {
+      start()
+      const host = connect()
+      await vi.waitFor(() => expect(at.length).toBeGreaterThan(3), { timeout: 3000 })
+      host.postMessage({ type: "pace", intervalMs: 150 })
+      await delivered()
+      const paced = at.length
+      await vi.waitFor(() => expect(at.length).toBeGreaterThan(paced + 3), { timeout: 3000 })
+      // The first gap may have started before the pace came.
+      expect(Math.min(...gaps(paced))).toBeGreaterThanOrEqual(145)
+      host.postMessage({ type: "pace", intervalMs: 0 })
+      await delivered()
+      const unpaced = at.length
+      await vi.waitFor(() => expect(at.length).toBeGreaterThan(unpaced + 3), { timeout: 3000 })
+      expect(Math.max(...gaps(unpaced + 1))).toBeLessThan(100)
+    } finally {
+      captures.mockRestore()
+      delete (document as { getAnimations?: unknown }).getAnimations
+    }
+  })
+
+  it("goes by a shorter pace at once, not after the longer one a capture was waiting for", async () => {
+    const animation = {
+      effect: { target: document.body, pseudoElement: null, getKeyframes: () => [], getTiming: () => ({ iterations: Infinity }) },
+      playState: "running"
+    }
+    document.getAnimations = () => [animation as unknown as Animation]
+    const at: number[] = []
+    const captures = vi.spyOn(RenderPacer.prototype, "record").mockImplementation(() => {
+      at.push(performance.now())
+      return 16
+    })
+    try {
+      start()
+      const host = connect()
+      host.postMessage({ type: "pace", intervalMs: 800 })
+      await delivered()
+      // A capture under the long pace: the next one waits 800 ms.
+      const seen = at.length
+      await vi.waitFor(() => expect(at.length).toBeGreaterThan(seen), { timeout: 3000 })
+      const sent = performance.now()
+      host.postMessage({ type: "pace", intervalMs: 0 })
+      await vi.waitFor(() => expect(at.length).toBeGreaterThan(seen + 1), { timeout: 3000 })
+      expect(at[seen + 1]! - sent).toBeLessThan(300)
+    } finally {
+      captures.mockRestore()
+      delete (document as { getAnimations?: unknown }).getAnimations
+    }
+  })
+
   it("sends the first frame of a new connection even when it looks like the last one sent", async () => {
     start()
     const first = framesOn(connect())

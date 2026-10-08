@@ -143,8 +143,20 @@ export interface VisibilityMessage {
   visible: boolean
 }
 
+/**
+ * At least this long between captures (0: as often as the page's own budget
+ * allows): the host shows the panel too small for every frame to matter.
+ */
+export interface PaceMessage {
+  type: "pace"
+  intervalMs: number
+}
+
+/** The longest pace the host may ask for, in milliseconds. */
+export const MAX_PACE_MS = 1000
+
 /** From the host to the page, through the port. */
-export type HostMessage = PanelInput | AppMessage | VisibilityMessage | { type: "ping" }
+export type HostMessage = PanelInput | AppMessage | VisibilityMessage | PaceMessage | { type: "ping" }
 
 type Fields = Record<string, unknown>
 
@@ -282,6 +294,11 @@ export function parseHostMessage(data: unknown): HostMessage | null {
       return { type: "ping" }
     case "visibility":
       return typeof data.visible === "boolean" ? { type: "visibility", visible: data.visible } : null
+    case "pace": {
+      const { intervalMs } = data
+      if (!isFiniteNumber(intervalMs) || intervalMs < 0 || intervalMs > MAX_PACE_MS) return null
+      return { type: "pace", intervalMs }
+    }
     case "app":
       return { type: "app", data: data.data }
     default:

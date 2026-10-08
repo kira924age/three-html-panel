@@ -95,6 +95,10 @@ export class PageCapture {
    * state, the editables and the cursor are still reported.
    */
   private hidden = false
+  /** At least this long between captures, as the host asked (it shows the panel small). */
+  private paceMs = 0
+  /** When the last capture ended. */
+  private renderedAt = 0
 
   constructor(
     private readonly document: Document,
@@ -126,8 +130,9 @@ export class PageCapture {
    */
   start(): void {
     this.started = true
-    // A new connection starts shown; the host says so if not.
+    // A new connection starts shown, at full pace; the host says so if not.
     this.hidden = false
+    this.paceMs = 0
     this.lastEditing = ""
     // The host waits for the new document's picture: send the next frame, whatever it looks like.
     this.lastSvg = ""
@@ -142,6 +147,17 @@ export class PageCapture {
     if (this.disposed || visible === !this.hidden) return
     this.hidden = !visible
     if (visible) this.invalidate()
+  }
+
+  /** At least `intervalMs` between captures from now on; a capture already waiting goes by the new pace. */
+  setPace(intervalMs: number): void {
+    if (this.disposed || intervalMs === this.paceMs) return
+    this.paceMs = intervalMs
+    this.notBefore = this.renderedAt + Math.max(this.pacer.interval, intervalMs)
+    if (!this.timer) return
+    clearTimeout(this.timer)
+    this.timer = 0
+    this.schedule()
   }
 
   handle(input: PanelInput): void {
@@ -216,7 +232,8 @@ export class PageCapture {
       this.reportEditables(width, height)
       this.reportCursor()
     } finally {
-      this.notBefore = performance.now() + this.pacer.record(performance.now() - started)
+      this.renderedAt = performance.now()
+      this.notBefore = this.renderedAt + Math.max(this.pacer.record(this.renderedAt - started), this.paceMs)
     }
     // Keep sampling while something is animating or a video plays, so the panel shows it moving.
     if (this.dirty || (!this.hidden && (this.hasLiveAnimations() || this.hasPlayingVideo()))) this.invalidate()
