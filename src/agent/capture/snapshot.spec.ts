@@ -498,3 +498,89 @@ describe("the page's background", () => {
     expect(root.style.backgroundImage).toBe('url("data:image/png;base64,AA")');
   });
 });
+
+describe("scrolled content", () => {
+  /** Scrolls these elements (jsdom has no layout, nor scrolling). */
+  function scroll(scrolled: Map<Element, { left?: number; top?: number }>): void {
+    Object.defineProperty(document, "scrollingElement", {
+      configurable: true,
+      get: () => document.documentElement,
+    });
+    vi.spyOn(Element.prototype, "scrollTop", "get").mockImplementation(function (this: Element) {
+      return scrolled.get(this)?.top ?? 0;
+    });
+    vi.spyOn(Element.prototype, "scrollLeft", "get").mockImplementation(function (this: Element) {
+      return scrolled.get(this)?.left ?? 0;
+    });
+  }
+
+  function snapshot(): Document {
+    const xhtml = snapshotDocument(document, {
+      hovered: new Set(),
+      active: new Set(),
+      focused: null,
+      inlineImage: () => null,
+    });
+    return new DOMParser().parseFromString(xhtml, "application/xhtml+xml");
+  }
+
+  afterEach(() => {
+    delete (document as { scrollingElement?: Element }).scrollingElement;
+    document.documentElement.removeAttribute("style");
+    document.body.removeAttribute("style");
+  });
+
+  it("moves a scrolled page's body by relative offsets, not a transform, which would carry its fixed elements away", () => {
+    document.body.innerHTML = `<header id="header" style="position: sticky; top: 0">Site</header><div id="bar" style="position: fixed; top: 0"></div>`;
+    scroll(new Map([[document.documentElement, { left: 20, top: 300 }]]));
+    const copy = snapshot();
+    const body = copy.querySelector("body")!;
+    expect(body.style.position).toBe("relative");
+    expect(body.style.top).toBe("-300px");
+    expect(body.style.left).toBe("-20px");
+    expect(body.style.getPropertyValue("translate")).toBe("");
+    // The browser places them (sticky ones from the layout, which has the offsets).
+    expect(copy.getElementById("header")!.getAttribute("style")).toBe("position: sticky; top: 0");
+    expect(copy.getElementById("bar")!.getAttribute("style")).toBe("position: fixed; top: 0");
+  });
+
+  it("adds the scroll to a relatively positioned body's own offset", () => {
+    document.body.style.position = "relative";
+    document.body.style.top = "10px";
+    scroll(new Map([[document.documentElement, { top: 300 }]]));
+    const body = snapshot().querySelector("body")!;
+    expect(body.style.top).toBe("-290px");
+    expect(body.style.left).toBe("0px");
+  });
+
+  it("moves a scroll container's children by how they are positioned, and a sticky one's insets the other way", () => {
+    document.body.innerHTML =
+      `<div id="box" style="overflow: auto">` +
+      `<table id="table"></table>` +
+      `<h3 id="heading" style="position: sticky; top: 4px"></h3>` +
+      `<div id="absolute" style="position: absolute"></div>` +
+      `<div id="fixed" style="position: fixed"></div>` +
+      `</div>`;
+    scroll(new Map([[document.querySelector("#box")!, { top: 50 }]]));
+    const copy = snapshot();
+    const style = (id: string) => copy.getElementById(id)!.style;
+    expect(style("table").position).toBe("relative");
+    expect(style("table").top).toBe("-50px");
+    // It sticks to the unscrolled box where it would to the scrolled one.
+    expect(style("heading").getPropertyValue("translate")).toBe("0px -50px");
+    // calc(4px + 50px), however it is serialized.
+    expect(style("heading").top).toMatch(/^calc\((4px \+ 50px|54px)\)$/);
+    expect(style("absolute").getPropertyValue("translate")).toBe("0px -50px");
+    // Not scrolled with the box.
+    expect(style("fixed").getPropertyValue("translate")).toBe("");
+    expect(style("fixed").top).toBe("");
+  });
+
+  it("leaves the body visible when its overflow is the viewport's, as browsers do", () => {
+    document.body.style.overflowX = "hidden";
+    expect(snapshot().querySelector("body")!.style.getPropertyValue("overflow")).toBe("visible");
+    // <html> has its own: the body's applies to the body.
+    document.documentElement.style.overflowX = "hidden";
+    expect(snapshot().querySelector("body")!.style.getPropertyValue("overflow")).toBe("");
+  });
+});

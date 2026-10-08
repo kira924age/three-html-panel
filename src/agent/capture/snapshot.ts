@@ -217,6 +217,8 @@ class Snapshotter {
   private readonly window: FrameWindow;
   private readonly animated: Map<Element, Map<string, string | null>>;
   private readonly focusWithin = new Set<Element>();
+  /** The page's element each copy is of. */
+  private readonly liveOf = new WeakMap<Element, Element>();
   /** Scrollbars to draw over the copy. */
   readonly scrollbars: Scrollbar[] = [];
 
@@ -240,10 +242,12 @@ class Snapshotter {
     const element = live as Element;
     if (SKIPPED_ELEMENTS.has(element.tagName) || this.options.ignored?.has(element)) return null;
 
-    if (element instanceof this.window.HTMLCanvasElement) return this.copyCanvas(element);
-    if (element instanceof this.window.HTMLVideoElement) return this.copyVideo(element);
+    if (element instanceof this.window.HTMLCanvasElement)
+      return this.remember(element, this.copyCanvas(element));
+    if (element instanceof this.window.HTMLVideoElement)
+      return this.remember(element, this.copyVideo(element));
 
-    const copy = this.inert.importNode(element, false) as Element;
+    const copy = this.remember(element, this.inert.importNode(element, false) as Element);
     this.copyFormState(element, copy);
     this.copyImage(element, copy);
     this.copyInteractionState(element, copy);
@@ -264,6 +268,11 @@ class Snapshotter {
     if (composedAt === children.length) copy.appendChild(this.composedSpan(composition!.text));
     this.copyScroll(element, copy);
     this.hideScrollbars(element, copy);
+    return copy;
+  }
+
+  private remember<T extends Node | null>(live: Element, copy: T): T {
+    if (copy instanceof Element) this.liveOf.set(copy, live);
     return copy;
   }
 
@@ -448,18 +457,67 @@ class Snapshotter {
       this.copyListBoxScroll(element, copy);
       return;
     }
-    if (isBody && copy instanceof HTMLElement) {
-      copy.style.setProperty("translate", `${-scrollLeft}px ${-scrollTop}px`);
+    if (isBody) {
+      if (copy instanceof HTMLElement) this.shift(element, copy, scrollLeft, scrollTop);
       return;
     }
     // foreignObject renders every scroll container at its origin. Shift the
-    // children instead. The individual `translate` property composes with any
-    // `transform` the child already has. Bare text directly inside a scroll
-    // container does not move (a known limitation).
+    // children instead. Bare text directly inside a scroll container does not
+    // move (a known limitation).
     for (const child of Array.from(copy.children)) {
-      if (child instanceof HTMLElement || child instanceof SVGElement) {
-        child.style.setProperty("translate", `${-scrollLeft}px ${-scrollTop}px`);
-      }
+      if (!(child instanceof HTMLElement || child instanceof SVGElement)) continue;
+      const live = this.liveOf.get(child);
+      if (live) this.shift(live, child, scrollLeft, scrollTop);
+      // Composed text the agent added: in the flow, as text.
+      else child.style.setProperty("translate", `${-scrollLeft}px ${-scrollTop}px`);
+    }
+  }
+
+  /**
+   * Moves the copy of something scrolled up and left by the scroll, by how it
+   * is positioned on the page.
+   *
+   * In the flow (or relatively positioned), it is positioned relatively, not
+   * translated: a transform would make it the containing block of the fixed
+   * elements in it, which would then scroll away with it. And browsers place
+   * sticky elements from where the boxes are laid out, which takes relative
+   * offsets into account but not transforms: moved this way, the copy's sticky
+   * elements stick where the page's do, as if it were scrolled.
+   *
+   * A sticky element itself cannot be moved by an offset, which its insets are
+   * for: it is translated, and its insets moved by the scroll the other way, so
+   * that it sticks (to its unscrolled container) where it would scrolled.
+   * A fixed one does not scroll with its container, and is left in place;
+   * anything else positioned (absolutely) is translated, as it was.
+   */
+  private shift(live: Element, copy: HTMLElement | SVGElement, x: number, y: number): void {
+    const style = this.window.getComputedStyle(live);
+    const position = style.position;
+    if (position === "fixed" && live !== this.document.body) return;
+    if (position === "static" || position === "relative") {
+      // Relative offsets as laid out (a used `top` in px, whatever was specified).
+      const top = position === "relative" ? parseFloat(style.top) || 0 : 0;
+      const left = position === "relative" ? parseFloat(style.left) || 0 : 0;
+      copy.style.setProperty("position", "relative", "important");
+      copy.style.setProperty("top", `${top - y}px`, "important");
+      copy.style.setProperty("left", `${left - x}px`, "important");
+      copy.style.setProperty("bottom", "auto", "important");
+      copy.style.setProperty("right", "auto", "important");
+      return;
+    }
+    // The individual `translate` property composes with any `transform` it already has.
+    copy.style.setProperty("translate", `${-x}px ${-y}px`);
+    if (position !== "sticky") return;
+    const insets = [
+      ["top", y],
+      ["bottom", -y],
+      ["left", x],
+      ["right", -x],
+    ] as const;
+    for (const [side, by] of insets) {
+      const inset = style.getPropertyValue(side);
+      if (inset && inset !== "auto" && by !== 0)
+        copy.style.setProperty(side, `calc(${inset} + ${by}px)`, "important");
     }
   }
 
@@ -664,6 +722,25 @@ function propagateBodyBackground(
   bodyCopy.style.setProperty("background", "none", "important");
 }
 
+/**
+ * Browsers apply the body's overflow to the viewport, not to the body, when
+ * the root leaves its own visible. The copy of the body would clip what it has
+ * to its box, and be the box its sticky elements stick in (not the viewport,
+ * the copy of the root): it is left visible, the copy of the root clipping.
+ */
+function propagateBodyOverflow(document: Document, root: HTMLElement): void {
+  const view = document.defaultView;
+  const body = document.body;
+  if (!view || body?.tagName !== "BODY") return;
+  const rootStyle = view.getComputedStyle(document.documentElement);
+  if (rootStyle.overflowX !== "visible" || rootStyle.overflowY !== "visible") return;
+  const bodyStyle = view.getComputedStyle(body);
+  if (bodyStyle.overflowX === "visible" && bodyStyle.overflowY === "visible") return;
+  root
+    .querySelector<HTMLElement>(":scope > body")
+    ?.style.setProperty("overflow", "visible", "important");
+}
+
 /** A computed background-image with its URLs as data URLs; none while one is not loaded. */
 function inlineBackgroundImages(
   value: string,
@@ -686,7 +763,8 @@ export function snapshotDocument(document: Document, options: SnapshotOptions): 
   root.style.setProperty("height", `${document.documentElement.clientHeight}px`);
   root.style.setProperty("overflow", "hidden");
   propagateBodyBackground(document, root, options.inlineImage);
-  // In the root, not <body>: a scrolled <body> is translated, which would move fixed boxes with it.
+  propagateBodyOverflow(document, root);
+  // In the root, not <body>: a scrolled <body> is moved (or translated), which could move fixed boxes with it.
   // The highlight is drawn over the text, not under it: the page's color (often
   // opaque) is multiplied in, which keeps dark text on a light field readable.
   const pageColor =
