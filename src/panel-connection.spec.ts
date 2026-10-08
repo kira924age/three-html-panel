@@ -180,7 +180,10 @@ describe("port messages", () => {
     port.postMessage({ type: "app", data: { hello: 1 } })
     port.postMessage({ type: "nonsense" })
     port.postMessage(frame(3))
-    await delivered()
+    // Messages arrive in order: once this last one is in, so is everything before it.
+    // (A fixed wait is too short when the whole suite runs at once.)
+    port.postMessage({ type: "app", data: "last" })
+    await vi.waitFor(() => expect(options.onMessage).toHaveBeenLastCalledWith("last"))
 
     expect(options.onFrame.mock.calls.map(([f]) => f)).toEqual([
       { svg: "<svg/>", width: 800, height: 600 },
@@ -189,7 +192,7 @@ describe("port messages", () => {
     expect(options.onEditing.mock.calls).toEqual([[true, { x: 1, y: 2, height: 16, color: "red" }, "", 0]])
     expect(options.onCursor.mock.calls).toEqual([["pointer"]])
     expect(options.onOpen.mock.calls).toEqual([["https://example.com/page"]])
-    expect(options.onMessage.mock.calls).toEqual([[{ hello: 1 }]])
+    expect(options.onMessage.mock.calls).toEqual([[{ hello: 1 }], ["last"]])
   })
 
   it("closes the previous port when a new document's agent says ready", async () => {
