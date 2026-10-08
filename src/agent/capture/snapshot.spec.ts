@@ -148,6 +148,75 @@ describe("what the browser draws outside the page", () => {
     expect(copy.getElementById("other")!.hasAttribute("src")).toBe(false)
   })
 
+  it("encodes a video's frame again only when it changed (a paused video is not encoded on every frame)", () => {
+    document.body.innerHTML = `<video id="clip"></video>`
+    const video = document.querySelector<HTMLVideoElement>("#clip")!
+    video.getBoundingClientRect = () => new DOMRect(0, 0, 320, 180)
+    let time = 1.5
+    Object.defineProperties(video, {
+      readyState: { value: 4 },
+      videoWidth: { value: 640 },
+      videoHeight: { value: 360 },
+      currentTime: { get: () => time }
+    })
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({ drawImage: () => {} } as unknown as CanvasRenderingContext2D)
+    const encode = vi.spyOn(HTMLCanvasElement.prototype, "toDataURL").mockReturnValue("data:image/jpeg;base64,FRAME")
+    snapshot()
+    snapshot()
+    expect(encode).toHaveBeenCalledTimes(1)
+    expect(snapshot().getElementById("clip")!.getAttribute("src")).toBe("data:image/jpeg;base64,FRAME")
+    // It played on: another frame.
+    time = 1.6
+    snapshot()
+    expect(encode).toHaveBeenCalledTimes(2)
+    // Shown smaller on the page: drawn again at the new size (twice its width, 200 px).
+    video.getBoundingClientRect = () => new DOMRect(0, 0, 100, 56)
+    snapshot()
+    expect(encode).toHaveBeenCalledTimes(3)
+  })
+
+  it("encodes the frame of another clip or stream at the same time and size (a page swapping src or srcObject)", () => {
+    document.body.innerHTML = `<video id="clip"></video>`
+    const video = document.querySelector<HTMLVideoElement>("#clip")!
+    let source = "https://example.com/a.mp4"
+    let stream: object | null = null
+    Object.defineProperties(video, {
+      readyState: { value: 4 },
+      videoWidth: { value: 640 },
+      videoHeight: { value: 360 },
+      currentTime: { value: 0 },
+      currentSrc: { get: () => source },
+      srcObject: { get: () => stream }
+    })
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({ drawImage: () => {} } as unknown as CanvasRenderingContext2D)
+    const encode = vi.spyOn(HTMLCanvasElement.prototype, "toDataURL").mockReturnValue("data:image/jpeg;base64,FRAME")
+    snapshot()
+    source = "https://example.com/b.mp4"
+    snapshot()
+    expect(encode).toHaveBeenCalledTimes(2)
+    // A stream, then another one (two cameras).
+    stream = {}
+    snapshot()
+    stream = {}
+    snapshot()
+    expect(encode).toHaveBeenCalledTimes(4)
+    snapshot()
+    expect(encode).toHaveBeenCalledTimes(4)
+  })
+
+  it("does not try again on every frame to read a video it could not read", () => {
+    document.body.innerHTML = `<video id="clip"></video>`
+    const video = document.querySelector<HTMLVideoElement>("#clip")!
+    Object.defineProperties(video, { readyState: { value: 4 }, videoWidth: { value: 640 }, videoHeight: { value: 360 } })
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({ drawImage: () => {} } as unknown as CanvasRenderingContext2D)
+    const encode = vi.spyOn(HTMLCanvasElement.prototype, "toDataURL").mockImplementation(() => {
+      throw new DOMException("tainted", "SecurityError")
+    })
+    snapshot()
+    snapshot()
+    expect(encode).toHaveBeenCalledTimes(1)
+  })
+
   it("leaves out a frame that cannot be read (a video from another origin)", () => {
     document.body.innerHTML = `<video id="clip"></video>`
     const video = document.querySelector<HTMLVideoElement>("#clip")!
