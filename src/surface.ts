@@ -44,12 +44,19 @@ export class Surface {
    * plane of the triangle nearest the ray, with its UVs carried on. This keeps
    * a drag going when the pointer leaves the panel. Null if the ray runs
    * parallel to that plane or points away from it.
+   *
+   * Only triangles whose front faces the ray count as nearest, if any does: on
+   * a closed shape (a box), the face next to the one dragged off is often
+   * nearer the ray, but seen edge on or from behind, and its UVs (another part
+   * of the page) would make the drag jump.
    */
   uvFromRay(ray: Ray): Vector2 | null {
     let nearest = Infinity
     let hit = -1
     let closest = Infinity
     let near = -1
+    let closestFacing = Infinity
+    let nearFacing = -1
     this.eachTriangle(index => {
       this.loadPositions(index)
       const point = ray.intersectTriangle(this.a, this.b, this.c, false, this.point)
@@ -67,8 +74,13 @@ export class Surface {
         closest = distance
         near = index
       }
+      const facing = Triangle.getNormal(this.a, this.b, this.c, this.point).dot(ray.direction) < 0
+      if (facing && distance < closestFacing) {
+        closestFacing = distance
+        nearFacing = index
+      }
     })
-    const index = hit >= 0 ? hit : near
+    const index = hit >= 0 ? hit : nearFacing >= 0 ? nearFacing : near
     if (index < 0) return null
     this.loadPositions(index)
     if (hit >= 0) {

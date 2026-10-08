@@ -71,6 +71,17 @@ describe("Surface", () => {
     })
   })
 
+  it("on a box, carries a drag past an edge on from the face the ray sees, not the one next to it", () => {
+    const surface = new Surface(new BoxGeometry(1, 1, 1))
+    const eye = new Vector3(0, 0, 2)
+    // Across the front face's right edge, past the box: the right face is nearer the ray, but seen from behind.
+    const inside = surface.uvFromRay(towards(eye, new Vector3(0.45, 0.2, 0.5)))!
+    const past = surface.uvFromRay(towards(eye, new Vector3(0.55, 0.2, 0.5)))!
+    expect(inside.x).toBeCloseTo(0.95)
+    expect(past.x).toBeCloseTo(1.05)
+    expect(past.y).toBeCloseTo(0.7)
+  })
+
   it("on a box, finds the UV on every face and the nearest hit", () => {
     const surface = new Surface(new BoxGeometry(1, 1, 1))
     const normals = surface.pointsAt(new Vector2(0.5, 0.5)).map(point => point.normal)
