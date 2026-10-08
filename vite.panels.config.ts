@@ -8,7 +8,7 @@ import { posix } from "node:path";
 import { defineConfig, loadEnv, type InlineConfig, type Plugin } from "vite";
 
 /** The same sandbox as the demo's iframes (PANEL_SANDBOX in src/html-panel.ts). */
-const PANEL_SANDBOX_CSP = "sandbox allow-scripts allow-forms allow-popups";
+export const PANEL_SANDBOX_CSP = "sandbox allow-scripts allow-forms allow-popups";
 
 export const AGENT_SOURCE = "/src/agent/entry.ts";
 

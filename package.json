@@ -53,7 +53,9 @@
     "test": "vp test run",
     "e2e": "playwright test",
     "pack:lib": "vp pack",
-    "prepublishOnly": "vp check && vp test run && vp pack"
+    "prepublishOnly": "vp check && vp test run && vp pack",
+    "dev:sites": "pnpm --parallel --filter \"./examples/sites/*\" dev",
+    "build:sites": "pnpm --filter \"./examples/sites/*\" build"
   },
   "devDependencies": {
     "@playwright/test": "1.63.0",
