@@ -24,6 +24,8 @@ The page runs in an `<iframe>` and loads a small script, the **agent**. The agen
 npm install three-html-panel three
 ```
 
+three r158 or later (with `@types/three` 0.158 or later for TypeScript).
+
 ## Usage
 
 ```ts

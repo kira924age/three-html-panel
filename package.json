@@ -67,7 +67,7 @@
     "vite-plus": "catalog:"
   },
   "peerDependencies": {
-    "three": ">=0.186.0"
+    "three": ">=0.158.0"
   },
   "engines": {
     "node": ">=24"
