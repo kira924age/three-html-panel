@@ -451,3 +451,50 @@ describe("selections in the image", () => {
     expect(copy.querySelector("#b")!.getAttribute("style")).toContain("translate: 0 -5px");
   });
 });
+
+describe("the page's background", () => {
+  /** The copies of <html> and <body>, from a snapshot with these images loaded. */
+  function snapshotRoot(images: Record<string, string> = {}): {
+    root: HTMLElement;
+    body: HTMLElement;
+  } {
+    const xhtml = snapshotDocument(document, {
+      hovered: new Set(),
+      active: new Set(),
+      focused: null,
+      inlineImage: (url) => images[url] ?? null,
+    });
+    const root = new DOMParser().parseFromString(xhtml, "application/xhtml+xml").documentElement;
+    return { root, body: root.querySelector("body")! };
+  }
+
+  afterEach(() => {
+    document.documentElement.removeAttribute("style");
+    document.body.removeAttribute("style");
+  });
+
+  it("paints a body's background over the whole page, as browsers do, and not on the body", () => {
+    document.body.style.backgroundColor = "rgb(37, 99, 235)";
+    const { root, body } = snapshotRoot();
+    expect(root.style.backgroundColor).toBe("rgb(37, 99, 235)");
+    expect(body.style.getPropertyValue("background-color")).toBe("transparent");
+    expect(body.style.getPropertyPriority("background-color")).toBe("important");
+  });
+
+  it("leaves the body's background on the body when the root has one", () => {
+    document.documentElement.style.backgroundColor = "rgb(255, 255, 255)";
+    document.body.style.backgroundColor = "rgb(37, 99, 235)";
+    const { root, body } = snapshotRoot();
+    // Each keeps its own (here, the page's style attributes, copied).
+    expect(root.style.backgroundColor).toBe("rgb(255, 255, 255)");
+    expect(body.style.backgroundColor).toBe("rgb(37, 99, 235)");
+    expect(body.style.getPropertyPriority("background-color")).toBe("");
+  });
+
+  it("moves a body's background image as a data URL, and none while it is not loaded", () => {
+    document.body.style.backgroundImage = 'url("https://example.test/paper.png")';
+    expect(snapshotRoot().root.style.backgroundImage).toBe("none");
+    const { root } = snapshotRoot({ "https://example.test/paper.png": "data:image/png;base64,AA" });
+    expect(root.style.backgroundImage).toBe('url("data:image/png;base64,AA")');
+  });
+});
