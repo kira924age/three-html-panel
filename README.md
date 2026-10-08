@@ -66,7 +66,7 @@ The ports come from `.env.development`. The demo shows three pages, all with `sa
 
 `pnpm build` then `pnpm preview` serves the build the same way: the scene on http://localhost:4173, the panel pages on http://localhost:4174 (`.env.production`).
 
-Tested in desktop Chrome. The basic flow (hover, adding a note, typing Japanese, the caret) and the reader page (selecting text, the lists, editing, the video) were also run in Playwright's Firefox and WebKit builds, headless; see Limitations for WebKit. Touch and VR input were checked in emulation only.
+Tested in desktop Chrome. On every pull request, `pnpm e2e` drives the notes and reader pages in Playwright's Chromium, Firefox and WebKit builds (headless): typing, dragging a note, selecting and copying text, the lists, editing, the caret, a video, and Japanese input (Chromium only). The pages run in a host page with one flat panel (`e2e/harness/`). It starts the dev servers itself, or uses those of a running `pnpm dev`; install the browsers once with `pnpm exec playwright install`. See Limitations for WebKit. Touch and VR input were checked in emulation only.
 
 ## Use
 
@@ -204,6 +204,7 @@ Paths are under `src/`; the agent's are under `src/agent/`.
 ```bash
 pnpm dev        # demo: scene on :5173, panel pages on :5174
 pnpm test       # unit tests (Vitest, jsdom)
+pnpm e2e        # end-to-end tests: the panel pages in Chromium, Firefox and WebKit (Playwright)
 pnpm typecheck
 pnpm build
 ```
