@@ -348,3 +348,20 @@ describe("timeout", () => {
     expect(options.onError).toHaveBeenCalledTimes(1);
   });
 });
+
+it("sends the hover opt-out on every connection", () => {
+  connection.dispose();
+  connection = new PanelConnection({
+    iframe,
+    origin: ORIGIN,
+    width: 800,
+    height: 600,
+    ...options,
+    optimizeHover: false,
+  });
+  ready();
+  ready();
+  expect(postToFrame).toHaveBeenCalledTimes(2);
+  for (const [message] of postToFrame.mock.calls)
+    expect(message).toMatchObject({ type: "connect", optimizeHover: false });
+});

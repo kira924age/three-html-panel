@@ -44,6 +44,7 @@ export interface PanelConnectionOptions {
   width: number;
   height: number;
   readyTimeout?: number;
+  optimizeHover?: boolean;
   /** A new document's agent connected. Whatever the previous one reported is stale. */
   onConnect: () => void;
   onFrame: (frame: Frame) => void;
@@ -125,6 +126,8 @@ export class PanelConnection {
     this.port = channel.port1;
     channel.port1.onmessage = this.onPortMessage;
     const message: ConnectMessage = { type: "connect", version: PROTOCOL_VERSION };
+    if (this.options.optimizeHover !== undefined)
+      message.optimizeHover = this.options.optimizeHover;
     // An opaque origin cannot be named; "*" still only reaches this iframe's document.
     target.postMessage(message, this.options.sandboxed ? "*" : this.options.origin, [
       channel.port2,

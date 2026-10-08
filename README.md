@@ -56,6 +56,7 @@ For VR, add a `PanelXRPointer` (call its `update()` every frame) and give it a `
 | `pixelRatio`      | 2 (1 on phones)   | Texture pixels per CSS pixel, at most                         |
 | `background`      | `#ffffff`         | Painted under transparent pages                               |
 | `pauseWhenHidden` | `true`            | Stop capturing while the panel is not drawn (see Performance) |
+| `optimizeHover`   | `true`            | Skip captures for unchanged hover (see Performance)           |
 | `readyTimeout`    | 15000             | ms to wait for the agent before `onError`                     |
 | `onLink`          | open in a new tab | A link the user followed in the page                          |
 | `onMessage`       |                   | Data the page sent with `sendToHost()`                        |
@@ -112,6 +113,8 @@ Serve sandboxed pages with `Content-Security-Policy: sandbox allow-scripts allow
 - Only what changed is sent: the agent captures on DOM changes, input and animation, and skips frames that look the same.
 - A panel not drawn facing the camera for a second (out of view, behind, hidden) stops capturing; a panel drawn small captures at most 5 times a second.
 - The texture's resolution follows how large the panel is drawn, down to a quarter of `pixelRatio`.
+
+`optimizeHover: true` skips captures when an unpressed pointer moves within the same element without changing hover or scrollbar state. Pointer events still fire, and DOM mutations still trigger captures. Set `optimizeHover: false` for pages that draw to canvas, change CSSOM rules, or update other visual state without DOM mutations in pointer handlers. This restores capture invalidation on every pointer move, including after reloads and navigation.
 
 These rely on the scene being rendered every frame. Without WebGL (a panel that takes input but is never drawn), pass `pauseWhenHidden: false`.
 

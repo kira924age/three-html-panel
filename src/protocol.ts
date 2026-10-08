@@ -70,6 +70,8 @@ export interface ReadyMessage {
 export interface ConnectMessage {
   type: "connect";
   version: number;
+  /** Suppress unchanged hover captures. Omitted means true. */
+  optimizeHover?: boolean;
 }
 
 /** A snapshot of the page. `seq` grows with every frame of one connection. */
@@ -189,7 +191,12 @@ export function parseReady(data: unknown): ReadyMessage | null {
 export function parseConnect(data: unknown): ConnectMessage | null {
   if (!isObject(data) || data.type !== "connect" || !Number.isSafeInteger(data.version))
     return null;
-  return { type: "connect", version: data.version as number };
+  if (data.optimizeHover !== undefined && typeof data.optimizeHover !== "boolean") return null;
+  return {
+    type: "connect",
+    version: data.version as number,
+    ...(data.optimizeHover === undefined ? {} : { optimizeHover: data.optimizeHover }),
+  };
 }
 
 export function parseCaret(value: unknown): Caret | null | undefined {

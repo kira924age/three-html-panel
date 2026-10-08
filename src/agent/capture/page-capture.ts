@@ -162,7 +162,8 @@ export class PageCapture {
    * Starts sending frames, or sends everything again: a frame and the editing
    * state, as if seen for the first time (after a new connection).
    */
-  start(): void {
+  start(optimizeHover = true): void {
+    this.input.optimizeHover = optimizeHover;
     this.started = true;
     // A new connection starts shown, at full pace; the host says so if not.
     this.hidden = false;
@@ -197,6 +198,9 @@ export class PageCapture {
   handle(input: PanelInput): void {
     if (this.disposed) return;
     this.input.handle(input);
+    // Cursor hit testing depends on pointer coordinates, even when an
+    // unchanged hover skips capture. Keep its notification independent.
+    if (this.started && input.type === "pointer") this.reportCursor();
     if (input.type !== "pointer" || (input.kind !== "down" && input.kind !== "up")) return;
     this.pointers++;
     // The host waits for the page's answer to a tap (did it focus a text field?).

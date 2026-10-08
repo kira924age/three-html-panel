@@ -3,6 +3,7 @@ import {
   MAX_PAGE_LENGTH,
   MAX_SVG_LENGTH,
   parseHostMessage,
+  parseConnect,
   parseOpenableUrl,
   parsePageMessage,
   parseReady,
@@ -351,4 +352,16 @@ describe("parseHostMessage", () => {
     expect(parseHostMessage({ type: "composition", text: "にほ", cursor: -1 })).toBeNull();
     expect(parseHostMessage({ type: "composition", text: 1, cursor: 0 })).toBeNull();
   });
+});
+
+it("validates the optional hover optimization in connect messages", () => {
+  for (const optimizeHover of [true, false])
+    expect(parseConnect({ type: "connect", version: 1, optimizeHover })).toEqual({
+      type: "connect",
+      version: 1,
+      optimizeHover,
+    });
+  for (const optimizeHover of [null, 0, "false", {}])
+    expect(parseConnect({ type: "connect", version: 1, optimizeHover })).toBeNull();
+  expect(parseConnect({ type: "connect", version: 1 })).toEqual({ type: "connect", version: 1 });
 });

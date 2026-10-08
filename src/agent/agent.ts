@@ -112,7 +112,7 @@ export class PanelAgent {
     this.closePort();
     this.port = port;
     port.onmessage = this.onPortMessage;
-    this.capture.start();
+    this.capture.start(connect.optimizeHover);
   };
 
   private readonly onPortMessage = (event: MessageEvent) => {

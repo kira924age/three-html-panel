@@ -367,7 +367,20 @@ export class InputSynthesizer {
     );
   }
 
+  /** Preserve unconditional pointer-move captures when the host opts out. */
+  optimizeHover = true;
+
   handle(input: PanelInput): void {
+    const quietMove =
+      this.optimizeHover &&
+      input.type === "pointer" &&
+      input.kind === "move" &&
+      !this.press &&
+      !this.popup &&
+      !this.scrollbarPress &&
+      !this.captureTarget;
+    const previousHover = this.hoverTarget;
+    const previousScrollbar = this.hoveredScrollbar;
     switch (input.type) {
       case "pointer":
         if (input.kind !== "leave") {
@@ -438,7 +451,17 @@ export class InputSynthesizer {
     // The list closes when its <select> loses focus (or leaves the page).
     if (this.popup && (this.focused !== this.popup.select || !this.popup.select.isConnected))
       this.popup = null;
-    this.options.onChange();
+    // Always dispatch the page's events. DOM mutations and capture's event
+    // listeners still invalidate; only skip this blanket notification when
+    // the pointer stayed over the same element and scrollbar. Canvas/CSSOM
+    // changes are not observable here: such pages can disable optimizeHover.
+    if (
+      !quietMove ||
+      previousHover !== this.hoverTarget ||
+      previousScrollbar?.element !== this.hoveredScrollbar?.element ||
+      previousScrollbar?.axis !== this.hoveredScrollbar?.axis
+    )
+      this.options.onChange();
   }
 
   /** The focused element, if any. */
