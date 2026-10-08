@@ -130,8 +130,19 @@ describe("connecting", () => {
     document.querySelector<HTMLButtonElement>("#go")!.focus()
     host.postMessage({ type: "key", key: "Shift", shiftKey: true, ctrlKey: false, altKey: false, metaKey: false })
     await vi.waitFor(() =>
-      expect(received.filter(message => message.type === "editing").at(-1)).toMatchObject({ editing: true, caret: null })
+      expect(received.filter(message => message.type === "editing").at(-1)).toMatchObject({ editing: true, caret: null, typing: false })
     )
+  })
+
+  it("tells the host when the focused element takes text (for an on-screen keyboard)", async () => {
+    document.body.innerHTML = `<input id="name">`
+    start()
+    const host = connect()
+    const received: { type: string; typing?: boolean }[] = []
+    host.onmessage = event => received.push(event.data)
+    document.querySelector<HTMLInputElement>("#name")!.focus()
+    host.postMessage({ type: "key", key: "Shift", shiftKey: true, ctrlKey: false, altKey: false, metaKey: false })
+    await vi.waitFor(() => expect(received.filter(message => message.type === "editing").at(-1)).toMatchObject({ typing: true }))
   })
 
   it("answers every tap: an editing report, counting the pointer inputs handled, follows each release", async () => {

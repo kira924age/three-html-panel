@@ -94,6 +94,14 @@ export function wordAround(point: Point): [Point, Point] {
   ]
 }
 
+/** The nearest element that is not inline (the block whose lines an element's text is laid out in). */
+function blockOf(element: Element): Element {
+  const window = windowOf(element)
+  let block = element
+  while (block.parentElement && /^(inline|contents)/.test(window.getComputedStyle(block).display)) block = block.parentElement
+  return block
+}
+
 /** The block (paragraph, list item...) a text position is in, as two positions spanning its content. */
 export function blockAround(point: Point): [Point, Point] {
   const window = windowOf(point.node)
@@ -214,7 +222,7 @@ export function clipCaret<T extends { x: number; y: number; height: number }>(ca
   return { ...caret, y: top, height: bottom - top }
 }
 
-function intersect(a: Box, b: Box): Box {
+export function intersect(a: Box, b: Box): Box {
   const left = Math.max(a.left, b.left)
   const top = Math.max(a.top, b.top)
   const right = Math.min(a.left + a.width, b.left + b.width)
@@ -352,7 +360,9 @@ export function textWidth(document: Document, font: string, text: string): numbe
 /**
  * Where the caret of a collapsed selection in an editable is (CSS px of the
  * viewport). `extra` is text that is not in the page yet but shows before the
- * caret (being composed with an IME).
+ * caret (being composed with an IME): it is laid out from the caret, a
+ * character at a time, wrapping at the end of the line of its block, as
+ * Japanese text does (it may break between any two characters).
  */
 export function caretAtPoint(point: Point, extra = ""): { x: number; y: number; height: number } | null {
   const document = point.node.ownerDocument
@@ -410,6 +420,22 @@ export function caretAtPoint(point: Point, extra = ""): { x: number; y: number; 
     }
   }
   if (!(height > 0) || height > lineHeight * 2) height = lineHeight
-  if (extra) x += textWidth(document, fontOf(container), extra)
+  if (extra) {
+    const block = blockOf(container)
+    const blockStyle = windowOf(block).getComputedStyle(block)
+    const box = block.getBoundingClientRect()
+    const lineLeft = box.left + block.clientLeft + (parseFloat(blockStyle.paddingLeft) || 0)
+    const lineRight = box.left + block.clientLeft + block.clientWidth - (parseFloat(blockStyle.paddingRight) || 0)
+    const font = fontOf(container)
+    for (const character of extra) {
+      const width = textWidth(document, font, character)
+      // A character that does not fit goes to the next line (unless the line is empty).
+      if (x + width > lineRight + 0.5 && x > lineLeft + 0.5) {
+        x = lineLeft
+        top += lineHeight
+      }
+      x += width
+    }
+  }
   return { x, y: top, height }
 }

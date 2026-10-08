@@ -104,3 +104,26 @@ describe("pressing a scrollbar", () => {
     expect(onPress).not.toHaveBeenCalled()
   })
 })
+
+describe("list boxes", () => {
+  function select(html: string) {
+    document.body.innerHTML = html
+    const element = document.querySelector("select")!
+    const sizes = { clientWidth: 80, clientHeight: 60, scrollWidth: 80, scrollHeight: 120, offsetWidth: 82, offsetHeight: 62 }
+    for (const [name, value] of Object.entries(sizes)) Object.defineProperty(element, name, { value })
+    element.getBoundingClientRect = () => new DOMRect(10, 20, 82, 62)
+    return element
+  }
+
+  it("draws a list box's scrollbar, whatever its computed overflow", () => {
+    const listBox = select(`<select multiple><option>a</option></select>`)
+    expect(scrollbarsOf(listBox).map(bar => bar.axis)).toEqual(["y"])
+    const sized = select(`<select size="3"><option>a</option></select>`)
+    expect(scrollbarsOf(sized)).toHaveLength(1)
+  })
+
+  it("leaves a drop-down <select> alone: it draws its own list", () => {
+    expect(scrollbarsOf(select(`<select><option>a</option></select>`))).toEqual([])
+  })
+})
+

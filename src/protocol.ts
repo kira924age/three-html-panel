@@ -89,6 +89,8 @@ export interface EditingMessage {
    * the page's answer to a tap from an earlier report.
    */
   pointers: number
+  /** The focused element takes text (a text field or a contenteditable element), for an on-screen keyboard. */
+  typing: boolean
 }
 
 /**
@@ -187,10 +189,11 @@ export function parsePageMessage(data: unknown, limits: PageMessageLimits): Page
       if (typeof data.editing !== "boolean") return null
       const caret = parseCaret(data.caret)
       if (caret === undefined) return null
-      const { selectedText, pointers } = data
+      const { selectedText, pointers, typing } = data
       if (typeof selectedText !== "string" || selectedText.length > MAX_TEXT_LENGTH) return null
       if (!Number.isSafeInteger(pointers) || (pointers as number) < 0) return null
-      return { type: "editing", editing: data.editing, caret, selectedText, pointers: pointers as number }
+      if (typeof typing !== "boolean") return null
+      return { type: "editing", editing: data.editing, caret, selectedText, pointers: pointers as number, typing }
     }
     case "pong":
       return { type: "pong" }
@@ -221,11 +224,20 @@ export function parseHostMessage(data: unknown): HostMessage | null {
   if (!isObject(data)) return null
   switch (data.type) {
     case "pointer": {
-      const { kind, x, y, shiftKey, input } = data
+      const { kind, x, y, shiftKey, ctrlKey, metaKey, input } = data
       if (!POINTER_KINDS.has(kind as PointerKind) || !isFiniteNumber(x) || !isFiniteNumber(y)) return null
-      if (shiftKey !== undefined && typeof shiftKey !== "boolean") return null
+      if (![shiftKey, ctrlKey, metaKey].every(key => key === undefined || typeof key === "boolean")) return null
       if (input !== undefined && input !== "mouse" && input !== "touch" && input !== "xr") return null
-      return { type: "pointer", kind: kind as PointerKind, x, y, shiftKey: shiftKey === true, input: input ?? "mouse" }
+      return {
+        type: "pointer",
+        kind: kind as PointerKind,
+        x,
+        y,
+        shiftKey: shiftKey === true,
+        ctrlKey: ctrlKey === true,
+        metaKey: metaKey === true,
+        input: input ?? "mouse"
+      }
     }
     case "wheel": {
       const { x, y, deltaX, deltaY } = data

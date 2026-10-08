@@ -20,7 +20,7 @@ import {
 } from "three"
 import { OrbitControls } from "three/addons/controls/OrbitControls.js"
 import { VRButton } from "three/addons/webxr/VRButton.js"
-import { HtmlPanel, PanelPointer, PanelXRPointer } from "../index"
+import { HtmlPanel, PanelPointer, PanelXRKeyboard, PanelXRPointer } from "../index"
 import { SCENE_CLICK, parseSceneControl, type SceneControl } from "./scene-events"
 
 const renderer = new WebGLRenderer({ antialias: true })
@@ -85,6 +85,10 @@ new PanelPointer(camera, renderer.domElement, () => panels)
 
 // In VR, each controller points at the panels with a ray; the trigger presses.
 const xrPointer = new PanelXRPointer(renderer, () => panels)
+// In VR, a keyboard shows under the panel whose text field has focus.
+const xrKeyboard = new PanelXRKeyboard()
+scene.add(xrKeyboard)
+xrPointer.keyboard = xrKeyboard
 for (const index of [0, 1]) {
   const controller = renderer.xr.getController(index)
   const ray = new BufferGeometry().setFromPoints([new Vector3(0, 0, 0), new Vector3(0, 0, -5)])

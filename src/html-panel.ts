@@ -140,6 +140,8 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
   private readonly onError: (error: Error) => void
   private readonly connection: PanelConnection
   private editing = false
+  /** A text field or editable has focus, as the page reports: text can be typed. */
+  private typing = false
   /** The text selected in the page's field, as the page reported it last. */
   private selected = ""
   /** The caret the page reported last, in its CSS pixels, for placing the IME. */
@@ -232,10 +234,12 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
         this.setCursor("default")
       },
       onFrame: frame => this.renderer.submit(frame),
-      onEditing: (editing, caret, selectedText, pointers) => {
+      onEditing: (editing, caret, selectedText, pointers, typing) => {
         this.selected = editing ? selectedText : ""
         this.answerTap(editing, pointers)
         this.setEditing(editing, caret)
+        // isTyping also needs the keys to be the panel's (a sandboxed page may have been refused them).
+        this.typing = typing
       },
       onCursor: cursor => this.setCursor(cursor),
       onEditables: boxes => (this.editables = boxes),
@@ -302,7 +306,16 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
     }
     if (!editing && this.editing) this.keyboard.release(this)
     this.editing = editing
+    if (!editing) this.typing = false
     this.updateCaret(caret)
+  }
+
+  /**
+   * Whether text typed now goes into the page: a text field or a
+   * contenteditable element in it has focus. For an on-screen keyboard (VR).
+   */
+  get isTyping(): boolean {
+    return this.editing && this.typing
   }
 
   private updateCaret(caret: Caret | null): void {
@@ -369,7 +382,14 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
     return !this.sandboxed || this.keyboard.isTarget(this) || performance.now() <= this.userActionUntil
   }
 
-  pointer(kind: PointerKind, uv: Vector2 | null = null, shiftKey = false, input: PointerInput = "mouse"): void {
+  pointer(
+    kind: PointerKind,
+    uv: Vector2 | null = null,
+    shiftKey = false,
+    input: PointerInput = "mouse",
+    /** Ctrl and Cmd held: they add an option to a list box's selection. */
+    modifiers: { ctrlKey?: boolean; metaKey?: boolean } = {}
+  ): void {
     if (kind === "down") this.lastInput = input
     if (kind === "down" || kind === "up") this.pointersSent++
     // Only presses, releases and drags (the user acting on this panel) open the
@@ -379,7 +399,8 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
     if (kind === "down") this.pressing = true
     else if (kind === "up" || kind === "leave") this.pressing = false
     const { x, y } = uv ? this.toPage(uv) : { x: 0, y: 0 }
-    this.send({ type: "pointer", kind, x, y, shiftKey, input })
+    const { ctrlKey = false, metaKey = false } = modifiers
+    this.send({ type: "pointer", kind, x, y, shiftKey, ctrlKey, metaKey, input })
   }
 
   wheel(uv: Vector2, deltaX: number, deltaY: number): void {
@@ -477,6 +498,7 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
   blurFromHost(): void {
     // The host decides: editing ends now, whatever the page reports later.
     this.editing = false
+    this.typing = false
     this.updateCaret(null)
     this.send({ type: "blur" })
   }
@@ -488,6 +510,7 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
     if (!this.editing) return
     this.keyboard.release(this)
     this.editing = false
+    this.typing = false
     this.updateCaret(null)
     this.send({ type: "blur" })
   }

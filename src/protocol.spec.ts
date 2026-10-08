@@ -39,22 +39,25 @@ describe("parsePageMessage", () => {
   })
 
   it("accepts the editing state with a valid caret or none", () => {
-    expect(parsePageMessage({ type: "editing", editing: true, caret: caret(), selectedText: "abc", pointers: 3 }, limits)).toEqual({
+    expect(parsePageMessage({ type: "editing", editing: true, caret: caret(), selectedText: "abc", pointers: 3, typing: true }, limits)).toEqual({
       type: "editing",
       editing: true,
       caret: caret(),
       selectedText: "abc",
-      pointers: 3
+      pointers: 3,
+      typing: true
     })
-    expect(parsePageMessage({ type: "editing", editing: true, caret: null, selectedText: "", pointers: -1 }, limits)).toBeNull()
+    expect(parsePageMessage({ type: "editing", editing: true, caret: null, selectedText: "", pointers: -1, typing: false }, limits)).toBeNull()
+    expect(parsePageMessage({ type: "editing", editing: true, caret: null, selectedText: "", pointers: 0 }, limits)).toBeNull()
+    expect(parsePageMessage({ type: "editing", editing: true, caret: null, selectedText: "", pointers: 0, typing: "yes" }, limits)).toBeNull()
     expect(parsePageMessage({ type: "editing", editing: true, caret: null, selectedText: "" }, limits)).toBeNull()
     // The selection to copy must be a string, and not too long.
-    expect(parsePageMessage({ type: "editing", editing: true, caret: null, selectedText: 1, pointers: 0 }, limits)).toBeNull()
+    expect(parsePageMessage({ type: "editing", editing: true, caret: null, selectedText: 1, pointers: 0, typing: false }, limits)).toBeNull()
     expect(parsePageMessage({ type: "editing", editing: true, caret: null }, limits)).toBeNull()
     expect(
-      parsePageMessage({ type: "editing", editing: true, caret: null, selectedText: "x".repeat(64 * 1024 + 1), pointers: 0 }, limits)
+      parsePageMessage({ type: "editing", editing: true, caret: null, selectedText: "x".repeat(64 * 1024 + 1), pointers: 0, typing: false }, limits)
     ).toBeNull()
-    expect(parsePageMessage({ type: "editing", editing: false, caret: null, selectedText: "", pointers: 0 }, limits)).not.toBeNull()
+    expect(parsePageMessage({ type: "editing", editing: false, caret: null, selectedText: "", pointers: 0, typing: false }, limits)).not.toBeNull()
   })
 
   it("drops carets with numbers that are not finite or colors that are not short strings", () => {
@@ -68,10 +71,10 @@ describe("parsePageMessage", () => {
       caret({ color: 0 }),
       "caret"
     ]) {
-      expect(parsePageMessage({ type: "editing", editing: true, caret: bad, selectedText: "", pointers: 0 }, limits)).toBeNull()
+      expect(parsePageMessage({ type: "editing", editing: true, caret: bad, selectedText: "", pointers: 0, typing: false }, limits)).toBeNull()
     }
-    expect(parsePageMessage({ type: "editing", editing: "yes", caret: null, selectedText: "", pointers: 0 }, limits)).toBeNull()
-    expect(parsePageMessage({ type: "editing", editing: true, selectedText: "", pointers: 0 }, limits)).toBeNull()
+    expect(parsePageMessage({ type: "editing", editing: "yes", caret: null, selectedText: "", pointers: 0, typing: false }, limits)).toBeNull()
+    expect(parsePageMessage({ type: "editing", editing: true, selectedText: "", pointers: 0, typing: false }, limits)).toBeNull()
   })
 
   it("accepts cursor keywords only", () => {
@@ -127,8 +130,16 @@ describe("parseHostMessage", () => {
       x: 1,
       y: 2,
       shiftKey: false,
+      ctrlKey: false,
+      metaKey: false,
       input: "mouse"
     })
+    expect(parseHostMessage({ type: "pointer", kind: "down", x: 1, y: 2, ctrlKey: true, metaKey: true })).toMatchObject({
+      ctrlKey: true,
+      metaKey: true
+    })
+    expect(parseHostMessage({ type: "pointer", kind: "down", x: 1, y: 2, ctrlKey: 1 })).toBeNull()
+    expect(parseHostMessage({ type: "pointer", kind: "down", x: 1, y: 2, metaKey: "yes" })).toBeNull()
     expect(parseHostMessage({ type: "pointer", kind: "down", x: 1, y: 2, input: "touch" })).toMatchObject({ input: "touch" })
     expect(parseHostMessage({ type: "pointer", kind: "down", x: 1, y: 2, input: "pen" })).toBeNull()
     expect(parseHostMessage({ type: "pointer", kind: "down", x: 1, y: 2, shiftKey: "yes" })).toBeNull()

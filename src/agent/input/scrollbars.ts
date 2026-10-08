@@ -25,8 +25,14 @@ export interface Scrollbar {
 const OVERLAY_THICKNESS = 10
 const MIN_THUMB_LENGTH = 24
 const SCROLLABLE = new Set(["auto", "scroll", "overlay"])
-/** Single-line inputs scroll without a scrollbar; a <select> draws its own list. */
-const SKIPPED = new Set(["INPUT", "SELECT"])
+/** Single-line inputs scroll without a scrollbar. */
+const SKIPPED = new Set(["INPUT"])
+
+/** A list box (<select multiple>, or with a size above 1) scrolls its options; a drop-down one draws its own list. */
+function isListBox(element: Element): boolean {
+  const select = element as HTMLSelectElement
+  return element.tagName === "SELECT" && (select.multiple || select.size > 1)
+}
 
 export function contains(box: Box, x: number, y: number): boolean {
   return x >= box.left && x < box.left + box.width && y >= box.top && y < box.top + box.height
@@ -74,10 +80,11 @@ function overflowOf(element: Element): Overflow | null {
 
 /** The scrollbars an element shows right now, if any. */
 export function scrollbarsOf(element: Element): Scrollbar[] {
-  if (SKIPPED.has(element.tagName)) return []
+  if (SKIPPED.has(element.tagName) || (element.tagName === "SELECT" && !isListBox(element))) return []
   // This runs for every element of every frame. Checking the overflow style
   // first is cheaper than reading sizes, and rules out all but scroll containers.
-  const overflow = overflowOf(element)
+  // A list box scrolls up and down, whatever its computed overflow.
+  const overflow = isListBox(element) ? { x: "hidden", y: "auto" } : overflowOf(element)
   if (!overflow || (!SCROLLABLE.has(overflow.x) && !SCROLLABLE.has(overflow.y))) return []
   const { clientWidth, clientHeight, scrollWidth, scrollHeight } = element
   const overflowsX = scrollWidth > clientWidth + 1

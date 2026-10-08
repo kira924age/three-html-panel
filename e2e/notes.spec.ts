@@ -47,12 +47,13 @@ test("cuts the caret to the note when its line is scrolled half out of view", as
   await expect
     .poll(() => panel.frame.evaluate(field => document.querySelector<HTMLTextAreaElement>(field)!.value, field))
     .toBe(text)
-  // Scroll back by part of a line (past the bottom padding): the line with the
-  // caret (the last) is cut by the bottom.
+  // Scroll back by half a line (past the bottom padding): the line with the
+  // caret (the last) is cut by the bottom, whatever the fonts.
   await panel.frame.evaluate(field => {
     const textarea = document.querySelector<HTMLTextAreaElement>(field)!
-    const padding = parseFloat(getComputedStyle(textarea).paddingBottom)
-    textarea.scrollTop = textarea.scrollHeight - textarea.clientHeight - padding - 9
+    const style = getComputedStyle(textarea)
+    const back = parseFloat(style.paddingBottom) + parseFloat(style.lineHeight) / 2
+    textarea.scrollTop = textarea.scrollHeight - textarea.clientHeight - back
   }, field)
   const box = await panel.frame.evaluate(field => {
     const textarea = document.querySelector<HTMLTextAreaElement>(field)!

@@ -9,13 +9,14 @@
 
 import { composedValue, isTextField, measureCaret, measureComposition, measureSelection } from "../input/caret"
 import { InputSynthesizer } from "../input/input"
-import { caretAtPoint, clipCaret, editingHostOf, selectedRange, selectionBoxes, selectionColorAt, visibleBoxOf } from "../input/selection"
+import { isListBox } from "../input/list-box"
+import { caretAtPoint, clipCaret, editingHostOf, fontOf, intersect, selectedRange, selectionBoxes, selectionColorAt, visibleBoxOf } from "../input/selection"
 import type { Box, Caret, Frame, FrameWindow, PanelInput } from "../../types"
 import { DocumentCss } from "./css"
 import { ImageInliner } from "./images"
 import { MAX_EDITABLES, MAX_TEXT_LENGTH } from "../../protocol"
 import { RenderPacer } from "./pacer"
-import { buildFrameSvg, isSampledLive, snapshotDocument } from "./snapshot"
+import { buildFrameSvg, isSampledLive, snapshotDocument, type ListBoxRow } from "./snapshot"
 
 /** Events after which the page may look different. */
 const INVALIDATING_EVENTS = [
@@ -49,7 +50,7 @@ export interface PageCaptureOptions {
    * caret, its selected text (for the host to copy), and how many presses and
    * releases have been handled. Also sent after every release, changed or not.
    */
-  onEditing: (editing: boolean, caret: Caret | null, selectedText: string, pointers: number) => void
+  onEditing: (editing: boolean, caret: Caret | null, selectedText: string, pointers: number, typing: boolean) => void
   /** Where the text fields are now (CSS px, in view), when that changed. */
   onEditables: (boxes: Box[]) => void
   /** The mouse cursor changed (a CSS keyword, or "" when the pointer is not over the page). */
@@ -222,10 +223,13 @@ export class PageCapture {
         focused,
         selection,
         selectionColor,
+        // The page's selection, when the keys do not go to it (the host took them, or the page made it).
+        selectionInactive: range !== null && !this.input.hasSelection && !(host && host.contains(range.startContainer)),
         composition,
         inlineComposition: host && composing ? this.inlineComposition(composing.text) : null,
         scrollbar: this.input.scrollbarState,
         selectPopup: this.input.popupView,
+        listBoxSelection: isListBox(focused) ? this.listBoxRows(focused) : [],
         inlineImage: url => this.images.get(url)
       }))
       this.options.onFrame({ svg: buildFrameSvg(xhtml, this.css.get(), width, height), width, height })
@@ -260,6 +264,21 @@ export class PageCapture {
     const text = this.input.selectedText
     this.selectionTextCache = { key, text }
     return text
+  }
+
+  /** The selected options of the focused list box, where they show. */
+  private listBoxRows(select: HTMLSelectElement): ListBoxRow[] {
+    const visible = visibleBoxOf(select)
+    const rows: ListBoxRow[] = []
+    for (const option of Array.from(select.selectedOptions)) {
+      const rect = option.getBoundingClientRect()
+      const box = { left: rect.left, top: rect.top, width: rect.width, height: rect.height }
+      const shown = intersect(box, visible)
+      if (shown.width <= 0 || shown.height <= 0) continue
+      const paddingLeft = parseFloat(this.window.getComputedStyle(option).paddingLeft) || 0
+      rows.push({ shown, box, label: option.label || option.text, font: fontOf(option), paddingLeft })
+    }
+    return rows
   }
 
   private hasPlayingVideo(): boolean {
@@ -337,10 +356,12 @@ export class PageCapture {
     // A selection too long to send is not offered for copying at all, rather than cut short.
     const selected = this.selectedText()
     const selectedText = selected.length <= MAX_TEXT_LENGTH ? selected : ""
-    const key = JSON.stringify([editing, caret, selectedText])
+    // Text typed now goes in: a text field or an editable has focus (with or without a caret).
+    const typing = isTextField(focused) || (host !== null && host === focused)
+    const key = JSON.stringify([editing, caret, selectedText, typing])
     if (key === this.lastEditing) return
     this.lastEditing = key
-    this.options.onEditing(editing, caret, selectedText, this.pointers)
+    this.options.onEditing(editing, caret, selectedText, this.pointers, typing)
   }
 }
 

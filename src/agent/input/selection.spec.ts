@@ -3,7 +3,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import type { FrameWindow } from "../../types"
 import { InputSynthesizer } from "./input"
 import { measureCaret } from "./caret"
-import { clipCaret, selectedText, selectionBoxes, visibleBoxOf } from "./selection"
+import { caretAtPoint, clipCaret, selectedText, selectionBoxes, visibleBoxOf } from "./selection"
 
 // jsdom rejects the `view` the agent passes (Vitest's window is not jsdom's
 // Window); events are made here without it.
@@ -18,6 +18,7 @@ beforeAll(() => {
     }
   globalThis.MouseEvent = withoutView(MouseEvent as EventClass) as unknown as typeof MouseEvent
   globalThis.PointerEvent = withoutView((globalThis.PointerEvent ?? MouseEvent) as EventClass) as unknown as typeof PointerEvent
+  globalThis.WheelEvent = withoutView(WheelEvent as EventClass) as unknown as typeof WheelEvent
 })
 
 let input: InputSynthesizer
@@ -141,12 +142,21 @@ describe("selecting the page's text", () => {
     expect(input.hasSelection).toBe(true)
   })
 
-  it("lets the selection go when the host takes the keys back", () => {
+  it("keeps the selection, inactive, when the host takes the keys back, until the user acts on the panel again", () => {
     pointer("down", 60, 5)
     pointer("move", 110, 5)
     pointer("up", 110, 5)
     input.handle({ type: "blur" })
+    // Still there (drawn grey), but it no longer asks for the keys.
+    expect(getSelection()!.toString()).toBe("brave")
     expect(input.hasSelection).toBe(false)
+    // Hovering and scrolling do not make the panel active again.
+    input.handle({ type: "pointer", kind: "move", x: 20, y: 5 })
+    input.handle({ type: "wheel", x: 20, y: 5, deltaX: 0, deltaY: 10 })
+    expect(input.hasSelection).toBe(false)
+    // A key the user presses in the panel does.
+    key("Shift", { shiftKey: true })
+    expect(input.hasSelection).toBe(true)
   })
 
   it("selects the whole page with the select-all shortcut when nothing is focused", () => {
@@ -160,6 +170,28 @@ describe("selecting the page's text", () => {
     document.querySelector<HTMLInputElement>("#field")!.focus()
     // The field's own selection is what is copied while it has focus.
     expect(input.hasSelection).toBe(false)
+  })
+})
+
+describe("the caret of text being composed in an editable", () => {
+  it("wraps the composed text at the end of its block's line, a character at a time", () => {
+    document.body.innerHTML = `<div id="editor" contenteditable="true" style="display: block; line-height: 20px; padding-left: 4px; padding-right: 6px">hello</div>`
+    const editor = document.querySelector<HTMLElement>("#editor")!
+    // The block is 110 px wide at x = 0 (content 4..104); "hello" ends at x = 90.
+    editor.getBoundingClientRect = () => new DOMRect(0, 0, 110, 40)
+    Object.defineProperties(editor, { clientWidth: { value: 110 }, clientLeft: { value: 0 } })
+    const original = Range.prototype.getClientRects
+    Range.prototype.getClientRects = () => [new DOMRect(82, 0, 8, 20)] as unknown as DOMRectList
+    try {
+      const end = { node: editor.firstChild!, offset: 5 }
+      // jsdom has no canvas: each character measures 8 px.
+      expect(caretAtPoint(end, "a")).toMatchObject({ x: 98, y: 0 })
+      // The second one does not fit (98 + 8 > 104): it starts the next line.
+      expect(caretAtPoint(end, "ab")).toMatchObject({ x: 12, y: 20 })
+      expect(caretAtPoint(end, "abc")).toMatchObject({ x: 20, y: 20 })
+    } finally {
+      Range.prototype.getClientRects = original
+    }
   })
 })
 

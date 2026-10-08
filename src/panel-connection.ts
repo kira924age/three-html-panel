@@ -47,7 +47,7 @@ export interface PanelConnectionOptions {
   /** A new document's agent connected. Whatever the previous one reported is stale. */
   onConnect: () => void
   onFrame: (frame: Frame) => void
-  onEditing: (editing: boolean, caret: Caret | null, selectedText: string, pointers: number) => void
+  onEditing: (editing: boolean, caret: Caret | null, selectedText: string, pointers: number, typing: boolean) => void
   /** The mouse cursor the page wants where the pointer is (a CSS keyword). */
   onCursor: (cursor: string) => void
   /** Where the page's text fields are (CSS px). */
@@ -131,7 +131,7 @@ export class PanelConnection {
         this.options.onFrame({ svg: message.svg, width: message.width, height: message.height })
         break
       case "editing":
-        this.options.onEditing(message.editing, message.caret, message.selectedText, message.pointers)
+        this.options.onEditing(message.editing, message.caret, message.selectedText, message.pointers, message.typing)
         break
       case "cursor":
         this.options.onCursor(message.cursor)

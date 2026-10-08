@@ -7,12 +7,15 @@
 // - The thumbstick scrolls the panel under the controller, like a wheel.
 // - Pressing anything but a panel ends typing into the panels.
 //
-// Call update() once per frame, in the animation loop. Text input in VR is
-// not handled: an immersive session shows no system keyboard for the host's
-// hidden field.
+// - With a `keyboard` (PanelXRKeyboard), it shows under the panel whose text
+//   field has focus, and the controllers press its keys: an immersive session
+//   shows no system keyboard for the host's hidden field.
+//
+// Call update() once per frame, in the animation loop.
 
 import { Raycaster, Vector2, type WebGLRenderer, type XRTargetRaySpace } from "three"
 import type { HtmlPanel } from "./html-panel"
+import type { PanelXRKeyboard } from "./panel-xr-keyboard"
 
 /** Thumbstick deflection below this is ignored (sticks rarely rest exactly at 0). */
 const STICK_DEAD_ZONE = 0.15
@@ -31,6 +34,8 @@ export class PanelXRPointer {
   private pressed: { panel: HtmlPanel; controller: Controller } | null = null
   private lastUpdate = 0
   private readonly cleanups: (() => void)[] = []
+  /** The keyboard to type into panels with, shown while one takes text; none by default. */
+  keyboard: PanelXRKeyboard | null = null
 
   constructor(
     private readonly renderer: WebGLRenderer,
@@ -73,6 +78,9 @@ export class PanelXRPointer {
   update(now = performance.now()): void {
     const seconds = this.lastUpdate ? Math.min(0.1, (now - this.lastUpdate) / 1000) : 0
     this.lastUpdate = now
+    // The keyboard follows the panel that takes text, in a session only.
+    const typing = this.renderer.xr.isPresenting ? (this.panels().find(panel => panel.isTyping) ?? null) : null
+    this.keyboard?.showFor(typing)
     if (!this.renderer.xr.isPresenting) return
 
     const pressed = this.pressed
@@ -82,16 +90,20 @@ export class PanelXRPointer {
       if (uv) pressed.panel.pointer("move", uv, false, "xr")
       return
     }
-    // The first controller that points at a panel hovers it.
+    // The first controller that points at the keyboard, or else at a panel, hovers it.
     let hit: { panel: HtmlPanel; uv: Vector2; controller: Controller } | null = null
+    let keyboardUv: Vector2 | null = null
     for (const controller of this.controllers) {
       if (!controller.source) continue
+      keyboardUv = this.pickKeyboard(controller)
+      if (keyboardUv) break
       const found = this.pick(controller)
       if (found) {
         hit = { ...found, controller }
         break
       }
     }
+    this.keyboard?.hover(keyboardUv)
     this.hover(hit && { panel: hit.panel, controller: hit.controller })
     if (!hit) return
     hit.panel.pointer("move", hit.uv, false, "xr")
@@ -112,6 +124,14 @@ export class PanelXRPointer {
     this.hover(null)
   }
 
+  /** Where a controller points on the keyboard, if it is shown and pointed at. */
+  private pickKeyboard(controller: Controller): Vector2 | null {
+    const keyboard = this.keyboard
+    if (!keyboard?.visible) return null
+    this.raycaster.setFromXRController(controller.space)
+    return this.raycaster.intersectObject(keyboard, false)[0]?.uv ?? null
+  }
+
   private pick(controller: Controller): { panel: HtmlPanel; uv: Vector2 } | null {
     this.raycaster.setFromXRController(controller.space)
     const hit = this.raycaster.intersectObjects(this.panels() as HtmlPanel[], false)[0]
@@ -121,6 +141,12 @@ export class PanelXRPointer {
 
   private press(controller: Controller): void {
     if (this.pressed) return
+    // A key: typed into the panel, which keeps its focus.
+    const keyUv = this.pickKeyboard(controller)
+    if (keyUv) {
+      this.keyboard!.press(keyUv)
+      return
+    }
     const hit = this.pick(controller)
     // Pressing anything else ends typing into the panels.
     for (const panel of this.panels()) if (panel !== hit?.panel) panel.blur()
