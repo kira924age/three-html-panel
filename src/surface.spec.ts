@@ -64,6 +64,20 @@ describe("Surface", () => {
       expect(past.y).toBeCloseTo(0.5, 2)
     })
 
+    it("past the silhouette of a half cylinder, follows the pointer instead of jumping", () => {
+      const half = new Surface(new CylinderGeometry(1, 1, 1, 64, 1, true, -Math.PI / 2, Math.PI))
+      const eye = new Vector3(0, 0, 3)
+      // Leftwards past its left edge (x = -1), at a fixed height: the triangles there are seen edge on.
+      let previous = Infinity
+      for (let x = -0.8; x >= -2; x -= 0.1) {
+        const uv = half.uvFromRay(towards(eye, new Vector3(x, 0.2, 0)))!
+        expect(uv.x).toBeLessThan(previous + 0.05)
+        expect(uv.y).toBeGreaterThan(0.6)
+        expect(uv.y).toBeLessThan(0.8)
+        previous = uv.x
+      }
+    })
+
     it("puts a UV on the arc, facing out", () => {
       const [point] = surface.pointsAt(new Vector2(0.75, 0.5))
       expect(point!.position.distanceTo(at(Math.PI / 8, 0))).toBeLessThan(0.01)

@@ -24,6 +24,13 @@ type Attribute = BufferAttribute | InterleavedBufferAttribute
 // point on the edge between two triangles is found in either.
 const EDGE = 1e-6
 
+/**
+ * A triangle faces a ray well when the angle between its normal and the ray
+ * (reversed) is under about 75 degrees: the ray then meets its plane at most
+ * about four times as far as it passes from it.
+ */
+const FACING_COS = 0.25
+
 export class Surface {
   private readonly a = new Vector3()
   private readonly b = new Vector3()
@@ -45,18 +52,20 @@ export class Surface {
    * a drag going when the pointer leaves the panel. Null if the ray runs
    * parallel to that plane or points away from it.
    *
-   * Only triangles whose front faces the ray count as nearest, if any does: on
-   * a closed shape (a box), the face next to the one dragged off is often
-   * nearer the ray, but seen edge on or from behind, and its UVs (another part
-   * of the page) would make the drag jump.
+   * The nearest triangle is taken from those that face the ray well
+   * (FACING_COS), else from those that face it at all, else from all. On a
+   * closed shape (a box), the face next to the one dragged off is often nearer
+   * the ray, but seen edge on or from behind, and its UVs (another part of the
+   * page) would make the drag jump. Past the silhouette of a surface curving
+   * away (a half cylinder), the triangles nearest the ray are seen almost edge
+   * on: the ray meets their planes far away, and the UVs would jump too.
    */
   uvFromRay(ray: Ray): Vector2 | null {
     let nearest = Infinity
     let hit = -1
-    let closest = Infinity
-    let near = -1
-    let closestFacing = Infinity
-    let nearFacing = -1
+    // The nearest triangle in each tier: facing the ray well, facing it, any.
+    const closest = [Infinity, Infinity, Infinity]
+    const near = [-1, -1, -1]
     this.eachTriangle(index => {
       this.loadPositions(index)
       const point = ray.intersectTriangle(this.a, this.b, this.c, false, this.point)
@@ -70,17 +79,16 @@ export class Surface {
       if (hit >= 0) return
       const centroid = this.point.copy(this.a).add(this.b).add(this.c).divideScalar(3)
       const distance = ray.distanceSqToPoint(centroid)
-      if (distance < closest) {
-        closest = distance
-        near = index
-      }
-      const facing = Triangle.getNormal(this.a, this.b, this.c, this.point).dot(ray.direction) < 0
-      if (facing && distance < closestFacing) {
-        closestFacing = distance
-        nearFacing = index
+      const cos = -Triangle.getNormal(this.a, this.b, this.c, this.point).dot(ray.direction)
+      const tier = cos >= FACING_COS ? 0 : cos > 0 ? 1 : 2
+      for (let t = tier; t < 3; t++) {
+        if (distance < closest[t]!) {
+          closest[t] = distance
+          near[t] = index
+        }
       }
     })
-    const index = hit >= 0 ? hit : nearFacing >= 0 ? nearFacing : near
+    const index = hit >= 0 ? hit : (near.find(index => index >= 0) ?? -1)
     if (index < 0) return null
     this.loadPositions(index)
     if (hit >= 0) {
