@@ -127,10 +127,10 @@ export function composedValue(field: TextField, composition: Composition): { val
 export function caretAt(field: TextField, index: number, value?: string): { x: number; y: number; height: number } {
   const text = displayText(field, value)
   return withMirror(field, mirror => {
-    const marker = placeMarker(field, mirror, text, index)
+    const { marker, after } = placeMarker(field, mirror, text, index)
     const rect = field.getBoundingClientRect()
     const height = marker.getClientRects()[0]?.height || parseFloat(windowOf(field).getComputedStyle(field).fontSize) * 1.2
-    const x = rect.left + marker.offsetLeft - field.scrollLeft
+    const x = rect.left + marker.offsetLeft + (after ? marker.offsetWidth : 0) - field.scrollLeft
     // A single-line input centres its line vertically; a textarea starts at the top.
     const y = isSingleLine(field) ? rect.top + (rect.height - height) / 2 : rect.top + marker.offsetTop - field.scrollTop
     return { x, y, height }
@@ -142,17 +142,31 @@ export function caretAt(field: TextField, index: number, value?: string): { x: n
  * only the character after it, so that it stays on one line; the rest follows,
  * so lines still wrap where the field's do. At a line break or the end, a
  * zero-width space gives it a line box.
+ *
+ * A space that ends a wrapped line hangs past the edge, and a caret after it
+ * stays on that line; a marker after it would wrap to a line the field does not
+ * have (Chromium, WebKit). There the marker is the space itself, and the caret
+ * is `after` it.
  */
-function placeMarker(field: TextField, mirror: HTMLDivElement, text: string, index: number): HTMLSpanElement {
+function placeMarker(
+  field: TextField,
+  mirror: HTMLDivElement,
+  text: string,
+  index: number
+): { marker: HTMLSpanElement; after: boolean } {
   const document = field.ownerDocument
-  mirror.textContent = text.slice(0, index)
-  const marker = document.createElement("span")
   const next = Array.from(text.slice(index, index + 2))[0] ?? ""
-  const markerText = next === "" || next === "\n" ? "\u200b" : next
+  const lineEnd = next === "" || next === "\n"
+  const previous = text[index - 1]
+  const after = lineEnd && !isSingleLine(field) && (previous === " " || previous === "\t")
+  const start = after ? index - 1 : index
+  mirror.textContent = text.slice(0, start)
+  const marker = document.createElement("span")
+  const markerText = after ? previous! : lineEnd ? "\u200b" : next
   marker.textContent = markerText
   mirror.appendChild(marker)
-  mirror.appendChild(document.createTextNode(text.slice(index + (markerText === next ? next.length : 0))))
-  return marker
+  mirror.appendChild(document.createTextNode(text.slice(after ? index : index + (markerText === next ? next.length : 0))))
+  return { marker, after }
 }
 
 /**
@@ -236,7 +250,7 @@ export function scrolledText(field: TextField): { index: number; offset: number 
   const text = displayText(field)
   return withMirror(field, mirror => {
     const at = (index: number) => {
-      const marker = placeMarker(field, mirror, text, index)
+      const { marker } = placeMarker(field, mirror, text, index)
       return vertical ? marker.offsetTop : marker.offsetLeft
     }
     const origin = at(0)

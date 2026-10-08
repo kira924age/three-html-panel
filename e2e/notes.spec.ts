@@ -71,3 +71,64 @@ test("cuts the caret to the note when its line is scrolled half out of view", as
   // Cut: shorter than a line.
   expect(caret.height).toBeLessThan(16)
 })
+
+test("keeps the caret after a space that ends a wrapped line on that line", async ({ page }) => {
+  const field = `${NOTE} textarea`
+  const text = "Sticky notes keep a few lines of text. ".repeat(3)
+  // A width at which the last space ends a line, hanging past the edge: the
+  // caret after it stays on that line (Chromium, WebKit), though a marker put
+  // after it there wraps to the next. Found by trying, whatever the fonts.
+  const found = await panel.frame.evaluate(
+    ({ field, text }) => {
+      const textarea = document.querySelector<HTMLTextAreaElement>(field)!
+      textarea.value = text
+      textarea.style.overflow = "hidden"
+      textarea.style.boxSizing = "border-box"
+      const style = getComputedStyle(textarea)
+      const probe = document.createElement("div")
+      for (const property of ["font", "letter-spacing", "word-spacing", "tab-size"]) {
+        probe.style.setProperty(property, style.getPropertyValue(property))
+      }
+      Object.assign(probe.style, { position: "absolute", visibility: "hidden", whiteSpace: "pre-wrap" })
+      probe.append(text.slice(0, -1))
+      const space = probe.appendChild(document.createElement("span"))
+      space.textContent = " "
+      const end = probe.appendChild(document.createElement("span"))
+      end.textContent = "\u200b"
+      document.body.appendChild(probe)
+      const sides = ["padding-left", "padding-right", "border-left-width", "border-right-width"]
+      const frame = sides.reduce((sum, side) => sum + parseFloat(style.getPropertyValue(side)), 0)
+      try {
+        for (let width = 120; width <= 400; width++) {
+          probe.style.width = `${width - frame}px`
+          if (end.offsetTop !== space.offsetTop) {
+            textarea.style.width = `${width}px`
+            textarea.setSelectionRange(text.length - 1, text.length - 1)
+            return true
+          }
+        }
+        return false
+      } finally {
+        probe.remove()
+      }
+    },
+    { field, text }
+  )
+  // Firefox puts a marker after a hanging space on its line too: nothing to check.
+  test.skip(!found, "no width wraps after the last space here")
+  await panel.focus(await panel.at(field, 0.5, 0.2))
+  await panel.frame.evaluate(({ field, at }) => document.querySelector<HTMLTextAreaElement>(field)!.setSelectionRange(at, at), {
+    field,
+    at: text.length - 1
+  })
+  // Before the space, then after it: the same line.
+  await page.keyboard.press("ArrowLeft")
+  await page.keyboard.press("ArrowRight")
+  await expect.poll(() => panel.frame.evaluate(field => document.querySelector<HTMLTextAreaElement>(field)!.selectionEnd, field)).toBe(text.length - 1)
+  await expect.poll(async () => (await panel.caret()) !== null).toBe(true)
+  const before = (await panel.caret())!
+  await page.keyboard.press("ArrowRight")
+  await expect.poll(() => panel.frame.evaluate(field => document.querySelector<HTMLTextAreaElement>(field)!.selectionEnd, field)).toBe(text.length)
+  await expect.poll(async () => (await panel.caret())?.x ?? null).toBeGreaterThan(before.x)
+  expect((await panel.caret())!.y).toBeCloseTo(before.y, 0)
+})
