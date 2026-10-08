@@ -77,6 +77,25 @@ export interface ListBoxRow {
 /** Selected options of a focused list box, as browsers draw them. */
 const LIST_BOX_SELECTED = "rgb(30 110 220)"
 
+/** The last frame encoded for each video, with what it was taken at (see Snapshotter.videoFrame). */
+const videoFrames = new WeakMap<HTMLVideoElement, { key: string; source: MediaProvider | string; url: string | null }>()
+
+/** A video's current frame at this size, as a JPEG data URL; null if it cannot be read. */
+function encodeFrame(document: Document, video: HTMLVideoElement, width: number, height: number): string | null {
+  const canvas = document.createElement("canvas")
+  canvas.width = width
+  canvas.height = height
+  const context = canvas.getContext("2d")
+  if (!context) return null
+  try {
+    context.drawImage(video, 0, 0, width, height)
+    return canvas.toDataURL("image/jpeg", 0.85)
+  } catch {
+    // A video from another origin without CORS taints the canvas.
+    return null
+  }
+}
+
 /** A video's attributes that mean nothing on the image that stands for it. */
 const VIDEO_ATTRIBUTES = new Set(["src", "poster", "controls", "autoplay", "loop", "muted", "preload", "playsinline", "crossorigin"])
 /** A video frame is drawn at most this many times its size on the page (the panel's pixel ratio is not known here). */
@@ -329,22 +348,26 @@ class Snapshotter {
   }
 
   /** The frame a video shows now, as a data URL; null before it has one, or if it cannot be read (cross-origin). */
+  /**
+   * The frame a video shows now, as a data URL; null before it has one, or if
+   * it cannot be read (cross-origin). Encoding a frame takes milliseconds, so a
+   * frame that has not changed (a paused video, at the same time and size, of
+   * the same source) is not encoded again.
+   */
   private videoFrame(video: HTMLVideoElement): string | null {
     if (video.readyState < 2 || !video.videoWidth || !video.videoHeight) return null
     const { width } = video.getBoundingClientRect()
     const scale = Math.min(1, (VIDEO_SCALE * Math.max(1, width)) / video.videoWidth)
-    const canvas = this.document.createElement("canvas")
-    canvas.width = Math.max(1, Math.round(video.videoWidth * scale))
-    canvas.height = Math.max(1, Math.round(video.videoHeight * scale))
-    const context = canvas.getContext("2d")
-    if (!context) return null
-    try {
-      context.drawImage(video, 0, 0, canvas.width, canvas.height)
-      return canvas.toDataURL("image/jpeg", 0.85)
-    } catch {
-      // A video from another origin without CORS taints the canvas.
-      return null
-    }
+    const frameWidth = Math.max(1, Math.round(video.videoWidth * scale))
+    const frameHeight = Math.max(1, Math.round(video.videoHeight * scale))
+    const key = `${video.currentTime} ${video.videoWidth}x${video.videoHeight} ${frameWidth}x${frameHeight}`
+    // Another clip or stream at the same time and size (a page swapping src or srcObject) is another frame.
+    const source = video.srcObject ?? video.currentSrc
+    const cached = videoFrames.get(video)
+    if (cached?.key === key && cached.source === source) return cached.url
+    const url = encodeFrame(this.document, video, frameWidth, frameHeight)
+    videoFrames.set(video, { key, source, url })
+    return url
   }
 
   private copyInteractionState(element: Element, copy: Element): void {
