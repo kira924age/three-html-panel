@@ -1,244 +1,284 @@
 // @vitest-environment jsdom
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
-import { InputSynthesizer } from "./input"
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { InputSynthesizer } from "./input";
 
-let input: InputSynthesizer
-const onChange = vi.fn()
+let input: InputSynthesizer;
+const onChange = vi.fn();
 
 beforeAll(() => {
   // jsdom has no PointerEvent.
-  globalThis.PointerEvent ??= class extends MouseEvent {} as unknown as typeof PointerEvent
-  input = new InputSynthesizer(document, { measure: run => run(), onChange })
-})
+  globalThis.PointerEvent ??= class extends MouseEvent {} as unknown as typeof PointerEvent;
+  input = new InputSynthesizer(document, { measure: (run) => run(), onChange });
+});
 
 afterEach(() => {
-  vi.restoreAllMocks()
-})
+  vi.restoreAllMocks();
+});
 
 beforeEach(() => {
-  document.body.innerHTML = `<input id="name" value="ab"><button id="go">Go</button>`
-  input.handle({ type: "blur" })
-})
+  document.body.innerHTML = `<input id="name" value="ab"><button id="go">Go</button>`;
+  input.handle({ type: "blur" });
+});
 
 const key = (key: string) =>
-  input.handle({ type: "key", key, shiftKey: false, ctrlKey: false, altKey: false, metaKey: false })
+  input.handle({
+    type: "key",
+    key,
+    shiftKey: false,
+    ctrlKey: false,
+    altKey: false,
+    metaKey: false,
+  });
 
 describe("virtual focus", () => {
   it("focus() from the page moves the virtual focus and dispatches focus events", () => {
-    const field = document.querySelector<HTMLInputElement>("#name")!
-    const events: string[] = []
-    field.addEventListener("focus", () => events.push("focus"))
-    document.addEventListener("focusin", () => events.push("focusin"))
-    field.focus()
-    expect(document.activeElement).toBe(field)
-    expect(input.focused).toBe(field)
-    expect(events).toEqual(["focus", "focusin"])
-  })
+    const field = document.querySelector<HTMLInputElement>("#name")!;
+    const events: string[] = [];
+    field.addEventListener("focus", () => events.push("focus"));
+    document.addEventListener("focusin", () => events.push("focusin"));
+    field.focus();
+    expect(document.activeElement).toBe(field);
+    expect(input.focused).toBe(field);
+    expect(events).toEqual(["focus", "focusin"]);
+  });
 
   it("blur() and Escape release focus", () => {
-    const field = document.querySelector<HTMLInputElement>("#name")!
-    field.focus()
-    field.blur()
-    expect(document.activeElement).toBe(document.body)
-    field.focus()
-    key("Escape")
-    expect(input.focused).toBeNull()
-  })
+    const field = document.querySelector<HTMLInputElement>("#name")!;
+    field.focus();
+    field.blur();
+    expect(document.activeElement).toBe(document.body);
+    field.focus();
+    key("Escape");
+    expect(input.focused).toBeNull();
+  });
 
   it("loses focus when the element is removed", () => {
-    const field = document.querySelector<HTMLInputElement>("#name")!
-    field.focus()
-    field.remove()
-    expect(input.focused).toBeNull()
-  })
-})
+    const field = document.querySelector<HTMLInputElement>("#name")!;
+    field.focus();
+    field.remove();
+    expect(input.focused).toBeNull();
+  });
+});
 
 describe("text editing", () => {
   it("inserts text at the caret and fires input", () => {
-    const field = document.querySelector<HTMLInputElement>("#name")!
-    const onInput = vi.fn()
-    field.addEventListener("input", onInput)
-    field.focus()
-    field.setSelectionRange(1, 1)
-    input.handle({ type: "text", text: "X" })
-    expect(field.value).toBe("aXb")
-    expect(field.selectionStart).toBe(2)
-    expect(onInput).toHaveBeenCalledOnce()
-  })
+    const field = document.querySelector<HTMLInputElement>("#name")!;
+    const onInput = vi.fn();
+    field.addEventListener("input", onInput);
+    field.focus();
+    field.setSelectionRange(1, 1);
+    input.handle({ type: "text", text: "X" });
+    expect(field.value).toBe("aXb");
+    expect(field.selectionStart).toBe(2);
+    expect(onInput).toHaveBeenCalledOnce();
+  });
 
   it("deletes with Backspace and Delete", () => {
-    const field = document.querySelector<HTMLInputElement>("#name")!
-    field.focus()
-    field.setSelectionRange(1, 1)
-    key("Backspace")
-    expect(field.value).toBe("b")
-    key("Delete")
-    expect(field.value).toBe("")
-  })
+    const field = document.querySelector<HTMLInputElement>("#name")!;
+    field.focus();
+    field.setSelectionRange(1, 1);
+    key("Backspace");
+    expect(field.value).toBe("b");
+    key("Delete");
+    expect(field.value).toBe("");
+  });
 
   it("does nothing when the page cancels beforeinput", () => {
-    const field = document.querySelector<HTMLInputElement>("#name")!
-    field.addEventListener("beforeinput", event => event.preventDefault())
-    field.focus()
-    input.handle({ type: "text", text: "X" })
-    expect(field.value).toBe("ab")
-  })
+    const field = document.querySelector<HTMLInputElement>("#name")!;
+    field.addEventListener("beforeinput", (event) => event.preventDefault());
+    field.focus();
+    input.handle({ type: "text", text: "X" });
+    expect(field.value).toBe("ab");
+  });
 
   it("selects all with Ctrl+A outside Apple platforms", () => {
-    vi.spyOn(navigator, "platform", "get").mockReturnValue("Win32")
-    const field = document.querySelector<HTMLInputElement>("#name")!
-    field.focus()
-    field.setSelectionRange(1, 1)
-    input.handle({ type: "key", key: "a", shiftKey: false, ctrlKey: true, altKey: false, metaKey: false })
-    expect([field.selectionStart, field.selectionEnd]).toEqual([0, 2])
-  })
+    vi.spyOn(navigator, "platform", "get").mockReturnValue("Win32");
+    const field = document.querySelector<HTMLInputElement>("#name")!;
+    field.focus();
+    field.setSelectionRange(1, 1);
+    input.handle({
+      type: "key",
+      key: "a",
+      shiftKey: false,
+      ctrlKey: true,
+      altKey: false,
+      metaKey: false,
+    });
+    expect([field.selectionStart, field.selectionEnd]).toEqual([0, 2]);
+  });
 
   it("moves to the line start and end with Ctrl+A and Ctrl+E on macOS, and selects all with Cmd+A", () => {
-    vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel")
-    document.body.innerHTML = "<textarea>ab\ncde\nf</textarea>"
-    const textarea = document.querySelector("textarea")!
-    textarea.focus()
-    textarea.setSelectionRange(5, 5)
+    vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+    document.body.innerHTML = "<textarea>ab\ncde\nf</textarea>";
+    const textarea = document.querySelector("textarea")!;
+    textarea.focus();
+    textarea.setSelectionRange(5, 5);
     const press = (key: string, modifiers: { ctrlKey?: boolean; metaKey?: boolean }) =>
-      input.handle({ type: "key", key, shiftKey: false, ctrlKey: false, altKey: false, metaKey: false, ...modifiers })
+      input.handle({
+        type: "key",
+        key,
+        shiftKey: false,
+        ctrlKey: false,
+        altKey: false,
+        metaKey: false,
+        ...modifiers,
+      });
 
-    press("a", { ctrlKey: true })
-    expect([textarea.selectionStart, textarea.selectionEnd]).toEqual([3, 3])
-    press("e", { ctrlKey: true })
-    expect([textarea.selectionStart, textarea.selectionEnd]).toEqual([6, 6])
+    press("a", { ctrlKey: true });
+    expect([textarea.selectionStart, textarea.selectionEnd]).toEqual([3, 3]);
+    press("e", { ctrlKey: true });
+    expect([textarea.selectionStart, textarea.selectionEnd]).toEqual([6, 6]);
     // Typing after Ctrl+A inserts at the line start instead of replacing everything.
-    press("a", { ctrlKey: true })
-    input.handle({ type: "text", text: "X" })
-    expect(textarea.value).toBe("ab\nXcde\nf")
-    press("a", { metaKey: true })
-    expect([textarea.selectionStart, textarea.selectionEnd]).toEqual([0, 9])
-  })
+    press("a", { ctrlKey: true });
+    input.handle({ type: "text", text: "X" });
+    expect(textarea.value).toBe("ab\nXcde\nf");
+    press("a", { metaKey: true });
+    expect([textarea.selectionStart, textarea.selectionEnd]).toEqual([0, 9]);
+  });
 
   it("reports the cursor under the pointer", () => {
-    document.body.innerHTML = `<button id="go" style="cursor: pointer">Go</button><p id="text">text</p>`
-    const go = document.querySelector("#go")!
-    const text = document.querySelector("#text")!
+    document.body.innerHTML = `<button id="go" style="cursor: pointer">Go</button><p id="text">text</p>`;
+    const go = document.querySelector("#go")!;
+    const text = document.querySelector("#text")!;
     // jsdom cannot build the pointer events that hovering dispatches, so the hover target is set directly.
-    ;(input as unknown as { hoverTarget: Element | null }).hoverTarget = go
-    expect(input.cursor).toBe("pointer")
-    ;(input as unknown as { hoverTarget: Element | null }).hoverTarget = text
-    expect(input.cursor).toBe("default")
-    document.body.innerHTML = `<textarea></textarea>`
-    ;(input as unknown as { hoverTarget: Element | null }).hoverTarget = document.querySelector("textarea")
-    expect(input.cursor).toBe("text")
-  })
+    (input as unknown as { hoverTarget: Element | null }).hoverTarget = go;
+    expect(input.cursor).toBe("pointer");
+    (input as unknown as { hoverTarget: Element | null }).hoverTarget = text;
+    expect(input.cursor).toBe("default");
+    document.body.innerHTML = `<textarea></textarea>`;
+    (input as unknown as { hoverTarget: Element | null }).hoverTarget =
+      document.querySelector("textarea");
+    expect(input.cursor).toBe("text");
+  });
 
   it("keeps what is being composed for the focused field until it ends or focus moves", () => {
-    const field = document.querySelector<HTMLInputElement>("#name")!
-    field.focus()
-    input.handle({ type: "composition", text: "にほ", cursor: 2 })
-    expect(input.composition).toEqual({ text: "にほ", cursor: 2 })
+    const field = document.querySelector<HTMLInputElement>("#name")!;
+    field.focus();
+    input.handle({ type: "composition", text: "にほ", cursor: 2 });
+    expect(input.composition).toEqual({ text: "にほ", cursor: 2 });
     // Composing does not touch the page's value.
-    expect(field.value).toBe("ab")
-    input.handle({ type: "composition", text: "", cursor: 0 })
-    expect(input.composition).toBeNull()
-    input.handle({ type: "composition", text: "に", cursor: 1 })
-    document.querySelector<HTMLButtonElement>("#go")!.focus()
-    expect(input.composition).toBeNull()
-  })
+    expect(field.value).toBe("ab");
+    input.handle({ type: "composition", text: "", cursor: 0 });
+    expect(input.composition).toBeNull();
+    input.handle({ type: "composition", text: "に", cursor: 1 });
+    document.querySelector<HTMLButtonElement>("#go")!.focus();
+    expect(input.composition).toBeNull();
+  });
 
   it("undoes and redoes the agent's own edits, typing in a row as one step", () => {
-    vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel")
-    const field = document.querySelector<HTMLInputElement>("#name")!
-    field.focus()
-    field.setSelectionRange(2, 2)
-    const types: string[] = []
-    field.addEventListener("input", event => types.push((event as InputEvent).inputType))
-    input.handle({ type: "text", text: "c" })
-    input.handle({ type: "text", text: "d" })
-    key("Backspace")
-    expect(field.value).toBe("abc")
+    vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+    const field = document.querySelector<HTMLInputElement>("#name")!;
+    field.focus();
+    field.setSelectionRange(2, 2);
+    const types: string[] = [];
+    field.addEventListener("input", (event) => types.push((event as InputEvent).inputType));
+    input.handle({ type: "text", text: "c" });
+    input.handle({ type: "text", text: "d" });
+    key("Backspace");
+    expect(field.value).toBe("abc");
     const command = (k: string, shiftKey = false) =>
-      input.handle({ type: "key", key: k, shiftKey, ctrlKey: false, altKey: false, metaKey: true })
-    command("z")
-    expect(field.value).toBe("abcd")
-    command("z")
-    expect(field.value).toBe("ab")
-    expect(field.selectionStart).toBe(2)
-    command("z", true)
-    expect(field.value).toBe("abcd")
-    expect(types.slice(-3)).toEqual(["historyUndo", "historyUndo", "historyRedo"])
-  })
+      input.handle({ type: "key", key: k, shiftKey, ctrlKey: false, altKey: false, metaKey: true });
+    command("z");
+    expect(field.value).toBe("abcd");
+    command("z");
+    expect(field.value).toBe("ab");
+    expect(field.selectionStart).toBe(2);
+    command("z", true);
+    expect(field.value).toBe("abcd");
+    expect(types.slice(-3)).toEqual(["historyUndo", "historyUndo", "historyRedo"]);
+  });
 
   it("starts a new undo step when the caret moves between typing", () => {
-    vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel")
-    const field = document.querySelector<HTMLInputElement>("#name")!
-    field.focus()
-    field.setSelectionRange(2, 2)
-    input.handle({ type: "text", text: "c" })
-    key("ArrowLeft")
-    input.handle({ type: "text", text: "d" })
-    expect(field.value).toBe("abdc")
-    input.handle({ type: "key", key: "z", shiftKey: false, ctrlKey: false, altKey: false, metaKey: true })
-    expect(field.value).toBe("abc")
-  })
+    vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+    const field = document.querySelector<HTMLInputElement>("#name")!;
+    field.focus();
+    field.setSelectionRange(2, 2);
+    input.handle({ type: "text", text: "c" });
+    key("ArrowLeft");
+    input.handle({ type: "text", text: "d" });
+    expect(field.value).toBe("abdc");
+    input.handle({
+      type: "key",
+      key: "z",
+      shiftKey: false,
+      ctrlKey: false,
+      altKey: false,
+      metaKey: true,
+    });
+    expect(field.value).toBe("abc");
+  });
 
   it("cuts the selection when the host has cut it to the clipboard, and offers it for copying", () => {
-    const field = document.querySelector<HTMLInputElement>("#name")!
-    field.focus()
-    field.setSelectionRange(0, 1)
-    expect(input.selectedText).toBe("a")
-    input.handle({ type: "cut" })
-    expect(field.value).toBe("b")
-    document.body.innerHTML = `<input id="secret" type="password" value="hunter2">`
-    const secret = document.querySelector<HTMLInputElement>("#secret")!
-    secret.focus()
-    secret.setSelectionRange(0, 7)
+    const field = document.querySelector<HTMLInputElement>("#name")!;
+    field.focus();
+    field.setSelectionRange(0, 1);
+    expect(input.selectedText).toBe("a");
+    input.handle({ type: "cut" });
+    expect(field.value).toBe("b");
+    document.body.innerHTML = `<input id="secret" type="password" value="hunter2">`;
+    const secret = document.querySelector<HTMLInputElement>("#secret")!;
+    secret.focus();
+    secret.setSelectionRange(0, 7);
     // Never a password.
-    expect(input.selectedText).toBe("")
-  })
+    expect(input.selectedText).toBe("");
+  });
 
   it("moves focus with Tab and Shift+Tab in tab order, selecting a text field's text", () => {
     document.body.innerHTML = `
       <input id="a" value="one"><button id="b">B</button><input id="skip" tabindex="-1">
       <input id="c" disabled><input id="first" tabindex="1" value="x">
-      <input type="radio" name="r" id="r1"><input type="radio" name="r" id="r2" checked>`
-    const byId = (id: string) => document.getElementById(id)!
+      <input type="radio" name="r" id="r1"><input type="radio" name="r" id="r2" checked>`;
+    const byId = (id: string) => document.getElementById(id)!;
     const tab = (shiftKey = false) =>
-      input.handle({ type: "key", key: "Tab", shiftKey, ctrlKey: false, altKey: false, metaKey: false })
-    tab()
-    expect(input.focused).toBe(byId("first"))
-    tab()
-    expect(input.focused).toBe(byId("a"))
-    expect([(byId("a") as HTMLInputElement).selectionStart, (byId("a") as HTMLInputElement).selectionEnd]).toEqual([0, 3])
-    tab()
-    expect(input.focused).toBe(byId("b"))
+      input.handle({
+        type: "key",
+        key: "Tab",
+        shiftKey,
+        ctrlKey: false,
+        altKey: false,
+        metaKey: false,
+      });
+    tab();
+    expect(input.focused).toBe(byId("first"));
+    tab();
+    expect(input.focused).toBe(byId("a"));
+    expect([
+      (byId("a") as HTMLInputElement).selectionStart,
+      (byId("a") as HTMLInputElement).selectionEnd,
+    ]).toEqual([0, 3]);
+    tab();
+    expect(input.focused).toBe(byId("b"));
     // A radio group is one stop, at its checked radio.
-    tab()
-    expect(input.focused).toBe(byId("r2"))
-    tab()
-    expect(input.focused).toBe(byId("first"))
-    tab(true)
-    expect(input.focused).toBe(byId("r2"))
-  })
+    tab();
+    expect(input.focused).toBe(byId("r2"));
+    tab();
+    expect(input.focused).toBe(byId("first"));
+    tab(true);
+    expect(input.focused).toBe(byId("r2"));
+  });
 
   it("toggles checkboxes with Space, and moves through a radio group with the arrows", () => {
-    document.body.innerHTML = `<input type="checkbox" id="c"><input type="radio" name="r" id="r1" checked><input type="radio" name="r" id="r2">`
-    const checkbox = document.getElementById("c") as HTMLInputElement
-    const changes: string[] = []
-    document.addEventListener("change", event => changes.push((event.target as Element).id))
-    checkbox.focus()
-    key(" ")
-    expect(checkbox.checked).toBe(true)
+    document.body.innerHTML = `<input type="checkbox" id="c"><input type="radio" name="r" id="r1" checked><input type="radio" name="r" id="r2">`;
+    const checkbox = document.getElementById("c") as HTMLInputElement;
+    const changes: string[] = [];
+    document.addEventListener("change", (event) => changes.push((event.target as Element).id));
+    checkbox.focus();
+    key(" ");
+    expect(checkbox.checked).toBe(true);
     // The host sends a typed space as text.
-    input.handle({ type: "text", text: " " })
-    expect(checkbox.checked).toBe(false)
-    const r1 = document.getElementById("r1") as HTMLInputElement
-    r1.focus()
-    key("ArrowDown")
-    expect((document.getElementById("r2") as HTMLInputElement).checked).toBe(true)
-    expect(input.focused?.id).toBe("r2")
-    expect(changes).toEqual(["c", "c", "r2"])
-  })
+    input.handle({ type: "text", text: " " });
+    expect(checkbox.checked).toBe(false);
+    const r1 = document.getElementById("r1") as HTMLInputElement;
+    r1.focus();
+    key("ArrowDown");
+    expect((document.getElementById("r2") as HTMLInputElement).checked).toBe(true);
+    expect(input.focused?.id).toBe("r2");
+    expect(changes).toEqual(["c", "c", "r2"]);
+  });
 
   it("ignores text when no field has focus", () => {
-    document.querySelector<HTMLButtonElement>("#go")!.focus()
-    input.handle({ type: "text", text: "X" })
-    expect(document.querySelector<HTMLInputElement>("#name")!.value).toBe("ab")
-  })
-})
+    document.querySelector<HTMLButtonElement>("#go")!.focus();
+    input.handle({ type: "text", text: "X" });
+    expect(document.querySelector<HTMLInputElement>("#name")!.value).toBe("ab");
+  });
+});

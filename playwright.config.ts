@@ -2,9 +2,9 @@
 // (e2e/harness), driven in Chromium, Firefox and WebKit. `pnpm e2e` starts the
 // dev servers (the scene's, which serves the harness, and the panel pages').
 
-import { defineConfig } from "@playwright/test"
+import { defineConfig } from "@playwright/test";
 
-const CI = Boolean(process.env.CI)
+const CI = Boolean(process.env.CI);
 
 export default defineConfig({
   testDir: "e2e",
@@ -18,7 +18,7 @@ export default defineConfig({
   use: {
     baseURL: "http://localhost:5173",
     viewport: { width: 800, height: 800 },
-    trace: "retain-on-failure"
+    trace: "retain-on-failure",
   },
   // No device presets: they make the browser claim another platform (Windows),
   // and the agent's key bindings follow the platform (Cmd on macOS, Ctrl elsewhere).
@@ -26,12 +26,12 @@ export default defineConfig({
     { name: "chromium", use: { browserName: "chromium" } },
     // Headless Firefox on Linux (CI) has no WebGL: the harness then skips the checks of the drawn image.
     { name: "firefox", use: { browserName: "firefox" } },
-    { name: "webkit", use: { browserName: "webkit" } }
+    { name: "webkit", use: { browserName: "webkit" } },
   ],
   webServer: {
     command: "pnpm dev",
     url: "http://localhost:5174/panels/reader/",
     reuseExistingServer: !CI,
-    timeout: 60_000
-  }
-})
+    timeout: 60_000,
+  },
+});

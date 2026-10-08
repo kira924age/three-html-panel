@@ -7,32 +7,32 @@
 
 export interface PacerOptions {
   /** The share of time a panel may spend producing frames (0–1). */
-  budget?: number
-  minIntervalMs?: number
-  maxIntervalMs?: number
+  budget?: number;
+  minIntervalMs?: number;
+  maxIntervalMs?: number;
 }
 
 export class RenderPacer {
-  private readonly budget: number
-  private readonly minIntervalMs: number
-  private readonly maxIntervalMs: number
-  private intervalMs: number
+  private readonly budget: number;
+  private readonly minIntervalMs: number;
+  private readonly maxIntervalMs: number;
+  private intervalMs: number;
 
   constructor({ budget = 0.25, minIntervalMs = 16, maxIntervalMs = 500 }: PacerOptions = {}) {
-    this.budget = budget
-    this.minIntervalMs = minIntervalMs
-    this.maxIntervalMs = maxIntervalMs
-    this.intervalMs = minIntervalMs
+    this.budget = budget;
+    this.minIntervalMs = minIntervalMs;
+    this.maxIntervalMs = maxIntervalMs;
+    this.intervalMs = minIntervalMs;
   }
 
   /** Records how long a frame took and returns the interval until the next one may start. */
   record(durationMs: number): number {
-    const wanted = durationMs / this.budget
-    this.intervalMs = Math.min(this.maxIntervalMs, Math.max(this.minIntervalMs, wanted))
-    return this.intervalMs
+    const wanted = durationMs / this.budget;
+    this.intervalMs = Math.min(this.maxIntervalMs, Math.max(this.minIntervalMs, wanted));
+    return this.intervalMs;
   }
 
   get interval(): number {
-    return this.intervalMs
+    return this.intervalMs;
   }
 }
