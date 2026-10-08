@@ -45,10 +45,20 @@ test("moves a note dragged by its bar, which the page captures the pointer for",
 test("cuts the caret to the note when its line is scrolled half out of view", async ({ page }) => {
   const field = `${NOTE} textarea`;
   await panel.focus(await panel.at(field, 0.5, 0.3));
-  await page.keyboard.press("ControlOrMeta+a");
   const text = "Sticky notes keep a few lines of text. ".repeat(6);
-  await page.keyboard.type(text);
-  // All typed (each key scrolls the field to its caret) before scrolling it back.
+  // Most of it put in at once (typing it all took over 20 s in CI), the caret at
+  // its end; the rest typed, which scrolls the field to the caret as typing does.
+  const typed = "of text. ";
+  await panel.frame.evaluate(
+    ({ field, value }) => {
+      const textarea = document.querySelector<HTMLTextAreaElement>(field)!;
+      textarea.value = value;
+      textarea.setSelectionRange(value.length, value.length);
+    },
+    { field, value: text.slice(0, -typed.length) },
+  );
+  await page.keyboard.type(typed);
+  // All typed before scrolling it back.
   await expect
     .poll(() =>
       panel.frame.evaluate(
