@@ -2,3 +2,7 @@ node_modules
 dist
 test-results
 playwright-report
+# Local settings: not in the repository (see .env.example).
+.env
+.env.*
+!.env.example

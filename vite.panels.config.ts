@@ -11,6 +11,23 @@ import { defineConfig, loadEnv, type InlineConfig, type Plugin } from "vite"
 const PANEL_SANDBOX_CSP = "sandbox allow-scripts allow-forms allow-popups"
 
 export const AGENT_SOURCE = "/src/agent/entry.ts"
+
+/**
+ * Where the scene and the panel pages are served: `pnpm dev` and `pnpm
+ * preview` use two origins of their own. VITE_HOST_ORIGIN and VITE_PANEL_ORIGIN
+ * override them, from the environment or an untracked .env file (see
+ * .env.example).
+ */
+const DEFAULT_ORIGINS = {
+  development: { host: "http://localhost:5173", panel: "http://localhost:5174" },
+  production: { host: "http://localhost:4173", panel: "http://localhost:4174" }
+}
+
+export function originsFor(mode: string): { host: string; panel: string } {
+  const env = loadEnv(mode, import.meta.dirname, "VITE_")
+  const defaults = mode === "production" ? DEFAULT_ORIGINS.production : DEFAULT_ORIGINS.development
+  return { host: env.VITE_HOST_ORIGIN || defaults.host, panel: env.VITE_PANEL_ORIGIN || defaults.panel }
+}
 /** Where a build puts the agent, so that pages can load it without bundling it. */
 export const AGENT_BUILD_FILE = "agent.js"
 
@@ -55,9 +72,9 @@ export function panelServerConfig(mode: string): InlineConfig {
 export default defineConfig(({ mode }) => panelConfig(mode))
 
 function panelConfig(mode: string) {
-  const env = loadEnv(mode, import.meta.dirname, "VITE_")
-  const hostOrigin = env.VITE_HOST_ORIGIN!
-  const panelPort = Number(new URL(env.VITE_PANEL_ORIGIN!).port)
+  const origins = originsFor(mode)
+  const hostOrigin = origins.host
+  const panelPort = Number(new URL(origins.panel).port)
   const server = {
     port: panelPort,
     strictPort: true,
