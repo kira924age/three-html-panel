@@ -6,6 +6,7 @@ import { RenderPacer } from "./pacer";
 let capture: PageCapture;
 let hit: Element;
 let frames: string[];
+let cursors: string[];
 let captures: ReturnType<typeof vi.spyOn>;
 const move = () => capture.handle({ type: "pointer", kind: "move", x: 5, y: 5 });
 const settle = () => vi.advanceTimersByTimeAsync(100);
@@ -24,12 +25,13 @@ beforeEach(() => {
   });
   Object.defineProperty(document, "elementFromPoint", { configurable: true, value: () => hit });
   frames = [];
+  cursors = [];
   captures = vi.spyOn(RenderPacer.prototype, "record");
   capture = new PageCapture(document, {
     onFrame: (frame) => frames.push(frame.svg),
     onEditing() {},
     onEditables() {},
-    onCursor() {},
+    onCursor: (cursor) => cursors.push(cursor),
   });
 });
 
@@ -100,4 +102,41 @@ it("keeps invalidating while a button is held for a drag", async () => {
   move();
   await settle();
   expect(captures).toHaveBeenCalledTimes(count + 1);
+});
+
+it("updates auto cursors over text within the same element without capturing", async () => {
+  document.body.innerHTML = '<p style="cursor:auto">Text</p>';
+  hit = document.querySelector("p")!;
+  // jsdom has no text hit testing. Supply only the browser geometry APIs;
+  // the real input cursor getter and PageCapture reporting stay in use.
+  const doc = document as unknown as {
+    caretPositionFromPoint?: (x: number) => { offsetNode: Node; offset: number } | null;
+  };
+  doc.caretPositionFromPoint = (x) => (x >= 10 ? { offsetNode: hit.firstChild!, offset: 0 } : null);
+  const createRange = document.createRange.bind(document);
+  vi.spyOn(document, "createRange").mockImplementation(() => {
+    const range = createRange();
+    range.getClientRects = () => [new DOMRect(10, 0, 20, 20)] as unknown as DOMRectList;
+    return range;
+  });
+  try {
+    capture.start();
+    move();
+    await settle();
+    const count = captures.mock.calls.length;
+    expect(cursors.at(-1)).toBe("default");
+    cursors.length = 0;
+    capture.handle({ type: "pointer", kind: "move", x: 15, y: 5 });
+    await settle();
+    expect(cursors).toEqual(["text"]);
+    capture.handle({ type: "pointer", kind: "move", x: 16, y: 5 });
+    await settle();
+    expect(cursors).toEqual(["text"]);
+    move();
+    await settle();
+    expect(cursors).toEqual(["text", "default"]);
+    expect(captures).toHaveBeenCalledTimes(count);
+  } finally {
+    delete doc.caretPositionFromPoint;
+  }
 });
