@@ -10,6 +10,7 @@ import {
 } from "vite-plus";
 import {
   AGENT_BUILD_FILE,
+  PANEL_PAGES,
   SITES_DIR,
   injectPanelAgent,
   originsFor,
@@ -123,6 +124,10 @@ export default defineConfig(({ mode }) => {
       options: { typeAware: true, typeCheck: true },
     },
     base: "./",
+    // The pages this server serves. Without this, Vite scans every index.html in
+    // the repository for dependencies, including the example sites that are
+    // packages of their own, whose imports only their own configs resolve.
+    optimizeDeps: { entries: ["index.html", "e2e/harness/index.html"] },
     server: { port: hostPort, strictPort: true },
     preview: { port: hostPort, strictPort: true },
     // The scene's pages load the panel pages from the panel server's origin.
@@ -137,9 +142,12 @@ export default defineConfig(({ mode }) => {
       rolldownOptions: {
         input: {
           main: resolve(import.meta.dirname, "index.html"),
-          notes: resolve(import.meta.dirname, SITES_DIR, "notes/index.html"),
-          controls: resolve(import.meta.dirname, SITES_DIR, "controls/index.html"),
-          reader: resolve(import.meta.dirname, SITES_DIR, "reader/index.html"),
+          ...Object.fromEntries(
+            PANEL_PAGES.map((name) => [
+              name,
+              resolve(import.meta.dirname, SITES_DIR, name, "index.html"),
+            ]),
+          ),
           agent: resolve(import.meta.dirname, "src/agent/entry.ts"),
         },
         output: {

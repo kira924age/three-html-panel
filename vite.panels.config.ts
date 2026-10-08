@@ -33,6 +33,8 @@ export function originsFor(mode: string): { host: string; panel: string } {
 }
 /** Where the panel pages are, from the repository's root (and in URLs of the panel server). */
 export const SITES_DIR = "examples/sites";
+/** The pages under SITES_DIR this server serves (and adds the agent to); the others are packages of their own. */
+export const PANEL_PAGES = ["notes", "controls", "reader"];
 /** Where a build puts the agent, so that pages can load it without bundling it. */
 export const AGENT_BUILD_FILE = "agent.js";
 
@@ -95,6 +97,8 @@ function panelConfig(mode: string) {
   };
   return {
     root: import.meta.dirname,
+    // Only the pages this server serves (see the scene's optimizeDeps in vite.config.ts).
+    optimizeDeps: { entries: PANEL_PAGES.map((name) => `${SITES_DIR}/${name}/index.html`) },
     clearScreen: false,
     server,
     preview: server,
