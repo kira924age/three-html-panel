@@ -1,0 +1,15 @@
+{
+  "name": "example-web-standards",
+  "private": true,
+  "description": "An example site: browser-native HTML and CSS features, with no framework",
+  "type": "module",
+  "scripts": {
+    "dev": "vp dev",
+    "build": "vp build",
+    "preview": "vp preview"
+  },
+  "devDependencies": {
+    "vite": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}
