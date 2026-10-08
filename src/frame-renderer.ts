@@ -111,14 +111,20 @@ export class FrameRenderer {
   readonly texture: CanvasTexture
   private readonly context: CanvasRenderingContext2D
   private pending: Frame | null = null
+  /** The frame drawn last, to draw again at another resolution. */
+  private drawn: Frame | null = null
+  /** The resolution changed while a frame was being drawn: draw the last one again after it. */
+  private redraw = false
   private drawing = false
   private disposed = false
   private paused = false
+  /** The most canvas pixels per CSS pixel: the pixelRatio asked for, within MAX_CANVAS_LENGTH. */
+  private readonly maxRatio: number
 
   constructor(private readonly options: FrameRendererOptions) {
-    const ratio = Math.min(options.pixelRatio, MAX_CANVAS_LENGTH / Math.max(options.width, options.height))
-    this.canvas.width = Math.round(options.width * ratio)
-    this.canvas.height = Math.round(options.height * ratio)
+    this.maxRatio = Math.min(options.pixelRatio, MAX_CANVAS_LENGTH / Math.max(options.width, options.height))
+    this.canvas.width = Math.round(options.width * this.maxRatio)
+    this.canvas.height = Math.round(options.height * this.maxRatio)
     this.context = this.canvas.getContext("2d")!
     this.clear()
     this.texture = new CanvasTexture(this.canvas)
@@ -144,11 +150,42 @@ export class FrameRenderer {
    */
   setPaused(paused: boolean): void {
     this.paused = paused
-    if (!paused && this.pending && !this.drawing) void this.drain()
+    if (!paused && (this.pending || this.redraw) && !this.drawing) void this.drain()
+  }
+
+  /**
+   * Draws at `ratio` canvas pixels per CSS pixel from now on (at most the
+   * pixelRatio asked for): fewer pixels to draw and upload while the panel is
+   * drawn small. The picture is scaled at once, then the last frame drawn again
+   * at the new resolution (its SVG is vector).
+   */
+  setResolution(ratio: number): void {
+    const scale = Math.min(ratio, this.maxRatio)
+    const width = Math.max(1, Math.round(this.options.width * scale))
+    const height = Math.max(1, Math.round(this.options.height * scale))
+    if (this.disposed || (width === this.canvas.width && height === this.canvas.height)) return
+    // Resizing clears the canvas: keep the picture meanwhile, scaled.
+    const picture = document.createElement("canvas")
+    picture.width = this.canvas.width
+    picture.height = this.canvas.height
+    picture.getContext("2d")?.drawImage(this.canvas, 0, 0)
+    this.canvas.width = width
+    this.canvas.height = height
+    this.context.drawImage(picture, 0, 0, width, height)
+    // A texture keeps its size once uploaded: a new one, of the new size.
+    this.texture.dispose()
+    this.texture.needsUpdate = true
+    // A frame being drawn now is newer than the last one drawn: draw that one again once it is done.
+    if (this.drawing) this.redraw = true
+    else this.pending ??= this.drawn
+    if (this.pending && !this.drawing && !this.paused) void this.drain()
   }
 
   /** Paints the background only, e.g. when the page failed to load. */
   clear(): void {
+    // Not to be drawn again on a change of resolution.
+    this.drawn = null
+    this.redraw = false
     this.context.fillStyle = this.options.background
     this.context.fillRect(0, 0, this.canvas.width, this.canvas.height)
     if (this.texture) this.texture.needsUpdate = true
@@ -162,7 +199,10 @@ export class FrameRenderer {
 
   private async drain(): Promise<void> {
     this.drawing = true
-    while (this.pending && !this.disposed && !this.paused) {
+    while (!this.disposed && !this.paused) {
+      if (!this.pending && this.redraw) this.pending = this.drawn
+      this.redraw = false
+      if (!this.pending) break
       const frame = this.pending
       this.pending = null
       try {
@@ -179,6 +219,7 @@ export class FrameRenderer {
         this.context.drawImage(source, 0, 0, width, height)
         if (source !== image) (source as ImageBitmap).close()
         this.texture.needsUpdate = true
+        this.drawn = frame
         this.options.onDraw?.()
       } catch {
         // A frame that does not decode is skipped; the next one may.

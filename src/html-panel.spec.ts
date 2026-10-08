@@ -405,7 +405,11 @@ describe("the panel's iframe", () => {
     camera.updateMatrixWorld()
     const canvas = document.createElement("canvas")
     canvas.getBoundingClientRect = () => new DOMRect(0, 0, 800, 600)
-    const renderer = { domElement: canvas, getSize: (size: Vector2) => size.set(800, 600) } as unknown as WebGLRenderer
+    const renderer = {
+      domElement: canvas,
+      getSize: (size: Vector2) => size.set(800, 600),
+      getPixelRatio: () => 1
+    } as unknown as WebGLRenderer
 
     const postMessage = vi.fn()
     panel.iframe.contentWindow!.postMessage = postMessage as typeof window.postMessage
@@ -449,7 +453,8 @@ describe("the panel's iframe", () => {
   describe("while it is not drawn", () => {
     const renderer = {
       domElement: document.createElement("canvas"),
-      getSize: (size: Vector2) => size.set(800, 600)
+      getSize: (size: Vector2) => size.set(800, 600),
+      getPixelRatio: () => 1
     } as unknown as WebGLRenderer
     /** A camera 1 unit in front of the panel (at the origin, facing +z), or behind it. */
     const cameraAt = (z: number) => {
@@ -538,7 +543,8 @@ describe("the panel's iframe", () => {
     // distance d, it is drawn at 0.375 / d screen px per page px.
     const renderer = {
       domElement: document.createElement("canvas"),
-      getSize: (size: Vector2) => size.set(800, 600)
+      getSize: (size: Vector2) => size.set(800, 600),
+      getPixelRatio: () => 1
     } as unknown as WebGLRenderer
     const cameraAt = (z: number) => {
       const camera = new PerspectiveCamera(90, 800 / 600, 0.01, 100)
@@ -637,6 +643,81 @@ describe("the panel's iframe", () => {
       await delivered()
       expect(paces).toEqual([FAR_PACE_MS])
       port.close()
+    })
+  })
+
+  describe("the texture's resolution", () => {
+    const rendererWith = (pixelRatio: number) =>
+      ({
+        domElement: document.createElement("canvas"),
+        getSize: (size: Vector2) => size.set(800, 600),
+        getPixelRatio: () => pixelRatio
+      }) as unknown as WebGLRenderer
+    // As in "drawn small": at a distance d, drawn at 0.375 / d screen px per page px.
+    const cameraAt = (z: number) => {
+      const camera = new PerspectiveCamera(90, 800 / 600, 0.01, 100)
+      camera.position.set(0, 0, z)
+      camera.updateMatrixWorld()
+      return camera
+    }
+    /** The panel's texture width (the page is 800 CSS px wide, drawn at pixelRatio 2 at most). */
+    const textureWidth = (panel: HtmlPanel) => (panel as unknown as { renderer: { canvas: HTMLCanvasElement } }).renderer.canvas.width
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it("goes down once every view draws the panel well under it, and back up at once when one draws it denser", () => {
+      vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "performance"] })
+      const panel = open()
+      panel.updateMatrixWorld()
+      const renderer = rendererWith(1)
+      const draw = (z: number) => panel.onBeforeRender(renderer, new Scene(), cameraAt(z))
+      expect(textureWidth(panel)).toBe(1600)
+      // 0.75 screen px per page px: well under 1 (the half), not under 0.5 (the quarter) by enough.
+      draw(0.5)
+      expect(textureWidth(panel)).toBe(1600)
+      vi.advanceTimersByTime(250)
+      expect(textureWidth(panel)).toBe(800)
+      // 0.45: under the quarter's 0.5, but not well under it: stays.
+      draw(0.83)
+      vi.advanceTimersByTime(250)
+      expect(textureWidth(panel)).toBe(800)
+      // 0.375: well under the quarter's 0.5 too.
+      draw(1)
+      vi.advanceTimersByTime(250)
+      expect(textureWidth(panel)).toBe(400)
+      // 0.47: drawn at no more than the quarter: stays.
+      draw(0.8)
+      vi.advanceTimersByTime(250)
+      expect(textureWidth(panel)).toBe(400)
+      // 1.25: denser than the half too: the full resolution, at once.
+      draw(0.3)
+      expect(textureWidth(panel)).toBe(1600)
+    })
+
+    it("keeps the resolution any view needs, and counts the screen's pixel ratio but not an eye's", () => {
+      vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "performance"] })
+      const panel = open()
+      panel.updateMatrixWorld()
+      // A minimap drawing it small does not lower it while the main view draws it large.
+      for (let i = 0; i < 4; i++) {
+        panel.onBeforeRender(rendererWith(1), new Scene(), cameraAt(0.3))
+        panel.onBeforeRender(rendererWith(1), new Scene(), cameraAt(4))
+        vi.advanceTimersByTime(250)
+      }
+      expect(textureWidth(panel)).toBe(1600)
+      // On a 2x screen, 0.75 CSS px is 1.5 device px: too dense for the half.
+      for (let i = 0; i < 4; i++) {
+        panel.onBeforeRender(rendererWith(2), new Scene(), cameraAt(0.5))
+        vi.advanceTimersByTime(250)
+      }
+      expect(textureWidth(panel)).toBe(1600)
+      // An eye's viewport is in device pixels already: 0.75, the half.
+      const eye = Object.assign(cameraAt(0.5), { viewport: new Vector4(0, 0, 800, 600) })
+      panel.onBeforeRender(rendererWith(2), new Scene(), eye)
+      vi.advanceTimersByTime(250)
+      expect(textureWidth(panel)).toBe(800)
     })
   })
 })
