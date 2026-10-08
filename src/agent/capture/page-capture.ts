@@ -68,6 +68,12 @@ export class PageCapture {
   private timer = 0
   private notBefore = 0
   private lastEditing = ""
+  /**
+   * The SVG of the frame sent last. A capture that looks the same (the DOM
+   * changed, as a framework re-rendering does, but not what it shows) is not
+   * sent: the host would load, draw and upload it again for nothing.
+   */
+  private lastSvg = ""
   private lastCursor = ""
   private lastEditables = ""
   /** Presses and releases handled for this document (see onEditing). */
@@ -115,6 +121,8 @@ export class PageCapture {
   start(): void {
     this.started = true
     this.lastEditing = ""
+    // The host waits for the new document's picture: send the next frame, whatever it looks like.
+    this.lastSvg = ""
     this.lastCursor = ""
     this.lastEditables = ""
     this.css.invalidate()
@@ -232,7 +240,11 @@ export class PageCapture {
         listBoxSelection: isListBox(focused) ? this.listBoxRows(focused) : [],
         inlineImage: url => this.images.get(url)
       }))
-      this.options.onFrame({ svg: buildFrameSvg(xhtml, this.css.get(), width, height), width, height })
+      const svg = buildFrameSvg(xhtml, this.css.get(), width, height)
+      if (svg !== this.lastSvg) {
+        this.lastSvg = svg
+        this.options.onFrame({ svg, width, height })
+      }
       this.reportEditing()
       this.reportEditables(width, height)
       this.reportCursor()
