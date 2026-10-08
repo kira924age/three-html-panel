@@ -93,6 +93,25 @@ export default defineConfig(({ mode }) => {
   const hostPort = Number(new URL(origins.host).port);
   return {
     fmt: {},
+    // The npm package (`pnpm pack:lib`), into lib/: dist/ is the demo's build.
+    pack: {
+      entry: {
+        index: "src/index.ts",
+        agent: "src/agent/index.ts",
+        page: "src/agent/page.ts",
+        // The self-starting agent, for a <script> tag (data-host-origin on it).
+        "agent-script": "src/agent/entry.ts",
+      },
+      outDir: "lib",
+      format: "esm",
+      platform: "browser",
+      // For browsers, not the Node version package.json's engines asks for (that is for development).
+      target: "es2022",
+      dts: true,
+      sourcemap: true,
+      clean: true,
+      publint: true,
+    },
     lint: {
       jsPlugins: [{ name: "vite-plus", specifier: "vite-plus/oxlint-plugin" }],
       rules: { "vite-plus/prefer-vite-plus-imports": "error" },
