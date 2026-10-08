@@ -172,6 +172,8 @@ test("stops the page's frames while the panel is out of view, and shows it as it
   page,
 }) => {
   test.skip(!panel.drawn, "without WebGL the panel is never drawn, so it is never paused");
+  // Waits of up to 15 s below (see there): more than the usual 30 s in all.
+  test.slow();
   // The host tells by its render loop and its own timer. A browser that holds
   // both back, in a page it takes as not shown (headless WebKit on Linux), never
   // gets to tell: there is nothing to check.
@@ -207,11 +209,14 @@ test("stops the page's frames while the panel is out of view, and shows it as it
     return (await page.evaluate(() => window.harness.frames)) - before;
   };
   await expect.poll(() => framesIn(400)).toBeGreaterThan(0);
-  // Out of view: after a second without being drawn, no more frames.
+  // Out of view: after a second without being drawn, no more frames. The host
+  // tells by its own timer, which a browser drawing in software can hold up for
+  // seconds (headless WebKit on Linux in CI stalled the page for about 5 s): the
+  // waits allow for that.
   await page.evaluate(
     () => ((window.harness.panel as { position: { x: number } }).position.x = 100),
   );
-  await expect.poll(() => framesIn(400), { timeout: 5000 }).toBe(0);
+  await expect.poll(() => framesIn(400), { timeout: 15_000 }).toBe(0);
   const hidden = await page.evaluate(() => window.harness.frames);
   // The page changes meanwhile: its text.
   const field = `${NOTE} textarea`;
@@ -223,6 +228,6 @@ test("stops the page's frames while the panel is out of view, and shows it as it
   // Back in view: frames come again, the first one at once.
   await page.evaluate(() => ((window.harness.panel as { position: { x: number } }).position.x = 0));
   await expect
-    .poll(() => page.evaluate(() => window.harness.frames), { timeout: 2000 })
+    .poll(() => page.evaluate(() => window.harness.frames), { timeout: 15_000 })
     .toBeGreaterThan(hidden);
 });
