@@ -53,8 +53,9 @@ describe("dragging to scroll", () => {
       get: () => scrollTop,
       set: (value: number) => (scrollTop = value),
     });
-    box.scrollBy = ((_x: number, y: number) => {
-      scrollTop += y;
+    box.scrollBy = ((options: ScrollToOptions) => {
+      expect(options.behavior).toBe("instant");
+      scrollTop += options.top ?? 0;
     }) as typeof box.scrollBy;
     const text = document.querySelector("#text")!;
     document.elementFromPoint = () => text;
