@@ -135,6 +135,22 @@ test("keeps the caret after a space that ends a wrapped line on that line", asyn
 
 test("stops the page's frames while the panel is out of view, and shows it as it is now once back", async ({ page }) => {
   test.skip(!panel.drawn, "without WebGL the panel is never drawn, so it is never paused")
+  // The host tells by its render loop and its own timer. A browser that holds
+  // both back, in a page it takes as not shown (headless WebKit on Linux), never
+  // gets to tell: there is nothing to check.
+  const rendering = await page.evaluate(
+    () =>
+      new Promise<{ frames: number; visibility: string }>(resolve => {
+        let frames = 0
+        const tick = () => {
+          frames++
+          requestAnimationFrame(tick)
+        }
+        requestAnimationFrame(tick)
+        setTimeout(() => resolve({ frames, visibility: document.visibilityState }), 500)
+      })
+  )
+  test.skip(rendering.frames < 5, `the host page is not rendering: ${rendering.frames} animation frames in 500 ms, ${rendering.visibility}`)
   // Something that keeps changing: frames keep coming while the panel is seen.
   await panel.frame.evaluate(() => {
     const style = document.createElement("style")
