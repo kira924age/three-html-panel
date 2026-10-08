@@ -16,13 +16,14 @@
 
 import {
   BackSide,
-  DoubleSide,
+  Color,
   Mesh,
   MeshBasicMaterial,
-  Plane,
   PlaneGeometry,
   Vector2,
   Vector3,
+  Vector4,
+  type BufferGeometry,
   type Camera,
   type Object3DEventMap,
   type Ray,
@@ -32,6 +33,7 @@ import { FrameRenderer } from "./frame-renderer"
 import { PanelConnection } from "./panel-connection"
 import { getSharedKeyboard, type KeyboardTarget, type PanelKeyboard } from "./panel-keyboard"
 import { MAX_PAGE_LENGTH, type HostMessage } from "./protocol"
+import { Surface, type SurfacePoint } from "./surface"
 import type { Box, Caret, PointerInput, PointerKind } from "./types"
 
 export interface HtmlPanelOptions {
@@ -46,8 +48,16 @@ export interface HtmlPanelOptions {
   width?: number
   /** The page's layout height in CSS pixels. */
   height?: number
-  /** The length of the panel's longer side in world units (metres). */
+  /** The length of the panel's longer side in world units (metres). Not used with `geometry`. */
   size?: number
+  /**
+   * The surface to show the page on, instead of a flat rectangle of `size`: a
+   * curved strip, a box, any geometry with UVs. Its UVs place the page: u from
+   * its left (0) to its right (1), v from its bottom (0) to its top (1). Make
+   * its shape match the page's, or the page is stretched. The page is drawn on
+   * front faces, and a plain back on the others. The panel does not dispose it.
+   */
+  geometry?: BufferGeometry
   /** Texture pixels per CSS pixel. */
   pixelRatio?: number
   /** Painted under pages that leave their background transparent. */
@@ -120,23 +130,59 @@ export interface HtmlPanelEventMap extends Object3DEventMap {
   cursorchange: {}
 }
 
-export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelEventMap> implements KeyboardTarget {
+/**
+ * Draws the caret over the page's texture, in texture coordinates, so that it
+ * lies on the surface whatever its shape, and blinking does not re-upload the
+ * texture. Inserted into the panel's MeshBasicMaterial.
+ *
+ * It is at least a screen pixel wide: a panel far away or seen small makes it
+ * thinner than one, and a shape drawn in the shader (unlike a mesh) gets no
+ * multisampling, so it would miss most pixels. The pixel's size is capped by
+ * the caret's height, so that where UVs jump (the edges of a box's faces) it
+ * does not spread.
+ */
+const CARET_FRAGMENT = `
+#include <map_fragment>
+vec2 caretPixel = min(fwidth(vMapUv), vec2(caretRect.w - caretRect.y));
+vec2 caretHalf = max((caretRect.zw - caretRect.xy) * 0.5, caretPixel * 0.5);
+vec2 caretOffset = abs(vMapUv - (caretRect.xy + caretRect.zw) * 0.5);
+if (caretOffset.x <= caretHalf.x && caretOffset.y <= caretHalf.y) {
+  diffuseColor.rgb = mix(diffuseColor.rgb, caretColor, caretOpacity);
+}
+`
+
+export class HtmlPanel extends Mesh<BufferGeometry, MeshBasicMaterial, HtmlPanelEventMap> implements KeyboardTarget {
   readonly iframe = document.createElement("iframe")
   /** The origin the page is expected on; messages from anywhere else are ignored. */
   readonly origin: string
   readonly sandboxed: boolean
   readonly pageWidth: number
   readonly pageHeight: number
+  /** The width of the panel's bounding box in its own space (with `geometry`, along x). */
   readonly worldWidth: number
+  /** The height of the panel's bounding box in its own space (with `geometry`, along y). */
   readonly worldHeight: number
   /** The mouse cursor the page asks for where the pointer is, as a CSS keyword. */
   cursor = "default"
 
   private readonly renderer: FrameRenderer
   private readonly keyboard: PanelKeyboard
-  private readonly back: Mesh<PlaneGeometry, MeshBasicMaterial>
-  private readonly caret: Mesh<PlaneGeometry, MeshBasicMaterial>
+  private readonly back: Mesh<BufferGeometry, MeshBasicMaterial>
+  /** The caret drawn over the texture (CARET_FRAGMENT): its rectangle in UVs (left, bottom, right, top). */
+  private readonly caretUniforms = {
+    caretRect: { value: new Vector4(1, 1, 0, 0) },
+    caretColor: { value: new Color() },
+    caretOpacity: { value: 0 }
+  }
+  /** The caret's opacity while it shows (it blinks), 0 without a caret. */
+  private caretAlpha = 0
+  private caretShown = false
   private readonly caretTimer: number
+  /** The geometry was made here (not passed in): the panel disposes it. */
+  private readonly ownsGeometry: boolean
+  private surface: Surface
+  /** The points of the surface where the caret is, for placing the IME (see toClient). */
+  private caretPoints: { key: string; points: SurfacePoint[] } | null = null
   private readonly onError: (error: Error) => void
   private readonly connection: PanelConnection
   private editing = false
@@ -186,17 +232,19 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
       pixelRatio: options.pixelRatio ?? defaultPixelRatio(),
       background: options.background ?? "#ffffff"
     })
-    super(
-      new PlaneGeometry(pageWidth * scale, pageHeight * scale),
-      new MeshBasicMaterial({ map: renderer.texture, toneMapped: false })
-    )
+    const geometry = options.geometry ?? new PlaneGeometry(pageWidth * scale, pageHeight * scale)
+    super(geometry, new MeshBasicMaterial({ map: renderer.texture, toneMapped: false }))
+    this.ownsGeometry = !options.geometry
+    this.surface = new Surface(geometry)
     this.renderer = renderer
     this.origin = url.origin
     this.sandboxed = options.sandbox === true
     this.pageWidth = pageWidth
     this.pageHeight = pageHeight
-    this.worldWidth = pageWidth * scale
-    this.worldHeight = pageHeight * scale
+    if (!geometry.boundingBox) geometry.computeBoundingBox()
+    const bounds = geometry.boundingBox!.getSize(new Vector3())
+    this.worldWidth = bounds.x
+    this.worldHeight = bounds.y
     this.keyboard = options.keyboard ?? getSharedKeyboard()
     this.onError = options.onError ?? (error => console.warn("[three-html-panel]", error.message))
 
@@ -205,17 +253,16 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
     this.back.raycast = () => {}
     this.add(this.back)
 
-    // The caret is drawn on top of the texture, so blinking does not re-upload it.
-    this.caret = new Mesh(
-      new PlaneGeometry(1, 1),
-      new MeshBasicMaterial({ side: DoubleSide, depthWrite: false, transparent: true })
-    )
-    this.caret.raycast = () => {}
-    this.caret.visible = false
-    this.caret.renderOrder = 1
-    this.add(this.caret)
+    this.material.onBeforeCompile = shader => {
+      Object.assign(shader.uniforms, this.caretUniforms)
+      shader.fragmentShader = shader.fragmentShader
+        .replace("void main() {", "uniform vec4 caretRect;\nuniform vec3 caretColor;\nuniform float caretOpacity;\nvoid main() {")
+        .replace("#include <map_fragment>", CARET_FRAGMENT)
+    }
     this.caretTimer = window.setInterval(() => {
-      if (this.editing && this.caret.userData.hasCaret) this.caret.visible = !this.caret.visible
+      if (!this.editing || this.caretAlpha === 0) return
+      this.caretShown = !this.caretShown
+      this.caretUniforms.caretOpacity.value = this.caretShown ? this.caretAlpha : 0
     }, CARET_BLINK_MS)
 
     this.connection = new PanelConnection({
@@ -323,19 +370,18 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
     const color = caret ? splitAlpha(caret.color) : null
     // A transparent caret (caret-color: transparent) is how a page hides it.
     if (color?.alpha === 0) caret = null
-    this.caret.userData.hasCaret = caret !== null
-    this.caret.visible = caret !== null
+    this.caretAlpha = caret ? color!.alpha : 0
+    this.caretShown = caret !== null
+    this.caretUniforms.caretOpacity.value = this.caretAlpha
     if (!caret) return
-    const unit = this.worldWidth / this.pageWidth
-    const width = Math.max(1.5, caret.height / 14) * unit
-    this.caret.scale.set(width, caret.height * unit, 1)
-    this.caret.position.set(
-      (caret.x / this.pageWidth - 0.5) * this.worldWidth + width / 2,
-      (0.5 - (caret.y + caret.height / 2) / this.pageHeight) * this.worldHeight,
-      0.0005
+    const width = Math.max(1.5, caret.height / 14)
+    this.caretUniforms.caretRect.value.set(
+      caret.x / this.pageWidth,
+      1 - (caret.y + caret.height) / this.pageHeight,
+      (caret.x + width) / this.pageWidth,
+      1 - caret.y / this.pageHeight
     )
-    this.caret.material.color.setStyle(color!.rgb)
-    this.caret.material.opacity = color!.alpha
+    this.caretUniforms.caretColor.value.setStyle(color!.rgb)
   }
 
   private send(message: HostMessage): void {
@@ -359,18 +405,24 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
   }
 
   /**
-   * The texture coordinate where `ray` meets the panel's plane, or null if it
-   * runs parallel or points away. Unlike a raycast, this also answers outside
-   * the panel, which keeps a drag going when the pointer leaves the edge.
+   * The texture coordinate where `ray` meets the panel, or null if it runs
+   * parallel or points away. Unlike a raycast, this also answers outside the
+   * panel, as if its surface went on past the edge nearest the ray, which keeps
+   * a drag going when the pointer leaves the edge.
    */
   uvFromRay(ray: Ray): Vector2 | null {
     this.updateWorldMatrix(true, false)
-    const normal = new Vector3(0, 0, 1).transformDirection(this.matrixWorld)
-    const plane = new Plane().setFromNormalAndCoplanarPoint(normal, new Vector3().setFromMatrixPosition(this.matrixWorld))
-    const point = ray.intersectPlane(plane, new Vector3())
-    if (!point) return null
-    const local = this.worldToLocal(point)
-    return new Vector2(local.x / this.worldWidth + 0.5, local.y / this.worldHeight + 0.5)
+    const local = ray.clone().applyMatrix4(this.matrixWorld.clone().invert())
+    return this.currentSurface().uvFromRay(local)
+  }
+
+  /** The surface of the current geometry (it may have been replaced). */
+  private currentSurface(): Surface {
+    if (this.surface.geometry !== this.geometry) {
+      this.surface = new Surface(this.geometry)
+      this.caretPoints = null
+    }
+    return this.surface
   }
 
   /**
@@ -482,10 +534,29 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
     if (!editing && !this.editing) this.keyboard.release(this)
   }
 
-  /** A point of the page (CSS pixels) on screen (client pixels of the canvas's page), or null behind the camera. */
+  /**
+   * A point of the page (CSS pixels) on screen (client pixels of the canvas's
+   * page), or null behind the camera. Where the page is on several faces (a
+   * box), the one facing the camera, nearest it.
+   */
   private toClient(x: number, y: number, canvas: HTMLCanvasElement, camera: Camera): { x: number; y: number } | null {
-    const point = this.scratch.set((x / this.pageWidth - 0.5) * this.worldWidth, (0.5 - y / this.pageHeight) * this.worldHeight, 0)
-    this.localToWorld(point).project(camera)
+    const surface = this.currentSurface()
+    const key = `${x},${y}`
+    if (this.caretPoints?.key !== key) {
+      this.caretPoints = { key, points: surface.pointsAt(new Vector2(x / this.pageWidth, 1 - y / this.pageHeight)) }
+    }
+    const eye = new Vector3().setFromMatrixPosition(camera.matrixWorld)
+    let best: { position: Vector3; facing: boolean; distance: number } | null = null
+    for (const { position, normal } of this.caretPoints.points) {
+      const world = this.localToWorld(position.clone())
+      const facing = normal.clone().transformDirection(this.matrixWorld).dot(eye.clone().sub(world)) > 0
+      const distance = world.distanceToSquared(eye)
+      if (!best || (facing && !best.facing) || (facing === best.facing && distance < best.distance)) {
+        best = { position: world, facing, distance }
+      }
+    }
+    if (!best) return null
+    const point = this.scratch.copy(best.position).project(camera)
     if (point.z < -1 || point.z > 1) return null
     const rect = canvas.getBoundingClientRect()
     return { x: rect.left + ((point.x + 1) / 2) * rect.width, y: rect.top + ((1 - point.y) / 2) * rect.height }
@@ -523,10 +594,8 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
     this.keyboard.unregister(this.iframe)
     this.iframe.remove()
     this.renderer.dispose()
-    this.geometry.dispose()
+    if (this.ownsGeometry) this.geometry.dispose()
     this.material.dispose()
     this.back.material.dispose()
-    this.caret.geometry.dispose()
-    this.caret.material.dispose()
   }
 }

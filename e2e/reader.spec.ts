@@ -235,6 +235,21 @@ test.describe("a contenteditable box", () => {
     expect(await panel.frame.evaluate(() => document.querySelector("#editor")!.children.length)).toBe(3)
   })
 
+  test("draws the caret over the page, blinking", async () => {
+    const word = await wordBox("#editor p", "Click")
+    await panel.focus(panel.screen(word.left + 1, word.top + word.height / 2))
+    await expect.poll(async () => Math.abs(((await panel.caret())?.x ?? Infinity) - word.left)).toBeLessThan(3)
+    const caret = (await panel.caret())!
+    await panel.ifDrawn(async () => {
+      // Near its top, above the letters next to it: dark only while the caret shows. It is
+      // about a pixel and a half wide: the pixel its middle is in, not the next one.
+      const x = Math.floor((caret.x + 0.75) * panel.scale) / panel.scale
+      const shade = async () => Math.max(...(await panel.pixel(x, caret.y + 2)))
+      await expect.poll(shade).toBeLessThan(120)
+      await expect.poll(shade).toBeGreaterThan(200)
+    })
+  })
+
   test("formats with the bold shortcut, and undoes it", async ({ page }) => {
     await panel.focus(middle(await wordBox("#editor p", "This")), 2)
     await expect.poll(() => panel.selectedText()).toBe("This")

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { PerspectiveCamera, Scene, Vector2, type WebGLRenderer } from "three"
+import { BoxGeometry, PerspectiveCamera, Ray, Scene, Vector2, Vector3, type WebGLRenderer } from "three"
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest"
 import { HtmlPanel, PANEL_SANDBOX, defaultPixelRatio, splitAlpha } from "./html-panel"
 import { PanelKeyboard } from "./panel-keyboard"
@@ -57,9 +57,9 @@ describe("the panel's iframe", () => {
     for (const panel of panels.splice(0)) panel.dispose()
   })
 
-  const open = (sandbox?: boolean, keyboard?: PanelKeyboard) => {
+  const open = (sandbox?: boolean, keyboard?: PanelKeyboard, geometry?: BoxGeometry) => {
     sandboxAtSrc = []
-    const panel = new HtmlPanel({ url: "https://panel.example/page/", sandbox, keyboard, readyTimeout: 60_000 })
+    const panel = new HtmlPanel({ url: "https://panel.example/page/", sandbox, keyboard, geometry, readyTimeout: 60_000 })
     panels.push(panel)
     return panel
   }
@@ -444,5 +444,42 @@ describe("the panel's iframe", () => {
     panel.onBeforeRender(renderer, new Scene(), camera)
     expect(placeIme).not.toHaveBeenCalled()
     port.close()
+  })
+  it("on a geometry it is given, maps rays to the page and places the IME on the face toward the camera", async () => {
+    const keyboard = new PanelKeyboard()
+    const placeIme = vi.spyOn(keyboard, "placeIme")
+    const geometry = new BoxGeometry(1, 1, 1)
+    const panel = open(false, keyboard, geometry)
+    panel.updateMatrixWorld()
+    const uv = panel.uvFromRay(new Ray(new Vector3(0.25, 0.25, 2), new Vector3(0, 0, -1)))!
+    expect(uv.x).toBeCloseTo(0.75)
+    expect(uv.y).toBeCloseTo(0.75)
+
+    const camera = new PerspectiveCamera(90, 800 / 600, 0.01, 10)
+    camera.position.set(0, 0, 1.5)
+    camera.updateMatrixWorld()
+    const canvas = document.createElement("canvas")
+    canvas.getBoundingClientRect = () => new DOMRect(0, 0, 800, 600)
+    const renderer = { domElement: canvas } as unknown as WebGLRenderer
+    const postMessage = vi.fn()
+    panel.iframe.contentWindow!.postMessage = postMessage as typeof window.postMessage
+    const ready = new MessageEvent("message", { data: { type: "ready", version: 1 }, origin: "https://panel.example" })
+    Object.defineProperty(ready, "source", { value: panel.iframe.contentWindow })
+    window.dispatchEvent(ready)
+    const port = (postMessage.mock.calls[0]![2] as MessagePort[])[0]!
+    // At (0.75, 0.75) of the page: on the front face, (0.25, 0.25, 0.5), 1 unit from the camera.
+    port.postMessage({ type: "editing", editing: true, caret: { x: 600, y: 150, height: 0, color: "rgb(0, 0, 0)" }, selectedText: "", pointers: 0, typing: true })
+    await new Promise(resolve => setTimeout(resolve, 20))
+    panel.onBeforeRender(renderer, new Scene(), camera)
+    const placement = placeIme.mock.calls[0]![0]!
+    expect(placement.x).toBe(475)
+    expect(placement.y).toBe(225)
+
+    port.close()
+    // Not the panel's to dispose.
+    const dispose = vi.spyOn(geometry, "dispose")
+    panels.splice(panels.indexOf(panel), 1)
+    panel.dispose()
+    expect(dispose).not.toHaveBeenCalled()
   })
 })

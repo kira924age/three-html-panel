@@ -3,6 +3,7 @@ import {
   BoxGeometry,
   BufferGeometry,
   Color,
+  CylinderGeometry,
   DirectionalLight,
   GridHelper,
   IcosahedronGeometry,
@@ -74,8 +75,14 @@ const sceneControls = new HtmlPanel({
 sceneControls.position.set(1.15, 1.4, 0.1)
 sceneControls.rotation.y = -0.5
 
-// A page with text to select, drop-down lists, rich text editing and a video.
-const reader = new HtmlPanel({ url: pageUrl("panels/reader/"), width: 720, height: 720, size: 1.1, sandbox: true })
+// A page with text to select, drop-down lists, rich text editing and a video,
+// on a curved strip: a part of an open cylinder, as wide along its arc as it is high.
+const READER_RADIUS = 1.2
+const readerArc = 1.1 / READER_RADIUS
+const readerGeometry = new CylinderGeometry(READER_RADIUS, READER_RADIUS, 1.1, 48, 1, true, -readerArc / 2, readerArc)
+// The middle of the arc at the origin, facing +z.
+readerGeometry.translate(0, 0, -READER_RADIUS)
+const reader = new HtmlPanel({ url: pageUrl("panels/reader/"), width: 720, height: 720, geometry: readerGeometry, sandbox: true })
 reader.position.set(-2.25, 1.45, 0.45)
 reader.rotation.y = 0.65
 

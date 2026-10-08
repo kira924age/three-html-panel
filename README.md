@@ -62,7 +62,7 @@ These origins are the defaults (`originsFor` in `vite.panels.config.ts`). To cha
 
 - `panels/notes/`: a sticky-note board (drag, double-click, typing, hover, a CSS animation, scrolling). It is an ordinary page with no knowledge of the panel.
 - `panels/controls/`: a form that drives the 3D object next to it (shape, color, spin, caption), and counts clicks on the object. Being on another origin, it cannot reach the scene's window; it uses the agent's app messages (see below).
-- `panels/reader/`: text to select and copy, drop-down lists (`<select>`, with groups), a contenteditable box, and a video.
+- `panels/reader/`: text to select and copy, drop-down lists (`<select>`, with groups), a contenteditable box, and a video. It is shown on a curved strip (see `geometry` below).
 
 `pnpm build` then `pnpm preview` serves the build the same way: the scene on http://localhost:4173, the panel pages on http://localhost:4174 (or `.env.production.local`).
 
@@ -92,6 +92,20 @@ renderer.setAnimationLoop(() => {
 ```
 
 If the page's agent does not connect within 15 seconds (`readyTimeout`), the panel is cleared and `onError` is called.
+
+### Other shapes
+
+A panel is a flat rectangle `size` long by default. Pass `geometry` to show the page on any other surface (a curved strip, a box, a sphere): its UVs place the page, u from its left (0) to its right (1), v from its bottom (0) to its top (1), as `PlaneGeometry` and `CylinderGeometry` have them. Make its shape match the page's, or the page is stretched. The panel does not dispose a geometry it is given.
+
+```ts
+// A strip curved around the viewer's vertical axis, 1.1 along its arc and 1.1 high, for a square page.
+const radius = 1.2
+const arc = 1.1 / radius
+const geometry = new CylinderGeometry(radius, radius, 1.1, 48, 1, true, -arc / 2, arc).translate(0, 0, -radius)
+const panel = new HtmlPanel({ url, width: 720, height: 720, geometry, sandbox: true })
+```
+
+The page is drawn on front faces. Where several faces carry the same UVs (a `BoxGeometry` has the page on all six), the pointer acts on the face it hits, and the IME's candidate window opens at the caret on the face toward the camera, nearest it.
 
 ### Adding the agent to a page
 
@@ -181,7 +195,8 @@ Paths are under `src/`; the agent's are under `src/agent/`.
 | An immersive session shows no system keyboard | A keyboard mesh (letters, digits, symbols, Shift, Backspace, Enter, arrows, Done) shows under the panel whose text field or editable has focus (`HtmlPanel.isTyping`); the controllers press its keys, which go to the panel as text and keys | `panel-xr-keyboard.ts`, `panel-xr-pointer.ts` |
 | The host's cursor does not follow the page | The agent reports the cursor under the pointer (the text cursor over text, too); the host sets it on the canvas | `agent/input/input.ts`, `panel-pointer.ts` |
 | Focus in an iframe is lost whenever the host takes focus back | Virtual focus: `focus()`, `blur()`, `document.activeElement` are replaced in the page; keys go through a hidden field in the host | `agent/input/input.ts`, `panel-keyboard.ts` |
-| No caret is drawn in an image | Measure it with a mirror element; draw a thin plane over the panel | `agent/input/caret.ts`, `html-panel.ts` |
+| No caret is drawn in an image | Measure it with a mirror element; draw it in the panel's shader, in texture coordinates, at least a screen pixel wide, so it lies on any surface and blinking does not re-upload the texture | `agent/input/caret.ts`, `html-panel.ts` |
+| A panel on a surface other than a plane | Map between the page and the surface by the geometry's UVs: a ray's hit for the pointer, carried on past the nearest edge while dragging; the points that show the caret, for the IME | `surface.ts`, `html-panel.ts` |
 | IME composition happens in the host's hidden field, not in the page | Send the composed text to the agent, which shows it in the image only (never in the page's value), underlined, with the caret in it; move the hidden field to the caret on screen, so the candidate window opens beside it. In a contenteditable element, the caret is placed by laying the composed text out from where it starts, wrapping at the end of the block's line | `panel-keyboard.ts`, `html-panel.ts`, `agent/capture/snapshot.ts`, `agent/input/selection.ts` |
 | A selection stays when the window loses focus, greyed | When the host takes the keys back, the page's selection stays, drawn grey, and no longer takes the keys, until the user presses, drags or types in the panel again (hovering and the wheel do not count). A selection the page's script made is drawn grey too | `agent/input/input.ts`, `agent/capture/snapshot.ts` |
 | Iframes off screen are throttled, and `requestAnimationFrame` can stall even on screen | Keep the iframe in the viewport, transparent and behind the canvas; schedule captures with timers | `html-panel.ts`, `agent/capture/page-capture.ts` |
@@ -197,6 +212,7 @@ Paths are under `src/`; the agent's are under `src/agent/`.
 - A scrolled list box is drawn from its first row in view; in WebKit, which does not move options, a row scrolled partly out still shows whole (up to a row lower than it is). An `<optgroup>`'s label stays drawn when it is scrolled out with its first options.
 - While composing in a contenteditable element, the caret (and so the IME's candidate window) is placed by wrapping the composed text between any two characters, as Japanese wraps; Latin words, which wrap whole, may leave it a little off.
 - Text inside a scroll container that is not wrapped in an element does not scroll.
+- On a geometry other than a plane, the e2e tests do not run (their panel is flat): the mapping is unit tested, and the curved demo panel was only tried with scripted presses, typing and drags in Chromium. A drag across an edge of a box goes on with the face it reaches, which may hold another part of the page. Where UVs are stretched, the caret is too.
 - A text field scrolled by part of a line leaves that line out of the image until it is scrolled fully into view.
 - Phones, tablets and VR were tried in Chrome's and WebKit's touch emulation and in unit tests only, not on real devices or headsets. In particular, whether iOS opens its keyboard on a tap, and how controllers feel in a headset, are untested.
 - The VR keyboard types letters, digits and common symbols: no IME (no Japanese input in VR), no copy and paste.
