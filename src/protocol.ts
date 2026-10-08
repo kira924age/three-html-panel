@@ -191,20 +191,9 @@ export function parsePageMessage(data: unknown, limits: PageMessageLimits): Page
       if (caret === undefined) return null
       const { selectedText, pointers, typing } = data
       if (typeof selectedText !== "string" || selectedText.length > MAX_TEXT_LENGTH) return null
-      // Fields added after version 1 may be missing: an agent deployed with the
-      // panel pages can be older than the host. Missing, they fall back to what
-      // an older agent meant: no count (a tap's answer then waits out its
-      // timeout), and text typing wherever there is a caret.
-      if (pointers !== undefined && (!Number.isSafeInteger(pointers) || (pointers as number) < 0)) return null
-      if (typing !== undefined && typeof typing !== "boolean") return null
-      return {
-        type: "editing",
-        editing: data.editing,
-        caret,
-        selectedText,
-        pointers: (pointers as number | undefined) ?? 0,
-        typing: typing ?? caret !== null
-      }
+      if (!Number.isSafeInteger(pointers) || (pointers as number) < 0) return null
+      if (typeof typing !== "boolean") return null
+      return { type: "editing", editing: data.editing, caret, selectedText, pointers: pointers as number, typing }
     }
     case "pong":
       return { type: "pong" }
