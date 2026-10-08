@@ -91,6 +91,14 @@ const VIEW_CHECK_MS = HIDDEN_AFTER_MS / 4
 export const FAR_SCALE = 0.25
 export const NEAR_SCALE = 0.3
 export const FAR_PACE_MS = 200
+/**
+ * The panel's texture is drawn at its pixelRatio, or at a half or a quarter of
+ * it while every view draws the panel at most this much of that resolution
+ * (device px per page CSS px, along its larger side, for VIEW_CHECK_MS): fewer
+ * pixels to draw and upload, and still at least as many as the screen shows.
+ * Drawn denser than the resolution by any view, it goes back up at once.
+ */
+export const LOWER_RESOLUTION_AT = 0.8
 
 /**
  * The sandbox of an untrusted panel. Never allow-same-origin: with it, a page on
@@ -142,6 +150,10 @@ export interface HtmlPanelEventMap extends Object3DEventMap {
   cursorchange: {}
 }
 
+/** A camera of an ArrayCamera (the eyes in WebXR), which draws into its own viewport of the canvas. */
+const hasViewport = (camera: Camera): camera is Camera & { viewport: Vector4 } =>
+  (camera as Camera & { viewport?: Vector4 }).viewport !== undefined
+
 export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelEventMap> implements KeyboardTarget {
   readonly iframe = document.createElement("iframe")
   /** The origin the page is expected on; messages from anywhere else are ignored. */
@@ -169,6 +181,12 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
   private far = false
   /** The largest scale any view drew the panel at since the pace was last decided; -1: none drew it. */
   private largestScale = -1
+  /** The same in device pixels (a view's own pixel ratio applied), for the resolution. */
+  private largestDensity = -1
+  /** The texture's resolutions, highest first: the pixelRatio, a half and a quarter of it. */
+  private readonly resolutions: readonly number[]
+  /** Which of them the texture is drawn at. */
+  private resolution = 0
   private readonly onError: (error: Error) => void
   private readonly connection: PanelConnection
   private editing = false
@@ -216,10 +234,11 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
     }
     const size = options.size ?? 1
     const scale = size / Math.max(pageWidth, pageHeight)
+    const pixelRatio = options.pixelRatio ?? defaultPixelRatio()
     const renderer = new FrameRenderer({
       width: pageWidth,
       height: pageHeight,
-      pixelRatio: options.pixelRatio ?? defaultPixelRatio(),
+      pixelRatio,
       background: options.background ?? "#ffffff"
     })
     super(
@@ -227,6 +246,7 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
       new MeshBasicMaterial({ map: renderer.texture, toneMapped: false })
     )
     this.renderer = renderer
+    this.resolutions = [pixelRatio, pixelRatio / 2, pixelRatio / 4]
     this.origin = url.origin
     this.sandboxed = options.sandbox === true
     this.pageWidth = pageWidth
@@ -349,6 +369,15 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
     const scale = this.screenScale(renderer, camera)
     this.largestScale = Math.max(this.largestScale, scale)
     if (this.far && scale >= NEAR_SCALE) this.setFar(false)
+    // A camera of a stereo pair is measured in its viewport's pixels already.
+    const density = hasViewport(camera) ? scale : scale * renderer.getPixelRatio()
+    this.largestDensity = Math.max(this.largestDensity, density)
+    // Drawn denser than the texture: up at once, to the lowest resolution that is enough.
+    if (density > this.resolutions[this.resolution]!) {
+      let level = this.resolution
+      while (level > 0 && density > this.resolutions[level]!) level--
+      this.setResolution(level)
+    }
   }
 
   /** Far, if every view since the last check drew the panel small. Not drawn at all, it is left as it was. */
@@ -356,6 +385,18 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
     const scale = this.largestScale
     this.largestScale = -1
     if (scale >= 0 && !this.far && scale < FAR_SCALE) this.setFar(true)
+    const density = this.largestDensity
+    this.largestDensity = -1
+    if (density < 0) return
+    // Down to the lowest resolution every view drew it well under.
+    let level = this.resolution
+    while (level < this.resolutions.length - 1 && density <= this.resolutions[level + 1]! * LOWER_RESOLUTION_AT) level++
+    if (level !== this.resolution) this.setResolution(level)
+  }
+
+  private setResolution(level: number): void {
+    this.resolution = level
+    this.renderer.setResolution(this.resolutions[level]!)
   }
 
   private setFar(far: boolean): void {
@@ -370,8 +411,7 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
    */
   private screenScale(renderer: WebGLRenderer, camera: Camera): number {
     // A camera of a stereo pair (WebXR) draws into its own part of the canvas.
-    const viewport = (camera as Camera & { viewport?: Vector4 }).viewport
-    const size = viewport ? this.screenSize.set(viewport.z, viewport.w) : renderer.getSize(this.screenSize)
+    const size = hasViewport(camera) ? this.screenSize.set(camera.viewport.z, camera.viewport.w) : renderer.getSize(this.screenSize)
     const [topLeft, topRight, bottomLeft] = this.corners
     if (!this.projectCorner(-0.5, 0.5, topLeft, camera)) return Infinity
     if (!this.projectCorner(0.5, 0.5, topRight, camera)) return Infinity

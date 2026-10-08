@@ -97,6 +97,8 @@ A panel that has not been drawn facing the camera for a second (out of view, see
 
 A panel drawn small (under a quarter of its page's size on screen, along its longer side, by every view that draws it for a quarter of a second: a minimap or a mirror drawing it small does not count while the main view draws it large) asks its page for a frame at most every 200 ms instead of as often as the page manages; drawn over 0.3 of its size by any view, for all of them again at once. A camera of a stereo pair (WebXR) is measured by its own viewport. Input to such a panel is answered at that pace too.
 
+The panel's texture is drawn at its `pixelRatio`, or at a half or a quarter of it while every view draws the panel at no more than 0.8 of that (device pixels per page CSS pixel) for a quarter of a second: fewer pixels for the browser to draw and upload, and still at least as many as the screen shows. Drawn denser by any view, it goes back up at once, the last frame drawn again at the new resolution (it scales the picture meanwhile).
+
 ### Adding the agent to a page
 
 The page loads the agent **before its own scripts**, and names the host's origin. The agent posts nothing anywhere else; without a valid `data-host-origin` (an exact origin, not `*`) it does not start.
