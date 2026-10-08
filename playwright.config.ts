@@ -5,6 +5,9 @@
 import { defineConfig } from "@playwright/test";
 
 const CI = Boolean(process.env.CI);
+// Where `pnpm dev` serves the scene and the panel pages (see originsFor in vite.panels.config.ts).
+const HOST_ORIGIN = process.env.VITE_HOST_ORIGIN || "http://localhost:5173";
+const PANEL_ORIGIN = process.env.VITE_PANEL_ORIGIN || "http://localhost:5174";
 
 export default defineConfig({
   testDir: "e2e",
@@ -16,7 +19,7 @@ export default defineConfig({
   workers: CI ? 2 : undefined,
   reporter: CI ? [["list"], ["html", { open: "never" }]] : "list",
   use: {
-    baseURL: "http://localhost:5173",
+    baseURL: HOST_ORIGIN,
     viewport: { width: 800, height: 800 },
     trace: "retain-on-failure",
   },
@@ -30,7 +33,7 @@ export default defineConfig({
   ],
   webServer: {
     command: "pnpm dev",
-    url: "http://localhost:5174/examples/sites/reader/",
+    url: `${PANEL_ORIGIN}/examples/sites/reader/`,
     reuseExistingServer: !CI,
     timeout: 60_000,
   },
