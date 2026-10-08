@@ -110,7 +110,7 @@ export default defineConfig(({ mode }) => {
       outDir: "lib",
       format: "esm",
       platform: "browser",
-      // For browsers, not the Node version package.json's engines asks for (that is for development).
+      // For browsers, not the Node version package.json's devEngines asks for (that is for development).
       target: "es2022",
       dts: true,
       sourcemap: true,
