@@ -2,7 +2,7 @@
 // finds elements in the page, and turns their page coordinates into points on
 // the screen to press.
 
-import { expect, type Frame, type Page } from "@playwright/test"
+import { expect, test, type Frame, type Page } from "@playwright/test"
 
 export interface Box {
   left: number
@@ -23,20 +23,24 @@ export class PanelPage {
     readonly page: Page,
     /** The panel page's own frame (another origin), to read and check what happened in it. */
     readonly frame: Frame,
-    readonly scale: number
+    readonly scale: number,
+    /** The panel is drawn (the browser has WebGL): what it shows can be checked. */
+    readonly drawn: boolean
   ) {}
 
   /** Opens `panels/<name>/` in the harness, and waits for its first frames. */
   static async open(page: Page, name: string, width: number, height: number): Promise<PanelPage> {
-    await page.goto(`/e2e/harness/?page=${name}&width=${width}&height=${height}`)
+    // E2E_NO_WEBGL=1: as where the browser has no WebGL (see harness/main.ts).
+    const noWebGL = process.env.E2E_NO_WEBGL ? "&no-webgl" : ""
+    await page.goto(`/e2e/harness/?page=${name}&width=${width}&height=${height}${noWebGL}`)
     const find = () => page.frames().find(frame => frame.url().includes(`/panels/${name}/`))
     await expect.poll(() => find() !== undefined, { timeout: 15_000 }).toBe(true)
     const frame = find()!
     // The page loads its fonts and images after its first frame: wait for the image to settle.
     await expect.poll(() => page.evaluate(() => window.harness.frames), { timeout: 15_000 }).toBeGreaterThan(0)
     await page.waitForTimeout(500)
-    const scale = await page.evaluate(() => window.harness.scale)
-    return new PanelPage(page, frame, scale)
+    const { scale, drawn } = await page.evaluate(() => ({ scale: window.harness.scale, drawn: window.harness.drawn }))
+    return new PanelPage(page, frame, scale, drawn)
   }
 
   /** An element's box in the page (CSS px). */
@@ -102,6 +106,16 @@ export class PanelPage {
     return this.page.evaluate(() => (window.harness.panel as unknown as { caretBox: Caret | null }).caretBox)
   }
 
+  /**
+   * Checks what the panel shows, where it is drawn. Without WebGL (headless
+   * Firefox on Linux) they are skipped, noted in the report: the rest of the
+   * test, the input and the page's state, still runs.
+   */
+  async ifDrawn(checks: () => Promise<void>): Promise<void> {
+    if (this.drawn) await checks()
+    else test.info().annotations.push({ type: "skipped", description: "checks of the drawn image (no WebGL)" })
+  }
+
   /** The color drawn at a point of the page (CSS px). */
   pixel(x: number, y: number): Promise<[number, number, number]> {
     return this.page.evaluate(([x, y]) => window.harness.pixel(x, y), [x, y] as const)
@@ -113,6 +127,7 @@ declare global {
     harness: {
       panel: unknown
       scale: number
+      drawn: boolean
       frames: number
       pixel(x: number, y: number): [number, number, number]
     }
