@@ -15,7 +15,8 @@
 // - wheel scrolling, and text editing in <input>/<textarea> (editing.ts)
 // - selecting the page's text by dragging, and editing contenteditable
 //   elements (selection.ts, contenteditable.ts)
-// - the list of a drop-down <select> (select-popup.ts)
+// - the list of a drop-down <select> (select-popup.ts), and choosing options
+//   in a list box (list-box.ts)
 // - scrolling by dragging a finger or a VR controller, as touch does (pan.ts)
 // - scrollbars: dragging the thumb, paging by pressing (and holding) the
 //   track (the scrollbars in the image are the agent's own, see scrollbars.ts)
@@ -28,6 +29,7 @@ import { contentAction } from "./contenteditable"
 import { editAction, lineEnd, lineStart, wordAt } from "./editing"
 import { EditHistory, type FieldState } from "./history"
 import { PAN_START_DISTANCE, panAxes, type PanAxes } from "./pan"
+import { announceChange, isListBox, isUsable, optionAt, revealOption, selectRange, selectionOf, stepOption } from "./list-box"
 import { contains, hitBox, maxScroll, scrollbarAt, scrollbarsOf, thumbTravel, type Axis, type Scrollbar } from "./scrollbars"
 import { SelectPopup, adjacentOption, chooseOption, isDropDown, type PopupView } from "./select-popup"
 import { blockAround, comparePoints, editingHostOf, pointAt, selectedRange, selectedText, wordAround, type Point } from "./selection"
@@ -193,10 +195,14 @@ interface Press {
    * like a touch in browsers, the mouse events (and focusing) come only if the
    * press ends without moving.
    */
-  deferred: { detail: number; shiftKey: boolean } | null
+  deferred: { detail: number; shiftKey: boolean; toggle: boolean } | null
   /** The press opened a <select>'s list: releasing it over an option after dragging there chooses it. */
   openedPopup?: boolean
 }
+
+/** Whether a list box's selection differs from what it was. */
+const changed = (before: readonly boolean[], select: HTMLSelectElement) =>
+  selectionOf(select).some((selected, index) => selected !== before[index])
 
 /**
  * Whether a press moved too far to be a click. A held-back finger or controller
@@ -237,6 +243,22 @@ export class InputSynthesizer {
    * the keys, and it stays when the host takes them back.
    */
   private userSelection: { anchor: Node | null; anchorOffset: number; focus: Node | null; focusOffset: number } | null = null
+  /**
+   * A press choosing options in a list box: where it started (the anchor a drag
+   * selects from), whether it adds to the selection (Ctrl/Cmd), and the selection
+   * before it (change fires on release if it differs).
+   */
+  private listPress: {
+    select: HTMLSelectElement
+    anchor: number
+    toggle: boolean
+    before: boolean[]
+    /** The browser chose the options itself (WebKit does, even for synthetic presses): leave it to it. */
+    native?: boolean
+  } | null = null
+  /** Per list box: the option Shift extends from, and the one the arrow keys move from. */
+  private readonly listAnchors = new WeakMap<HTMLSelectElement, number>()
+  private readonly listCursors = new WeakMap<HTMLSelectElement, number>()
   /** Set while execCommand() runs: its own beforeinput (WebKit sends one) is not the page's to see twice. */
   private runningCommand = false
   private readonly history = new EditHistory()
@@ -255,6 +277,8 @@ export class InputSynthesizer {
   private pageTimer = 0
   /** What drives the pointer now, and the drag it may be scrolling. */
   private pointerInput: PointerInput = "mouse"
+  /** The modifier keys held with the pointer's last input, which its events carry. */
+  private pointerModifiers = { shiftKey: false, ctrlKey: false, metaKey: false }
   private pan: Pan | null = null
   /** The scrollbar the pointer hovers (it is not part of the page). */
   private hoveredScrollbar: Scrollbar | null = null
@@ -279,7 +303,14 @@ export class InputSynthesizer {
   handle(input: PanelInput): void {
     switch (input.type) {
       case "pointer":
-        if (input.kind === "down") this.pointerDown(input.x, input.y, input.shiftKey === true, input.input ?? "mouse")
+        if (input.kind !== "leave") {
+          this.pointerModifiers = { shiftKey: input.shiftKey === true, ctrlKey: input.ctrlKey === true, metaKey: input.metaKey === true }
+        }
+        if (input.kind === "down") {
+          // Ctrl adds to a list box's selection; Cmd does on macOS (Ctrl+press is a right click there).
+          const toggle = this.isApple() ? input.metaKey === true : input.ctrlKey === true
+          this.pointerDown(input.x, input.y, input.shiftKey === true, input.input ?? "mouse", toggle)
+        }
         else if (input.kind === "move") {
           // Hovering, the pointer may be another one now (a mouse after a finger).
           if (!this.press && !this.scrollbarPress) this.pointerInput = input.input ?? "mouse"
@@ -312,15 +343,18 @@ export class InputSynthesizer {
         break
       }
       case "blur":
-        // The host took the keys back: nothing in the page keeps them, nor a selection the user made.
+        // The host took the keys back: nothing in the page keeps them. A selection
+        // stays, inactive (drawn grey, as browsers do), until the user acts on the panel again.
         this.focus.set(null)
-        if (this.isUserSelection()) this.window.getSelection()?.removeAllRanges()
         this.userSelection = null
         break
     }
     // Whatever the selection is right after the user's input is theirs (the page's
-    // handlers for it included, such as selecting a code block on a click).
-    if (input.type !== "blur" && (input.type !== "pointer" || input.kind !== "move" || this.press)) this.rememberSelection()
+    // handlers for it included, such as selecting a code block on a click). Not
+    // after hovering or the wheel: they do not make the panel active.
+    const acting =
+      input.type === "pointer" ? input.kind === "down" || input.kind === "up" || this.press !== null : input.type !== "blur" && input.type !== "wheel"
+    if (acting) this.rememberSelection()
     // The list closes when its <select> loses focus (or leaves the page).
     if (this.popup && (this.focused !== this.popup.select || !this.popup.select.isConnected)) this.popup = null
     this.options.onChange()
@@ -346,7 +380,11 @@ export class InputSynthesizer {
     return selectionStart === null || selectionEnd === null ? "" : field.value.slice(selectionStart, selectionEnd)
   }
 
-  /** Whether some of the page's text is selected (outside text fields): the keys go to the page, to copy it. */
+  /**
+   * Whether some of the page's text is selected (outside text fields) by the
+   * user, the panel active: the keys go to the page, to copy it. Otherwise a
+   * selection is inactive, drawn grey.
+   */
   get hasSelection(): boolean {
     return !isTextField(this.focused) && selectedRange(this.window) !== null && this.isUserSelection()
   }
@@ -621,6 +659,7 @@ export class InputSynthesizer {
       button: 0,
       buttons,
       relatedTarget,
+      ...this.pointerModifiers,
       pointerId: POINTER_ID,
       // A VR controller acts as a mouse to the page (it hovers, and has no touch events).
       pointerType: this.pointerInput === "touch" ? "touch" : "mouse",
@@ -670,7 +709,7 @@ export class InputSynthesizer {
     this.hoverTarget = target
   }
 
-  private pointerDown(x: number, y: number, shiftKey: boolean, input: PointerInput = "mouse"): void {
+  private pointerDown(x: number, y: number, shiftKey: boolean, input: PointerInput = "mouse", toggle = false): void {
     this.pointer = { x, y }
     this.pointerInput = input
     this.pan = null
@@ -707,15 +746,17 @@ export class InputSynthesizer {
     // A finger or controller drag scrolls, unless the page took the press (cancelled it).
     if (input !== "mouse" && pointerOk) this.pan = this.startPan(target, x, y)
     if (this.pan) {
-      this.press.deferred = { detail: count, shiftKey }
+      this.press.deferred = { detail: count, shiftKey, toggle }
       return
     }
     // Cancelling pointerdown suppresses the compatibility mouse events, and with
     // them the default action of mousedown (focusing).
-    if (pointerOk) this.mouseDown(target, x, y, count, shiftKey)
+    if (pointerOk) this.mouseDown(target, x, y, count, shiftKey, toggle)
   }
 
-  private mouseDown(target: Element, x: number, y: number, detail: number, shiftKey: boolean): void {
+  private mouseDown(target: Element, x: number, y: number, detail: number, shiftKey: boolean, toggle = false): void {
+    const listBox = target.closest("select")
+    const before = isListBox(listBox) ? selectionOf(listBox) : null
     if (!target.dispatchEvent(this.mouseEvent("mousedown", { ...this.pointerInit(x, y, 1), detail, shiftKey }))) return
     this.focusAt(target, x, y, detail, shiftKey)
     // A press on a drop-down <select> opens its list (the page can prevent it by cancelling mousedown).
@@ -724,6 +765,74 @@ export class InputSynthesizer {
       this.popup = new SelectPopup(select)
       if (this.press) this.press.openedPopup = true
     }
+    if (isListBox(select) && this.focused === select) {
+      if (before && changed(before, select)) this.listPress = { select, anchor: 0, toggle, before, native: true }
+      else this.pressListBox(select, y, shiftKey, toggle)
+    }
+  }
+
+  // --- List boxes --------------------------------------------------------------
+
+  /** A press on a list box's option: selects it, as browsers do (see list-box.ts). */
+  private pressListBox(select: HTMLSelectElement, y: number, shiftKey: boolean, toggle: boolean): void {
+    const index = optionAt(select, y)
+    const option = index === null ? undefined : select.options[index]
+    if (index === null || !option || !isUsable(option)) return
+    const before = selectionOf(select)
+    const anchor = this.listAnchors.get(select) ?? index
+    if (!select.multiple) select.selectedIndex = index
+    else if (shiftKey) selectRange(select, anchor, index, toggle)
+    else if (toggle) option.selected = !option.selected
+    else selectRange(select, index, index)
+    const start = select.multiple && shiftKey ? anchor : index
+    this.listAnchors.set(select, start)
+    this.listCursors.set(select, index)
+    this.listPress = { select, anchor: start, toggle, before }
+  }
+
+  /** A drag in a list box selects the options from where it started to the pointer. */
+  private dragListBox(y: number): void {
+    const { select, anchor, toggle, native } = this.listPress!
+    if (native) return
+    const index = optionAt(select, y, true)
+    if (index === null) return
+    if (!select.multiple) {
+      if (isUsable(select.options[index]!)) select.selectedIndex = index
+    } else if (!toggle) selectRange(select, anchor, index)
+    this.listCursors.set(select, index)
+    revealOption(select, index)
+  }
+
+  /** The press ends: the page hears of the change, once. */
+  private releaseListBox(): void {
+    const press = this.listPress
+    this.listPress = null
+    // The browser that chose the options tells the page itself.
+    if (!press || press.native) return
+    if (changed(press.before, press.select)) announceChange(press.select)
+  }
+
+  /** The keys on a focused list box: arrows, Home and End move the selection (Shift extends it), Ctrl/Cmd+A selects all. */
+  private listBoxKey(select: HTMLSelectElement, input: Extract<PanelInput, { type: "key" }>): void {
+    const { key, shiftKey, altKey } = input
+    const primary = this.isApple() ? input.metaKey && !input.ctrlKey : input.ctrlKey && !input.metaKey
+    const before = selectionOf(select)
+    if (primary && !altKey && key.toLowerCase() === "a" && select.multiple) {
+      selectRange(select, 0, select.options.length - 1)
+    } else {
+      const steps = { ArrowDown: 1, ArrowUp: -1, PageDown: 10, PageUp: -10, End: Infinity, Home: -Infinity }[key]
+      if (steps === undefined || altKey || primary) return
+      const from = this.listCursors.get(select) ?? Math.max(0, select.selectedIndex)
+      const index = stepOption(select, from, Number.isFinite(steps) ? steps : Math.sign(steps) * select.options.length)
+      if (select.multiple && shiftKey) selectRange(select, this.listAnchors.get(select) ?? from, index)
+      else {
+        select.selectedIndex = index
+        this.listAnchors.set(select, index)
+      }
+      this.listCursors.set(select, index)
+      revealOption(select, index)
+    }
+    if (changed(before, select)) announceChange(select)
   }
 
   private pointerMove(x: number, y: number): void {
@@ -754,6 +863,7 @@ export class InputSynthesizer {
     if (!press || (press.mouseEvents && !press.deferred)) destination.dispatchEvent(this.mouseEvent("mousemove", init))
     if (press && this.textDrag?.field.isConnected) this.dragText(x, y)
     else if (press && this.documentDrag) this.dragDocument(x, y)
+    else if (press && this.listPress) this.dragListBox(y)
   }
 
   private pointerUp(x: number, y: number): void {
@@ -796,11 +906,12 @@ export class InputSynthesizer {
     let mouseEvents = !press || press.mouseEvents
     if (press && deferred) {
       mouseEvents = !press.moved
-      if (mouseEvents) this.mouseDown(press.target, press.x, press.y, deferred.detail, deferred.shiftKey)
+      if (mouseEvents) this.mouseDown(press.target, press.x, press.y, deferred.detail, deferred.shiftKey, deferred.toggle)
       this.textDrag = null
       this.documentDrag = null
     }
     if (mouseEvents) destination.dispatchEvent(this.mouseEvent("mouseup", init))
+    this.releaseListBox()
     if (this.captureTarget) {
       this.captureTarget.dispatchEvent(this.pointerEvent("lostpointercapture", init))
       this.captureTarget = null
@@ -1038,7 +1149,10 @@ export class InputSynthesizer {
       composed: true
     }
     const { KeyboardEvent } = this.window
-    if (target.dispatchEvent(new KeyboardEvent("keydown", init))) this.keyDefaultAction(target, input)
+    const listBefore = isListBox(target) ? selectionOf(target) : null
+    const allowed = target.dispatchEvent(new KeyboardEvent("keydown", init))
+    // A list box the browser moved itself (WebKit does, even for synthetic keys) is not moved again.
+    if (allowed && !(listBefore && isListBox(target) && changed(listBefore, target))) this.keyDefaultAction(target, input)
     target.dispatchEvent(new KeyboardEvent("keyup", init))
   }
 
@@ -1054,6 +1168,10 @@ export class InputSynthesizer {
     }
     if (isDropDown(target)) {
       this.selectKey(target, input)
+      return
+    }
+    if (isListBox(target)) {
+      this.listBoxKey(target, input)
       return
     }
     if (isEditingHost(target)) {
@@ -1297,7 +1415,7 @@ export class InputSynthesizer {
       this.popup.typeAhead(text)
       return
     }
-    if (isDropDown(target)) {
+    if (isDropDown(target) || isListBox(target)) {
       this.selectTypeAhead(target, text)
       return
     }

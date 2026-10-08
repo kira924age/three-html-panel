@@ -18,6 +18,9 @@ export type PanelInput =
       x: number
       y: number
       shiftKey?: boolean
+      /** Held with a press: Ctrl or Cmd add an option to a list box's selection. */
+      ctrlKey?: boolean
+      metaKey?: boolean
       /** What drives the pointer; a mouse if not given. */
       input?: PointerInput
     }

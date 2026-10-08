@@ -109,7 +109,7 @@ describe("the panel's iframe", () => {
       window.dispatchEvent(event)
       return (postMessage.mock.calls[0]![2] as MessagePort[])[0]!
     }
-    const editing = { type: "editing", editing: true, caret: { x: 1, y: 1, height: 16, color: "rgb(0, 0, 0)" }, selectedText: "", pointers: 0 }
+    const editing = { type: "editing", editing: true, caret: { x: 1, y: 1, height: 16, color: "rgb(0, 0, 0)" }, selectedText: "", pointers: 0, typing: true }
     const delivered = () => new Promise(resolve => setTimeout(resolve, 20))
 
     it("does not take the keyboard when sandboxed and the user did not press the panel", async () => {
@@ -198,13 +198,48 @@ describe("the panel's iframe", () => {
       port.close()
     })
 
+    it("tells whether text typed now goes into the page (for an on-screen keyboard)", async () => {
+      const panel = open(false)
+      const port = connect(panel)
+      expect(panel.isTyping).toBe(false)
+      // A button has focus: keys, but no text.
+      port.postMessage({ ...editing, caret: null, typing: false })
+      await delivered()
+      expect(panel.isTyping).toBe(false)
+      port.postMessage(editing)
+      await delivered()
+      expect(panel.isTyping).toBe(true)
+      // Text selected in the field: no caret drawn, still typing.
+      port.postMessage({ ...editing, caret: null, selectedText: "abc" })
+      await delivered()
+      expect(panel.isTyping).toBe(true)
+      // Focus went straight from the field to a button: no text to type.
+      port.postMessage({ ...editing, caret: null, typing: false })
+      await delivered()
+      expect(panel.isTyping).toBe(false)
+      port.postMessage(editing)
+      await delivered()
+      panel.blur()
+      expect(panel.isTyping).toBe(false)
+      port.close()
+    })
+
+    it("is not typing in a sandboxed panel whose page took focus on its own", async () => {
+      const panel = open(true)
+      const port = connect(panel)
+      port.postMessage(editing)
+      await delivered()
+      expect(panel.isTyping).toBe(false)
+      port.close()
+    })
+
     it("keeps the page's selected text for copying while editing, and forgets it after", async () => {
       const panel = open(false, new PanelKeyboard())
       const port = connect(panel)
       port.postMessage({ ...editing, selectedText: "copy me" })
       await delivered()
       expect(panel.selectedText()).toBe("copy me")
-      port.postMessage({ type: "editing", editing: false, caret: null, selectedText: "stale", pointers: 0 })
+      port.postMessage({ type: "editing", editing: false, caret: null, selectedText: "stale", pointers: 0, typing: false })
       await delivered()
       expect(panel.selectedText()).toBe("")
       port.close()
@@ -279,7 +314,8 @@ describe("the panel's iframe", () => {
         editing,
         caret: editing ? { x: 5, y: 5, height: 16, color: "rgb(0, 0, 0)" } : null,
         selectedText: "",
-        pointers
+        pointers,
+        typing: editing
       })
 
       it("takes the keyboard only over a text field", async () => {
@@ -378,7 +414,7 @@ describe("the panel's iframe", () => {
     window.dispatchEvent(ready)
     const port = (postMessage.mock.calls[0]![2] as MessagePort[])[0]!
     // The page's default size is 800x600: a caret at its centre.
-    port.postMessage({ type: "editing", editing: true, caret: { x: 400, y: 290, height: 20, color: "rgb(0, 0, 0)" }, selectedText: "", pointers: 0 })
+    port.postMessage({ type: "editing", editing: true, caret: { x: 400, y: 290, height: 20, color: "rgb(0, 0, 0)" }, selectedText: "", pointers: 0, typing: true })
     await new Promise(resolve => setTimeout(resolve, 20))
 
     panel.onBeforeRender(renderer, new Scene(), camera)

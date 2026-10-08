@@ -63,6 +63,24 @@ test.describe("the page's text", () => {
     await expect.poll(() => panel.selectedText()).toMatch(/^An ordinary page\. .* テキストの選択とコピーもできます。$/)
   })
 
+  test("stays selected, drawn grey, when the panel loses the keys", async () => {
+    const word = await wordBox(".lead", "ordinary")
+    await panel.click(middle(word), 2)
+    await expect.poll(() => panel.selectedText()).toBe("ordinary")
+    // The user presses elsewhere in the host.
+    await panel.page.evaluate(() => (window.harness.panel as { blur(): void }).blur())
+    expect(await panel.frame.evaluate(() => getSelection()!.toString())).toBe("ordinary")
+    // Grey: no longer the blue of an active selection.
+    await expect
+      .poll(async () => {
+        const [red, green, blue] = await panel.pixel(word.left + word.width / 2, word.top + 1)
+        return Math.abs(blue - red) < 12 && Math.abs(green - red) < 12 && red < 235
+      })
+      .toBe(true)
+    // Nothing to copy from the host: the keys are not the panel's.
+    await expect.poll(() => panel.selectedText()).toBe("")
+  })
+
   test("is copied with the copy shortcut", async ({ page }) => {
     await panel.focus(middle(await wordBox(".lead", "ordinary")), 2)
     await expect.poll(() => panel.selectedText()).toBe("ordinary")
@@ -114,6 +132,91 @@ test.describe("a <select>", () => {
   })
 })
 
+test.describe("a list box (<select multiple>)", () => {
+  /** The middle of option `text` of the tags list, on screen. */
+  async function optionPoint(text: string) {
+    const box = await panel.frame.evaluate(text => {
+      const option = Array.from(document.querySelectorAll("#tags option")).find(option => option.textContent === text)!
+      const rect = option.getBoundingClientRect()
+      return { left: rect.left, top: rect.top, width: rect.width, height: rect.height }
+    }, text)
+    return { box, point: middle(box) }
+  }
+  const tagList = () => panel.frame.evaluate(() => document.querySelector("#tag-list")!.textContent)
+
+  test("selects the option clicked, adds one with Ctrl/Cmd, and a range with Shift", async ({ page }) => {
+    await panel.focus((await optionPoint("ideas")).point)
+    await expect.poll(tagList).toBe("Tags: ideas")
+    await page.keyboard.down("ControlOrMeta")
+    await panel.click((await optionPoint("news")).point)
+    await page.keyboard.up("ControlOrMeta")
+    await expect.poll(tagList).toBe("Tags: news, ideas")
+    await page.keyboard.down("Shift")
+    await panel.click((await optionPoint("draft")).point)
+    await page.keyboard.up("Shift")
+    await expect.poll(tagList).toBe("Tags: news, ideas, draft")
+  })
+
+  test("draws the selected options as a focused list box's, and moves them with the arrows", async ({ page }) => {
+    const { box, point } = await optionPoint("news")
+    await panel.focus(point)
+    await expect
+      .poll(async () => {
+        // Right of the label, inside the option (its edge blends with the box).
+        const [red, , blue] = await panel.pixel(box.left + box.width - 4, box.top + box.height / 2)
+        return blue > 180 && red < 80
+      })
+      .toBe(true)
+    await page.keyboard.press("ArrowDown")
+    await expect.poll(tagList).toBe("Tags: ideas")
+  })
+})
+
+test("draws a <select> as wide as it is in the page (Firefox would draw its copy narrower)", async () => {
+  const size = await panel.box("#size")
+  // Just inside its right edge, above its arrow: the select's white, not the page's background.
+  await expect
+    .poll(async () => {
+      const [red, green, blue] = await panel.pixel(size.left + size.width - 4, size.top + 3)
+      return red > 252 && green > 252 && blue > 252
+    })
+    .toBe(true)
+})
+
+test("scrolls a list box with the wheel, moving its options and its scrollbar", async ({ page }) => {
+  const box = await panel.frame.evaluate(() => {
+    const select = document.querySelector<HTMLSelectElement>("#tags")!
+    const rect = select.getBoundingClientRect()
+    return { left: rect.left + select.clientLeft, top: rect.top + select.clientTop, width: select.clientWidth, height: select.clientHeight }
+  })
+  // The top of the scrollbar's track: the thumb is there before scrolling.
+  const track = { x: box.left + box.width - 5, y: box.top + 6 }
+  const shade = async () => {
+    const [red, green, blue] = await panel.pixel(track.x, track.y)
+    return (red + green + blue) / 3
+  }
+  await expect.poll(shade).toBeLessThan(215)
+  // What the first row shows: a strip of pixels across its text.
+  const firstRow = async () => {
+    const strip: number[] = []
+    for (let x = box.left + 4; x < box.left + 40; x += 2) strip.push((await panel.pixel(x, box.top + 9))[0])
+    return strip.join()
+  }
+  const before = await firstRow()
+  const point = panel.screen(box.left + 20, box.top + box.height / 2)
+  await page.mouse.move(point.x, point.y)
+  await page.mouse.wheel(0, 200)
+  await expect.poll(() => panel.frame.evaluate(() => document.querySelector("#tags")!.scrollTop)).toBeGreaterThan(0)
+  // The thumb went down to the bottom of the track, and another option shows in the first row.
+  await expect.poll(shade).toBeGreaterThan(230)
+  const bottom = async () => {
+    const [red, green, blue] = await panel.pixel(track.x, box.top + box.height - 6)
+    return (red + green + blue) / 3
+  }
+  await expect.poll(bottom).toBeLessThan(215)
+  await expect.poll(firstRow).not.toBe(before)
+})
+
 test.describe("a contenteditable box", () => {
   const editorText = () => panel.frame.evaluate(() => document.querySelector<HTMLElement>("#editor")!.innerText)
 
@@ -151,6 +254,25 @@ test.describe("a contenteditable box", () => {
     expect(await editorText()).not.toContain("にほん")
     await cdp.send("Input.insertText", { text: "日本" })
     await expect.poll(editorText).toContain("contenteditable. 日本Click in it")
+  })
+
+  test("puts the caret at the end of composed text that wraps onto the next line", async ({ page, browserName }) => {
+    test.skip(browserName !== "chromium", "IME input is emulated through Chromium's DevTools protocol")
+    // The end of the first paragraph, near the right edge of its line.
+    const end = await panel.frame.evaluate(() => {
+      const text = document.querySelector("#editor p")!.lastChild as Text
+      const range = document.createRange()
+      range.setStart(text, text.length - 1)
+      range.setEnd(text, text.length)
+      const rect = range.getBoundingClientRect()
+      return { x: rect.right, y: rect.top, height: rect.height }
+    })
+    await panel.focus(panel.screen(end.x + 2, end.y + end.height / 2))
+    const cdp = await page.context().newCDPSession(page)
+    const text = "にほんごのぶんしょうをながくにゅうりょくしています"
+    await cdp.send("Input.imeSetComposition", { text, selectionStart: text.length, selectionEnd: text.length })
+    // Below the line it started on, as the composed text wraps there in the image.
+    await expect.poll(async () => ((await panel.caret())?.y ?? 0) - end.y).toBeGreaterThan(end.height)
   })
 })
 

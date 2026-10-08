@@ -24,7 +24,14 @@ export default defineConfig({
   // and the agent's key bindings follow the platform (Cmd on macOS, Ctrl elsewhere).
   projects: [
     { name: "chromium", use: { browserName: "chromium" } },
-    { name: "firefox", use: { browserName: "firefox" } },
+    {
+      name: "firefox",
+      use: {
+        browserName: "firefox",
+        // Headless Firefox on Linux (CI) blocks WebGL on a software renderer; the harness needs it.
+        launchOptions: { firefoxUserPrefs: { "webgl.force-enabled": true } }
+      }
+    },
     { name: "webkit", use: { browserName: "webkit" } }
   ],
   webServer: {

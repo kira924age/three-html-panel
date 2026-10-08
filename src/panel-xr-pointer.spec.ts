@@ -97,4 +97,45 @@ describe("PanelXRPointer", () => {
     pointer.dispose()
     expect(panel.calls.filter(call => call[1] === "up")).toHaveLength(1)
   })
+
+  describe("with a keyboard", () => {
+    /** A keyboard plane in front of the panel, on the controllers' way to it. */
+    function fakeKeyboard() {
+      const keyboard = Object.assign(new Mesh(new PlaneGeometry(1, 1)), {
+        showFor: vi.fn((target: unknown) => (keyboard.visible = target !== null)),
+        hover: vi.fn(),
+        press: vi.fn()
+      })
+      keyboard.position.set(0, 0, 0.5)
+      keyboard.visible = false
+      keyboard.updateMatrixWorld()
+      return keyboard
+    }
+
+    it("shows it for the panel that takes text, in a session only", () => {
+      const keyboard = fakeKeyboard()
+      pointer.keyboard = keyboard as never
+      pointer.update(1000)
+      expect(keyboard.showFor).toHaveBeenLastCalledWith(null)
+      Object.assign(panel, { isTyping: true })
+      pointer.update(1016)
+      expect(keyboard.showFor).toHaveBeenLastCalledWith(panel)
+      xr.isPresenting = false
+      pointer.update(1032)
+      expect(keyboard.showFor).toHaveBeenLastCalledWith(null)
+    })
+
+    it("presses its keys, leaving the panel focused and unpressed", () => {
+      const keyboard = fakeKeyboard()
+      pointer.keyboard = keyboard as never
+      Object.assign(panel, { isTyping: true })
+      connect(0)
+      aim(0, true)
+      pointer.update(1000)
+      expect(keyboard.hover).toHaveBeenLastCalledWith(expect.any(Vector2))
+      controllers[0]!.dispatchEvent({ type: "selectstart" } as never)
+      expect(keyboard.press).toHaveBeenCalledWith(expect.any(Vector2))
+      expect(panel.calls.filter(call => call[0] === "blur" || call[1] === "down")).toEqual([])
+    })
+  })
 })

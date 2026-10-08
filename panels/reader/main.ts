@@ -7,6 +7,14 @@ const wordCount = document.querySelector<HTMLElement>("#status")!
 const font = document.querySelector<HTMLSelectElement>("#font")!
 const size = document.querySelector<HTMLSelectElement>("#size")!
 
+// A list box: Ctrl (Cmd on macOS) adds a tag, Shift a range.
+const tags = document.querySelector<HTMLSelectElement>("#tags")!
+const tagList = document.querySelector<HTMLElement>("#tag-list")!
+tags.addEventListener("change", () => {
+  const chosen = Array.from(tags.selectedOptions, option => option.text)
+  tagList.textContent = chosen.length ? `Tags: ${chosen.join(", ")}` : "No tags"
+})
+
 const applyFont = () => {
   editor.style.fontFamily = font.value
   editor.style.fontSize = size.value

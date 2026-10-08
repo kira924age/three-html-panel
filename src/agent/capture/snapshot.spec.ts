@@ -200,3 +200,53 @@ describe("what the browser draws outside the page", () => {
     expect(list.children[1]!.getAttribute("style")).toContain("color:#fff")
   })
 })
+
+describe("selections in the image", () => {
+  const snapshot = (options: Partial<Parameters<typeof snapshotDocument>[1]> = {}) => {
+    const xhtml = snapshotDocument(document, { hovered: new Set(), active: new Set(), focused: null, inlineImage: () => null, ...options })
+    return new DOMParser().parseFromString(xhtml, "application/xhtml+xml")
+  }
+
+  it("draws a focused list box's selected options over the copy, white on blue, cut to the box", () => {
+    document.body.innerHTML = `<p>page</p>`
+    const copy = snapshot({
+      listBoxSelection: [
+        { shown: { left: 10, top: 20, width: 80, height: 10 }, box: { left: 10, top: 15, width: 80, height: 15 }, label: "<news>", font: "14px serif", paddingLeft: 4 }
+      ]
+    })
+    const clip = Array.from(copy.documentElement.children).find(child => child.getAttribute("style")?.includes("left:10px;top:20px"))!
+    expect(clip.getAttribute("style")).toContain("overflow:hidden")
+    const row = clip.firstElementChild!
+    expect(row.textContent).toBe("<news>")
+    // Placed where the whole option is, inside the cut.
+    expect(row.getAttribute("style")).toContain("left:0px;top:-5px;width:80px;height:15px")
+    expect(row.getAttribute("style")).toContain("background:rgb(30 110 220);color:#fff")
+  })
+
+  it("draws an inactive selection grey, whatever the page's ::selection color", () => {
+    document.body.innerHTML = `<p>text</p>`
+    const box = { left: 1, top: 2, width: 30, height: 16 }
+    const boxes = (copy: Document) => Array.from(copy.documentElement.children).filter(child => child.getAttribute("style")?.includes("left:1px"))
+    const active = snapshot({ selection: [box], selectionColor: "rgb(255, 0, 0)" })
+    expect(boxes(active)[0]!.getAttribute("style")).toContain("background:rgb(255, 0, 0)")
+    const inactive = snapshot({ selection: [box], selectionColor: "rgb(255, 0, 0)", selectionInactive: true })
+    expect(boxes(inactive)[0]!.getAttribute("style")).toContain("background:rgb(200 200 200)")
+  })
+
+  it("keeps a <select>'s size in the copy (Firefox draws it narrower), and shows a scrolled list box from its first row in view", () => {
+    document.body.innerHTML = `<select id="tags" multiple size="2"><option id="a">a</option><option id="b">b</option><option id="c">c</option><option id="d">d</option></select>`
+    const select = document.querySelector<HTMLSelectElement>("#tags")!
+    select.getBoundingClientRect = () => new DOMRect(10, 100, 80, 42)
+    // Its layout size: what the copy keeps (the rect above would include any transform, which the copy applies again).
+    Object.defineProperties(select, { clientTop: { value: 1 }, scrollTop: { value: 25 }, offsetWidth: { value: 100 }, offsetHeight: { value: 52 } })
+    // Rows of 20 px; scrolled by 25: "a" is out of view, "b" by 5 px.
+    Array.from(select.options).forEach((option, index) => {
+      option.getBoundingClientRect = () => new DOMRect(11, 101 + index * 20 - 25, 78, 20)
+    })
+    const copy = snapshot().getElementById("tags")!
+    expect(copy.getAttribute("style")).toContain("width: 100px")
+    expect(copy.getAttribute("style")).toContain("height: 52px")
+    expect(Array.from(copy.querySelectorAll("option"), option => option.id)).toEqual(["b", "c", "d"])
+    expect(copy.querySelector("#b")!.getAttribute("style")).toContain("translate: 0 -5px")
+  })
+})

@@ -23,6 +23,7 @@ import type { PointerInput } from "./types"
 
 /** A pen acts like a finger: it drags to scroll. */
 const inputOf = (event: PointerEvent): PointerInput => (event.pointerType === "mouse" ? "mouse" : "touch")
+const modifiersOf = (event: PointerEvent) => ({ ctrlKey: event.ctrlKey, metaKey: event.metaKey })
 
 const LINE_HEIGHT_PX = 16
 /** A touch that moves farther (CSS px of the canvas) is a drag (a scroll), not a tap. */
@@ -83,7 +84,7 @@ export class PanelPointer {
     this.element.setPointerCapture(event.pointerId)
     this.pressed = { panel: hit.panel, pointerId: event.pointerId }
     this.hover(hit.panel)
-    hit.panel.pointer("down", hit.uv, event.shiftKey, inputOf(event))
+    hit.panel.pointer("down", hit.uv, event.shiftKey, inputOf(event), modifiersOf(event))
   }
 
   private readonly onPointerMove = (event: PointerEvent) => {
@@ -91,7 +92,7 @@ export class PanelPointer {
       if (event.pointerId !== this.pressed.pointerId) return
       this.setRay(event)
       const uv = this.pressed.panel.uvFromRay(this.raycaster.ray)
-      if (uv) this.pressed.panel.pointer("move", uv, event.shiftKey, inputOf(event))
+      if (uv) this.pressed.panel.pointer("move", uv, event.shiftKey, inputOf(event), modifiersOf(event))
       return
     }
     const hit = this.pick(event)

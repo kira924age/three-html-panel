@@ -73,7 +73,7 @@ Tested in desktop Chrome. On every pull request, `pnpm e2e` drives the notes and
 On the host:
 
 ```ts
-import { HtmlPanel, PanelPointer, PanelXRPointer } from "./src"
+import { HtmlPanel, PanelPointer, PanelXRKeyboard, PanelXRPointer } from "./src"
 
 const panel = new HtmlPanel({ url: "https://panels.example/notes/", width: 960, height: 640, size: 1.6, sandbox: true })
 scene.add(panel)
@@ -82,6 +82,9 @@ new PanelPointer(camera, renderer.domElement, () => [panel])
 // VR: controllers point at panels; call update() every frame.
 renderer.xr.enabled = true
 const xrPointer = new PanelXRPointer(renderer, () => [panel])
+// A keyboard shows under a panel whose text field has focus (there is no system keyboard in VR).
+xrPointer.keyboard = new PanelXRKeyboard()
+scene.add(xrPointer.keyboard)
 renderer.setAnimationLoop(() => {
   xrPointer.update()
   renderer.render(scene, camera)
@@ -137,10 +140,10 @@ panel.postMessage("scene-click")
 
 1. The agent posts `{ type: "ready", version }` to `window.parent`, addressed to the host origin.
 2. The host accepts it only if `event.source` is the panel's iframe (`iframe.contentWindow`) and `event.origin` is the panel URL's origin, or `"null"` with `sandbox: true`. It creates a `MessageChannel` and posts `{ type: "connect", version }` with one port to the iframe, addressed to the panel URL's origin, or with `sandbox: true` to `"*"`: an opaque origin cannot be named. Posted to `contentWindow`, it still only reaches the document now in that iframe.
-3. From then on, only the port is used: `frame` (seq, width, height, svg), `editing` (whether an element has focus or text is selected, a caret, the selected text, and how many presses and releases the agent has handled), `editables` (where the text fields and contenteditable elements are), `cursor` (a CSS cursor keyword) and `open` (a link to open) from the page; `pointer` (with `shiftKey`), `wheel`, `key`, `text`, `composition` (text being composed with an IME, and its caret), `blur` from the host; `app` both ways.
+3. From then on, only the port is used: `frame` (seq, width, height, svg), `editing` (whether an element has focus or text is selected, a caret, the selected text, how many presses and releases the agent has handled, and whether the focused element takes text), `editables` (where the text fields and contenteditable elements are), `cursor` (a CSS cursor keyword) and `open` (a link to open) from the page; `pointer` (with `shiftKey`, `ctrlKey`, `metaKey`, and what drives it), `wheel`, `key`, `text`, `composition` (text being composed with an IME, and its caret), `blur` from the host; `app` both ways.
 4. After every `load` of the iframe, the host sends `ping` and starts the timeout; the agent answers `pong`. Only the agent of the document now loaded can answer (an unloaded document's port is dead), so this tells whether the new document has an agent. The order of `ready` and `load` cannot tell: `ready` sometimes arrives after `load`.
 
-Every document the iframe loads (a reload, a navigation) says `ready` again and gets a new port; the old one is closed. The host drops frames whose `seq` does not grow, whose size differs from the iframe's or exceeds 4096 px, or whose SVG is over 16 MB, carets that are not finite numbers with a short color string, and cursors that are not plain keywords (a `url()` cursor would have the host load whatever the page names). See `src/protocol.ts`.
+Fields added to a message after version 1 are optional, with a fallback for what an older agent meant: the agent is deployed with the panel pages and may be older than the host. Every document the iframe loads (a reload, a navigation) says `ready` again and gets a new port; the old one is closed. The host drops frames whose `seq` does not grow, whose size differs from the iframe's or exceeds 4096 px, or whose SVG is over 16 MB, carets that are not finite numbers with a short color string, and cursors that are not plain keywords (a `url()` cursor would have the host load whatever the page names). See `src/protocol.ts`.
 
 ## How it works
 
@@ -165,6 +168,7 @@ Paths are under `src/`; the agent's are under `src/agent/`.
 | Synthetic presses do not select text | Drag to select; double press selects a word, triple a line; Shift extends. In text fields, by their selection range; elsewhere, by the page's own selection (`getSelection()`), where a triple press selects the paragraph, and not where `user-select` is `none` | `agent/input/input.ts`, `agent/input/selection.ts` |
 | The page's selection is not in the image, and its `toString()` gives the source's white space when the page is not painted | Draw it over the copy, per text node, cut to what scrolled boxes show; for copying, build the text as it reads (white space collapsed as CSS does, a line break between blocks). Selected text takes the keys, so the copy shortcut reaches it | `agent/input/selection.ts`, `agent/capture/page-capture.ts` |
 | Synthetic keys do not edit a contenteditable element, and rich text is hard to edit by hand | Let the browser edit: `Selection.modify()` moves the caret, `document.execCommand()` types, deletes, starts paragraphs, formats (Cmd/Ctrl+B, I, U) and undoes, at the page's selection, without the iframe having focus. A beforeinput the page can cancel goes first (WebKit's own is held back, so the page sees one); IME text is shown in place in the copy, underlined | `agent/input/contenteditable.ts`, `agent/input/input.ts`, `agent/capture/snapshot.ts` |
+| A list box (`<select multiple>`, or with `size`) does not select on a synthetic press | A press selects the option under it, Shift a range from the last one pressed, Ctrl (Cmd on macOS) adds or removes one, a drag selects what it goes over; one change on release. The arrows (Shift extends), Home, End and Ctrl/Cmd+A work while it has focus. WebKit acts on synthetic presses and keys itself: where it changed the selection, the agent leaves it be. The copy is never focused, so the selected options are drawn over it as a focused list box's | `agent/input/list-box.ts`, `agent/input/input.ts`, `agent/capture/snapshot.ts` |
 | A `<select>` opens its list outside the page, and not on a synthetic press | The agent keeps its own list: it opens on a press (unless the page cancels mousedown), with Space or Alt+Down; it is drawn over the copy, takes the pointer, the wheel, the arrows, Enter, Escape and typed letters, and sets the option with input and change. Closed, the arrows and typed letters change the option | `agent/input/select-popup.ts`, `agent/input/input.ts`, `agent/capture/snapshot.ts` |
 | A `<video>` is not drawn in a foreignObject | Copy its current frame (or its poster before it plays) as an image, at most twice its size on the page, keeping its `object-fit`; capture continuously while it plays | `agent/capture/snapshot.ts`, `agent/capture/page-capture.ts` |
 | A text field's selection and own scroll are not in the image | Draw the selection (the page's `::selection` color if set); leave out the text scrolled past and pad the rest into place | `agent/input/caret.ts`, `agent/capture/snapshot.ts` |
@@ -174,10 +178,12 @@ Paths are under `src/`; the agent's are under `src/agent/`.
 | Soft keyboards send Backspace and Enter without a key | Take them from beforeinput | `panel-keyboard.ts` |
 | Phones are slow to draw pages at 2x | Default to 1x on phones (coarse pointer, small screen) | `html-panel.ts` |
 | VR controllers | Ray from each controller: hover, the trigger presses, a drag scrolls, the thumbstick scrolls like a wheel | `panel-xr-pointer.ts` |
+| An immersive session shows no system keyboard | A keyboard mesh (letters, digits, symbols, Shift, Backspace, Enter, arrows, Done) shows under the panel whose text field or editable has focus (`HtmlPanel.isTyping`); the controllers press its keys, which go to the panel as text and keys | `panel-xr-keyboard.ts`, `panel-xr-pointer.ts` |
 | The host's cursor does not follow the page | The agent reports the cursor under the pointer (the text cursor over text, too); the host sets it on the canvas | `agent/input/input.ts`, `panel-pointer.ts` |
 | Focus in an iframe is lost whenever the host takes focus back | Virtual focus: `focus()`, `blur()`, `document.activeElement` are replaced in the page; keys go through a hidden field in the host | `agent/input/input.ts`, `panel-keyboard.ts` |
 | No caret is drawn in an image | Measure it with a mirror element; draw a thin plane over the panel | `agent/input/caret.ts`, `html-panel.ts` |
-| IME composition happens in the host's hidden field, not in the page | Send the composed text to the agent, which shows it in the image only (never in the page's value), underlined, with the caret in it; move the hidden field to the caret on screen, so the candidate window opens beside it | `panel-keyboard.ts`, `html-panel.ts`, `agent/capture/snapshot.ts` |
+| IME composition happens in the host's hidden field, not in the page | Send the composed text to the agent, which shows it in the image only (never in the page's value), underlined, with the caret in it; move the hidden field to the caret on screen, so the candidate window opens beside it. In a contenteditable element, the caret is placed by laying the composed text out from where it starts, wrapping at the end of the block's line | `panel-keyboard.ts`, `html-panel.ts`, `agent/capture/snapshot.ts`, `agent/input/selection.ts` |
+| A selection stays when the window loses focus, greyed | When the host takes the keys back, the page's selection stays, drawn grey, and no longer takes the keys, until the user presses, drags or types in the panel again (hovering and the wheel do not count). A selection the page's script made is drawn grey too | `agent/input/input.ts`, `agent/capture/snapshot.ts` |
 | Iframes off screen are throttled, and `requestAnimationFrame` can stall even on screen | Keep the iframe in the viewport, transparent and behind the canvas; schedule captures with timers | `html-panel.ts`, `agent/capture/page-capture.ts` |
 | Heavy pages | Space captures so they take about 25% of the time | `agent/capture/pacer.ts` |
 
@@ -187,14 +193,13 @@ Paths are under `src/`; the agent's are under `src/agent/`.
 - A CSS animation or transition that ends is shown at its end right away, without its motion: the iframe's animation clock can stall for up to a second in Chrome, and showing its progress would keep a fade-in transparent that long. Endless animations are shown as the clock has them.
 - Only what CSS and the DOM describe is drawn: no cross-origin iframes inside the page, no native widgets other than the drop-down list of `<select>` (no date pickers, no video controls: a page needs its own buttons for a video), and `::before`/`::after` animations stay frozen.
 - A video from another origin without CORS cannot be read: only its poster is shown. Each frame of a playing video is a JPEG in the SVG, so large videos are slow.
-- A `<select multiple>` or one with `size` (a list box) shows its options, but pressing them does not select them.
 - Editing a contenteditable element relies on the browser's `execCommand()`. Rich text editors that handle beforeinput themselves (cancelling it) work through it; those that read the browser's native editing in other ways may not. Dragging text, and selecting by dragging past a scrolled box's edge (autoscroll), are not implemented.
-- While composing in a contenteditable element, the caret (and so the IME's candidate window) is placed as if the composed text did not wrap.
-- Selected text outside fields is dropped when the panel loses the keys (the user presses elsewhere in the host), where a browser would keep it, greyed.
+- A scrolled list box is drawn from its first row in view; in WebKit, which does not move options, a row scrolled partly out still shows whole (up to a row lower than it is). An `<optgroup>`'s label stays drawn when it is scrolled out with its first options.
+- While composing in a contenteditable element, the caret (and so the IME's candidate window) is placed by wrapping the composed text between any two characters, as Japanese wraps; Latin words, which wrap whole, may leave it a little off.
 - Text inside a scroll container that is not wrapped in an element does not scroll.
 - A text field scrolled by part of a line leaves that line out of the image until it is scrolled fully into view.
 - Phones, tablets and VR were tried in Chrome's and WebKit's touch emulation and in unit tests only, not on real devices or headsets. In particular, whether iOS opens its keyboard on a tap, and how controllers feel in a headset, are untested.
-- No text input in VR: an immersive session shows no system keyboard for the host's hidden field.
+- The VR keyboard types letters, digits and common symbols: no IME (no Japanese input in VR), no copy and paste.
 - A tap on a text field covered by another element of the page opens the soft keyboard for a moment: the host only knows where the fields are, and lets the keyboard go when the page answers that nothing took focus.
 - A same-site page's scripts and the capture share the host's main thread; a cross-site page usually runs in its own process.
 - [HTML-in-Canvas](https://github.com/WICG/html-in-canvas) would remove most of the copying once browsers ship it.

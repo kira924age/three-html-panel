@@ -39,6 +39,8 @@ export interface SnapshotOptions {
   selection?: readonly Box[]
   /** The page's ::selection background, if any; a default is used when it is transparent. */
   selectionColor?: string
+  /** The selection is not where the keys go (the panel is not active): drawn grey, as browsers do. */
+  selectionInactive?: boolean
   /**
    * Text being composed with an IME in a field: the value it shows while
    * composing, which goes into the copy only (never into the page), and the
@@ -55,7 +57,25 @@ export interface SnapshotOptions {
   scrollbar?: { element: Element; axis: "x" | "y"; state: "hover" | "active" } | null
   /** The open list of a <select>, drawn over everything. */
   selectPopup?: PopupView | null
+  /**
+   * The selected options of a focused list box, drawn over the copy as a
+   * focused one's: the copy is never focused, and browsers draw its selection
+   * in their inactive grey (WebKit whatever the page's CSS says).
+   */
+  listBoxSelection?: readonly ListBoxRow[]
 }
+
+/** A selected option of a focused list box: where it shows (cut by the box), where it is, and its label. */
+export interface ListBoxRow {
+  shown: Box
+  box: Box
+  label: string
+  font: string
+  paddingLeft: number
+}
+
+/** Selected options of a focused list box, as browsers draw them. */
+const LIST_BOX_SELECTED = "rgb(30 110 220)"
 
 /** A video's attributes that mean nothing on the image that stands for it. */
 const VIDEO_ATTRIBUTES = new Set(["src", "poster", "controls", "autoplay", "loop", "muted", "preload", "playsinline", "crossorigin"])
@@ -195,7 +215,7 @@ class Snapshotter {
   }
 
   private copyFormState(element: Element, copy: Element): void {
-    const { HTMLInputElement, HTMLTextAreaElement, HTMLOptionElement } = this.window
+    const { HTMLInputElement, HTMLTextAreaElement, HTMLOptionElement, HTMLSelectElement } = this.window
     if (element instanceof HTMLInputElement) {
       if (element.type === "checkbox" || element.type === "radio") {
         copy.toggleAttribute("checked", element.checked)
@@ -211,6 +231,17 @@ class Snapshotter {
       this.copyTextScroll(element, copy, value)
     } else if (element instanceof HTMLOptionElement) {
       copy.toggleAttribute("selected", element.selected)
+    } else if (element instanceof HTMLSelectElement && copy instanceof HTMLElement) {
+      // A <select> sizes itself to its options (and a list box to its
+      // scrollbar, which the copy hides): Firefox draws the copy narrower than
+      // the page's, moving what follows it. Keep the page's size: its layout
+      // size, before transforms (which the copy applies again).
+      const { offsetWidth, offsetHeight } = element
+      if (offsetWidth > 0 && offsetHeight > 0) {
+        copy.style.setProperty("box-sizing", "border-box", "important")
+        copy.style.setProperty("width", `${offsetWidth}px`, "important")
+        copy.style.setProperty("height", `${offsetHeight}px`, "important")
+      }
     }
   }
 
@@ -340,6 +371,10 @@ class Snapshotter {
     const isBody = element === this.document.body
     const { scrollLeft, scrollTop } = isBody && scrollingElement ? scrollingElement : element
     if (scrollLeft === 0 && scrollTop === 0) return
+    if (element instanceof this.window.HTMLSelectElement) {
+      this.copyListBoxScroll(element, copy)
+      return
+    }
     if (isBody && copy instanceof HTMLElement) {
       copy.style.setProperty("translate", `${-scrollLeft}px ${-scrollTop}px`)
       return
@@ -352,6 +387,35 @@ class Snapshotter {
       if (child instanceof HTMLElement || child instanceof SVGElement) {
         child.style.setProperty("translate", `${-scrollLeft}px ${-scrollTop}px`)
       }
+    }
+  }
+
+  /**
+   * A scrolled list box: the options scrolled out of view above are left out of
+   * the copy (removed: WebKit draws a list box's options whatever their display
+   * or hidden), and the rest moved up by what remains of the scroll (less than
+   * a row). WebKit does not move options either, so there a row may show up to
+   * that much lower than it is; the rows left out are right in every browser.
+   * (An <optgroup>'s label stays, even scrolled out with its first options.)
+   */
+  private copyListBoxScroll(select: HTMLSelectElement, copy: Element): void {
+    const style = this.window.getComputedStyle(select)
+    const top = select.getBoundingClientRect().top + select.clientTop + (parseFloat(style.paddingTop) || 0)
+    const copies = Array.from(copy.querySelectorAll("option"))
+    let hidden = 0
+    let removed = 0
+    for (const [index, option] of Array.from(select.options).entries()) {
+      const rect = option.getBoundingClientRect()
+      const optionCopy = copies[index]
+      if (rect.bottom > top + 0.5 || !optionCopy) break
+      optionCopy.remove()
+      hidden += rect.height
+      removed++
+    }
+    const rest = select.scrollTop - hidden
+    if (rest <= 0) return
+    for (const option of copies.slice(removed)) {
+      if (option instanceof HTMLElement) option.style.setProperty("translate", `0 ${-rest}px`)
     }
   }
 
@@ -373,6 +437,7 @@ class Snapshotter {
 
 // The image cannot show a text field's selection, so it is drawn over the field.
 const SELECTION_COLOR = "rgb(51 144 255 / 35%)"
+const INACTIVE_SELECTION_COLOR = "rgb(200 200 200)"
 const SCROLLBAR_TRACK_COLOR = "rgb(0 0 0 / 5%)"
 const SCROLLBAR_THUMB_COLOR = "rgb(0 0 0 / 38%)"
 const SCROLLBAR_THUMB_HOVER_COLOR = "rgb(0 0 0 / 52%)"
@@ -408,6 +473,28 @@ function drawScrollbars(root: HTMLElement, bars: readonly Scrollbar[], state: Sn
 }
 
 const POPUP_HIGHLIGHT = "rgb(30 110 220)"
+
+/** Draws a selected option of a focused list box over its copy: white on the selection's blue, cut to the box. */
+function drawListBoxRow(root: HTMLElement, row: ListBoxRow): void {
+  const document = root.ownerDocument
+  const { shown, box } = row
+  const clip = document.createElement("div")
+  clip.setAttribute(
+    "style",
+    `position:fixed;left:${shown.left}px;top:${shown.top}px;width:${shown.width}px;height:${shown.height}px;` +
+      "margin:0;padding:0;border:0;overflow:hidden;pointer-events:none;z-index:2147483646"
+  )
+  const option = document.createElement("div")
+  option.setAttribute(
+    "style",
+    `position:absolute;left:${box.left - shown.left}px;top:${box.top - shown.top}px;width:${box.width}px;height:${box.height}px;` +
+      `box-sizing:border-box;margin:0;border:0;padding:0 0 0 ${row.paddingLeft}px;background:${LIST_BOX_SELECTED};color:#fff;` +
+      `font:${row.font};line-height:${box.height}px;white-space:pre;overflow:hidden;text-align:left;letter-spacing:normal`
+  )
+  option.textContent = row.label
+  clip.appendChild(option)
+  root.appendChild(clip)
+}
 
 /** Draws the open list of a <select>, as a fixed box over everything. */
 function drawSelectPopup(root: HTMLElement, view: PopupView): void {
@@ -448,7 +535,11 @@ export function snapshotDocument(document: Document, options: SnapshotOptions): 
   // The highlight is drawn over the text, not under it: the page's color (often
   // opaque) is multiplied in, which keeps dark text on a light field readable.
   const pageColor = options.selectionColor && !TRANSPARENT.test(options.selectionColor) ? options.selectionColor : null
-  const css = pageColor ? `background:${pageColor};mix-blend-mode:multiply` : `background:${SELECTION_COLOR}`
+  const css = options.selectionInactive
+    ? `background:${INACTIVE_SELECTION_COLOR};mix-blend-mode:multiply`
+    : pageColor
+      ? `background:${pageColor};mix-blend-mode:multiply`
+      : `background:${SELECTION_COLOR}`
   for (const { left, top, width, height } of options.selection ?? []) drawBox(root, left, top, width, height, css)
   // Composed text is underlined, as IMEs do.
   if (options.composition) {
@@ -459,6 +550,7 @@ export function snapshotDocument(document: Document, options: SnapshotOptions): 
     }
   }
   drawScrollbars(root, snapshotter.scrollbars, options.scrollbar)
+  for (const row of options.listBoxSelection ?? []) drawListBoxRow(root, row)
   if (options.selectPopup) drawSelectPopup(root, options.selectPopup)
   return new XMLSerializer().serializeToString(root)
 }
