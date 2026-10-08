@@ -22,7 +22,7 @@ jobs:
       # version in package.json's packageManager, then runs `vp install`.
       - uses: voidzero-dev/setup-vp@v1.21.1
         with:
-          # The version package.json's engines asks for.
+          # The version package.json's devEngines asks for.
           node-version: "24"
           cache: true
       # Format, lint and type check.

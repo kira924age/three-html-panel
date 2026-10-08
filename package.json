@@ -69,8 +69,12 @@
   "peerDependencies": {
     "three": ">=0.158.0"
   },
-  "engines": {
-    "node": ">=24"
+  "devEngines": {
+    "runtime": {
+      "name": "node",
+      "version": ">=24",
+      "onFail": "error"
+    }
   },
   "packageManager": "pnpm@11.23.0"
 }
