@@ -1,0 +1,8 @@
+.icon {
+  flex: none;
+  color: var(--mantine-color-dimmed);
+}
+
+.members {
+  cursor: default;
+}

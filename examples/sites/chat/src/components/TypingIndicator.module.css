@@ -1,0 +1,43 @@
+.root {
+  height: 22px;
+  padding: 0 var(--mantine-spacing-md);
+  display: flex;
+  align-items: center;
+}
+
+.dots {
+  display: inline-flex;
+  gap: 3px;
+  padding: 5px 7px;
+  border-radius: 10px;
+  background-color: var(--mantine-color-default-hover);
+
+  & span {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background-color: var(--mantine-color-dimmed);
+    animation: bounce 1.2s infinite ease-in-out;
+  }
+
+  & span:nth-child(2) {
+    animation-delay: 0.15s;
+  }
+
+  & span:nth-child(3) {
+    animation-delay: 0.3s;
+  }
+}
+
+@keyframes bounce {
+  0%,
+  60%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.5;
+  }
+  30% {
+    transform: translateY(-3px);
+    opacity: 1;
+  }
+}

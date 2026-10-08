@@ -1,0 +1,34 @@
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+}
+
+/* Mentions, in messages and in the editor. */
+.mention {
+  padding: 0 3px;
+  border-radius: 4px;
+  font-weight: 600;
+  color: var(--mantine-primary-color-light-color);
+  background-color: var(--mantine-primary-color-light);
+  white-space: nowrap;
+}
+
+.mention[data-id="u-me"] {
+  color: light-dark(var(--mantine-color-yellow-9), var(--mantine-color-yellow-3));
+  background-color: light-dark(var(--mantine-color-yellow-1), rgba(250, 176, 5, 0.18));
+}
+
+/* The editor's placeholder (Tiptap's Placeholder extension). */
+.tiptap p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
+  color: var(--mantine-color-placeholder);
+}
+
+.edited-mark {
+  font-size: var(--mantine-font-size-xs);
+  color: var(--mantine-color-dimmed);
+}

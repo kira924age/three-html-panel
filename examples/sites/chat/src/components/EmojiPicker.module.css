@@ -1,0 +1,17 @@
+.emoji {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 32px;
+  font-size: 20px;
+  line-height: 1;
+  border-radius: var(--mantine-radius-sm);
+
+  @mixin hover {
+    background-color: var(--mantine-color-default-hover);
+  }
+}
+
+.targetWrapper {
+  display: inline-flex;
+}

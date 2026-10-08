@@ -1,0 +1,15 @@
+.popup {
+  position: fixed;
+  z-index: 400;
+}
+
+.item {
+  display: block;
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: var(--mantine-radius-sm);
+
+  &[data-selected] {
+    background-color: var(--mantine-primary-color-light);
+  }
+}
