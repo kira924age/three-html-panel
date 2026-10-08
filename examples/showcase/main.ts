@@ -20,7 +20,7 @@ import {
 } from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { VRButton } from "three/addons/webxr/VRButton.js";
-import { HtmlPanel, PanelPointer, PanelXRKeyboard, PanelXRPointer } from "../index";
+import { HtmlPanel, PanelPointer, PanelXRKeyboard, PanelXRPointer } from "../../src/index";
 import { SCENE_CLICK, parseSceneControl, type SceneControl } from "./scene-events";
 
 const renderer = new WebGLRenderer({ antialias: true });
@@ -57,7 +57,7 @@ const pageUrl = (path: string) => new URL(path, panelBase);
 // vite.panels.config.ts): none can reach the scene's cookies, storage or
 // document, nor take its keyboard.
 const notes = new HtmlPanel({
-  url: pageUrl("panels/notes/"),
+  url: pageUrl("examples/sites/notes/"),
   width: 960,
   height: 640,
   size: 1.6,
@@ -67,7 +67,7 @@ notes.position.set(-0.75, 1.45, 0);
 notes.rotation.y = 0.3;
 
 const sceneControls = new HtmlPanel({
-  url: pageUrl("panels/controls/"),
+  url: pageUrl("examples/sites/controls/"),
   sandbox: true,
   width: 480,
   height: 640,
@@ -82,7 +82,7 @@ sceneControls.rotation.y = -0.5;
 
 // A page with text to select, drop-down lists, rich text editing and a video.
 const reader = new HtmlPanel({
-  url: pageUrl("panels/reader/"),
+  url: pageUrl("examples/sites/reader/"),
   width: 720,
   height: 720,
   size: 1.1,

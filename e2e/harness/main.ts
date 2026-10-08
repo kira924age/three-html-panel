@@ -1,7 +1,7 @@
 // The host page the e2e tests drive: one panel, flat, filling the canvas, so
 // that a point of the panel page maps to a point on screen by a scale alone.
 //
-// ?page=<name under panels/>&width=<px>&height=<px> picks the page and its
+// ?page=<name under examples/sites/>&width=<px>&height=<px> picks the page and its
 // size. The tests read the panel's state through window.harness.
 //
 // Without WebGL (headless Firefox on Linux refuses it on a software renderer),
@@ -46,7 +46,7 @@ const camera = new PerspectiveCamera(FOV, width / height, 0.01, 10);
 camera.position.set(0, 0, 0.5 / Math.tan((FOV * Math.PI) / 360));
 
 const panel = new HtmlPanel({
-  url: new URL(`panels/${page}/`, import.meta.env.VITE_PANEL_ORIGIN || location.href),
+  url: new URL(`examples/sites/${page}/`, import.meta.env.VITE_PANEL_ORIGIN || location.href),
   width,
   height,
   size: width / height,

@@ -1,4 +1,4 @@
-// The sticky notes board (panels/notes): an ordinary page that knows nothing
+// The sticky notes board (examples/sites/notes): an ordinary page that knows nothing
 // of the panel. Typing in a note, dragging a note by its bar, and the caret of
 // a note scrolled by part of a line.
 

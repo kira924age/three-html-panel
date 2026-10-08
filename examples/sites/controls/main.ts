@@ -1,8 +1,8 @@
 // A page that controls the 3D scene around it. It is served from another
 // origin than the scene, so it cannot reach the parent window; it talks to the
 // scene through the panel agent's messages instead.
-import { onHostMessage, sendToHost } from "../../src/agent/page";
-import { SCENE_CLICK, type SceneControl } from "../../src/demo/scene-events";
+import { onHostMessage, sendToHost } from "../../../src/agent/page";
+import { SCENE_CLICK, type SceneControl } from "../../showcase/scene-events";
 
 const form = document.querySelector<HTMLFormElement>("#form")!;
 const clicks = document.querySelector<HTMLElement>("#clicks")!;

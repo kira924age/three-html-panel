@@ -28,12 +28,13 @@ export class PanelPage {
     readonly drawn: boolean,
   ) {}
 
-  /** Opens `panels/<name>/` in the harness, and waits for its first frames. */
+  /** Opens `examples/sites/<name>/` in the harness, and waits for its first frames. */
   static async open(page: Page, name: string, width: number, height: number): Promise<PanelPage> {
     // E2E_NO_WEBGL=1: as where the browser has no WebGL (see harness/main.ts).
     const noWebGL = process.env.E2E_NO_WEBGL ? "&no-webgl" : "";
     await page.goto(`/e2e/harness/?page=${name}&width=${width}&height=${height}${noWebGL}`);
-    const find = () => page.frames().find((frame) => frame.url().includes(`/panels/${name}/`));
+    const find = () =>
+      page.frames().find((frame) => frame.url().includes(`/examples/sites/${name}/`));
     await expect.poll(() => find() !== undefined, { timeout: 15_000 }).toBe(true);
     const frame = find()!;
     // The page loads its fonts and images after its first frame: wait for the image to settle.

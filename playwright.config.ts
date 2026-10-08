@@ -30,7 +30,7 @@ export default defineConfig({
   ],
   webServer: {
     command: "pnpm dev",
-    url: "http://localhost:5174/panels/reader/",
+    url: "http://localhost:5174/examples/sites/reader/",
     reuseExistingServer: !CI,
     timeout: 60_000,
   },

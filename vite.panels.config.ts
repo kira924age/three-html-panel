@@ -1,6 +1,6 @@
 // The server for the panel pages, on another origin than the scene
 // (vite.config.ts starts it with `pnpm dev` and `pnpm preview`). In
-// development it adds the panel agent to every page under panels/, the way a
+// development it adds the panel agent to every page under examples/sites/, the way a
 // server or proxy in front of an existing site could; a build has the tag
 // already (vite.config.ts uses the same plugin).
 
@@ -31,12 +31,14 @@ export function originsFor(mode: string): { host: string; panel: string } {
     panel: env.VITE_PANEL_ORIGIN || defaults.panel,
   };
 }
+/** Where the panel pages are, from the repository's root (and in URLs of the panel server). */
+export const SITES_DIR = "examples/sites";
 /** Where a build puts the agent, so that pages can load it without bundling it. */
 export const AGENT_BUILD_FILE = "agent.js";
 
 /**
  * Puts `<script type="module" src=".../agent" data-host-origin="...">` first in
- * the <head> of the pages under panels/. Module scripts run in document order,
+ * the <head> of the pages under examples/sites/. Module scripts run in document order,
  * so the agent runs before the page's own scripts.
  */
 export function injectPanelAgent(hostOrigin: string): Plugin {
@@ -46,7 +48,7 @@ export function injectPanelAgent(hostOrigin: string): Plugin {
       // After bundling, so that a build keeps the tag (and its attribute) as is.
       order: "post",
       handler(_html, context) {
-        if (!context.path.startsWith("/panels/")) return;
+        if (!context.path.startsWith(`/${SITES_DIR}/`)) return;
         const src = context.server
           ? AGENT_SOURCE
           : posix.relative(posix.dirname(context.path), `/${AGENT_BUILD_FILE}`);
