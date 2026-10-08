@@ -1,9 +1,9 @@
 // Undo and redo for <input> and <textarea>.
 //
-// The agent edits fields with setRangeText (input.ts), which the browser does
-// not record: its own undo would do nothing. So the agent keeps the history.
-// Typing in a row is one step, like in browsers; moving the caret, or any other
-// kind of edit, starts a new one. If the page changes a field's value itself
+// The agent edits fields with setRangeText or the value setter (input.ts,
+// field-text.ts), which the browser does not record: its own undo would do
+// nothing. So the agent keeps the history. Typing in a row is one step, like in
+// browsers; moving the caret, or any other kind of edit, starts a new one. If the page changes a field's value itself
 // (a framework resetting it, say), the history no longer matches and is dropped.
 
 export interface FieldState {

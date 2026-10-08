@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { replaceFieldText } from "../input/field-text";
 import { endOffsetOf, isSampledLive, snapshotDocument } from "./snapshot";
 
 afterEach(() => {
@@ -496,5 +497,38 @@ describe("the page's background", () => {
     expect(snapshotRoot().root.style.backgroundImage).toBe("none");
     const { root } = snapshotRoot({ "https://example.test/paper.png": "data:image/png;base64,AA" });
     expect(root.style.backgroundImage).toBe('url("data:image/png;base64,AA")');
+  });
+});
+
+describe("text fields in the image", () => {
+  const snapshotField = (html: string, edit: (field: HTMLInputElement) => void) => {
+    document.body.innerHTML = html;
+    const field = document.querySelector("input")!;
+    edit(field);
+    const xhtml = snapshotDocument(document, {
+      hovered: new Set(),
+      active: new Set(),
+      focused: field,
+      inlineImage: () => null,
+    });
+    const copy = new DOMParser().parseFromString(xhtml, "application/xhtml+xml");
+    return copy.querySelector("input")!;
+  };
+
+  it("shows a number field's text as typed while it is not a number yet, as a text input", () => {
+    const copy = snapshotField(`<input type="number">`, (field) => {
+      replaceFieldText(field, "1e", 0, 0);
+      expect(field.value).toBe("");
+    });
+    expect(copy.getAttribute("value")).toBe("1e");
+    expect(copy.getAttribute("type")).toBe("text");
+  });
+
+  it("keeps a number field a number field when its text is its value", () => {
+    const copy = snapshotField(`<input type="number">`, (field) => {
+      replaceFieldText(field, "12", 0, 0);
+    });
+    expect(copy.getAttribute("value")).toBe("12");
+    expect(copy.getAttribute("type")).toBe("number");
   });
 });
