@@ -144,9 +144,14 @@ test("keeps the caret after a space that ends a wrapped line on that line", asyn
   // Firefox puts a marker after a hanging space on its line too: nothing to check.
   test.skip(!found, "no width wraps after the last space here");
   await panel.focus(await panel.at(field, 0.5, 0.2));
+  // Setting the selection does not scroll the field; a key press later would,
+  // moving the line between the two carets compared. Scrolled to the end at once.
   await panel.frame.evaluate(
-    ({ field, at }) =>
-      document.querySelector<HTMLTextAreaElement>(field)!.setSelectionRange(at, at),
+    ({ field, at }) => {
+      const textarea = document.querySelector<HTMLTextAreaElement>(field)!;
+      textarea.setSelectionRange(at, at);
+      textarea.scrollTop = textarea.scrollHeight;
+    },
     {
       field,
       at: text.length - 1,
@@ -163,7 +168,8 @@ test("keeps the caret after a space that ends a wrapped line on that line", asyn
       ),
     )
     .toBe(text.length - 1);
-  await expect.poll(async () => (await panel.caret()) !== null).toBe(true);
+  // The caret reported once the field shows its whole line (not cut by an edge).
+  await expect.poll(async () => (await panel.caret())?.height ?? 0).toBeGreaterThan(10);
   const before = (await panel.caret())!;
   await page.keyboard.press("ArrowRight");
   await expect
