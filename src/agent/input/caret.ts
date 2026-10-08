@@ -73,6 +73,13 @@ function withMirror<T>(field: TextField, measure: (mirror: HTMLDivElement) => T)
   // A single-line input never wraps; a textarea wraps like the field does.
   mirror.style.whiteSpace = isInput ? "pre" : "pre-wrap"
   if (isInput) mirror.style.width = "auto"
+  else if (field.clientWidth > 0) {
+    // Its lines are as wide as its content box less any scrollbar: a classic
+    // scrollbar (Windows, Linux) takes its room from the text, the mirror has none.
+    const padding = (parseFloat(computed.paddingLeft) || 0) + (parseFloat(computed.paddingRight) || 0)
+    mirror.style.boxSizing = "content-box"
+    mirror.style.width = `${Math.max(0, field.clientWidth - padding)}px`
+  }
   document.body.appendChild(mirror)
   try {
     return measure(mirror)
