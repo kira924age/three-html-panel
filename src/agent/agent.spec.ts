@@ -2,6 +2,7 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi, type Mock } from "vitest"
 import { PROTOCOL_VERSION } from "../protocol"
 import { parseOrigin, readHostOrigin, startAgent, type PanelAgent } from "./agent"
+import { RenderPacer } from "./capture/pacer"
 import { onHostMessage, sendToHost } from "./page"
 
 const HOST = "https://host.example"
@@ -232,13 +233,13 @@ describe("connecting", () => {
       playState: "running"
     }
     document.getAnimations = () => [animation as unknown as Animation]
+    // Every capture is timed, whether or not its frame is sent.
+    const captures = vi.spyOn(RenderPacer.prototype, "record")
     try {
       start()
       const host = connect()
-      const frames: unknown[] = []
       const editing: { selectedText: string }[] = []
       host.onmessage = event => {
-        if (event.data.type === "frame") frames.push(event.data)
         if (event.data.type === "editing") editing.push(event.data)
       }
       // The user's selection (a key press after it makes it theirs).
@@ -246,14 +247,15 @@ describe("connecting", () => {
       host.postMessage({ type: "key", key: "Shift", shiftKey: true, ctrlKey: false, altKey: false, metaKey: false })
       await vi.waitFor(() => expect(rects).toHaveBeenCalled())
       const measured = rects.mock.calls.length
-      const seen = frames.length
-      await vi.waitFor(() => expect(frames.length).toBeGreaterThan(seen + 2), { timeout: 3000 })
+      const seen = captures.mock.calls.length
+      await vi.waitFor(() => expect(captures.mock.calls.length).toBeGreaterThan(seen + 2), { timeout: 3000 })
       expect(rects.mock.calls.length).toBe(measured)
       // The selected text itself changes (the selection's ends stay): it is built again.
       ;(document.querySelector("#text")!.firstChild as Text).data = "other words"
       await vi.waitFor(() => expect(rects.mock.calls.length).toBeGreaterThan(measured))
       await vi.waitFor(() => expect(editing.at(-1)?.selectedText).toBe("other words"))
     } finally {
+      captures.mockRestore()
       delete (document as { getAnimations?: unknown }).getAnimations
       Range.prototype.getClientRects = original
       getSelection()!.removeAllRanges()
@@ -362,5 +364,47 @@ describe("connecting", () => {
     sendToHost({ shape: "box" })
     await delivered()
     expect(parent.postMessage).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe("frames", () => {
+  const framesOn = (port: MessagePort) => {
+    const frames: { svg: string }[] = []
+    port.onmessage = event => {
+      if (event.data.type === "frame") frames.push(event.data)
+    }
+    return frames
+  }
+
+  it("does not send a frame that looks like the last one, though it still captures the page", async () => {
+    document.body.innerHTML = `<p id="text" title="note">hello</p>`
+    const captures = vi.spyOn(RenderPacer.prototype, "record")
+    try {
+      start()
+      const frames = framesOn(connect())
+      await vi.waitFor(() => expect(frames).toHaveLength(1))
+      // The DOM changes, as a framework re-rendering does, but not what it shows.
+      const seen = captures.mock.calls.length
+      document.querySelector("#text")!.setAttribute("title", "note")
+      await vi.waitFor(() => expect(captures.mock.calls.length).toBeGreaterThan(seen))
+      await delivered()
+      expect(frames).toHaveLength(1)
+      // What it shows changes: that is sent.
+      ;(document.querySelector("#text")!.firstChild as Text).data = "world"
+      await vi.waitFor(() => expect(frames).toHaveLength(2))
+      expect(frames[1]!.svg).toContain("world")
+    } finally {
+      captures.mockRestore()
+    }
+  })
+
+  it("sends the first frame of a new connection even when it looks like the last one sent", async () => {
+    start()
+    const first = framesOn(connect())
+    await vi.waitFor(() => expect(first).toHaveLength(1))
+    channel!.port1.close()
+    const second = framesOn(connect())
+    await vi.waitFor(() => expect(second).toHaveLength(1))
+    expect(second[0]!.svg).toBe(first[0]!.svg)
   })
 })
