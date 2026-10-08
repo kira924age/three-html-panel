@@ -201,10 +201,41 @@ test("stops the page's frames while the panel is out of view, and shows it as it
     spinner.className = "e2e-spin";
     document.body.appendChild(spinner);
   });
+  // DIAG (container only): the host's state with each count, no extra waiting.
+  // DIAG: count what the host tells the page about visibility.
+  await page.evaluate(() => {
+    const p = window.harness.panel as unknown as Record<string, unknown> & {
+      send: (message: { type: string; visible?: boolean }) => void;
+    };
+    const sent: string[] = [];
+    p.__visibility = sent;
+    const send = p.send.bind(p);
+    p.send = (message) => {
+      if (message.type === "visibility")
+        sent.push(`${Math.round(performance.now())}:${message.visible}`);
+      send(message);
+    };
+  });
   const framesIn = async (ms: number) => {
     const before = await page.evaluate(() => window.harness.frames);
     await page.waitForTimeout(ms);
-    return (await page.evaluate(() => window.harness.frames)) - before;
+    const after = await page.evaluate(() => {
+      const p = window.harness.panel as unknown as Record<string, unknown> & {
+        renderer: Record<string, unknown>;
+        position: { x: number };
+      };
+      return {
+        frames: window.harness.frames,
+        x: p.position.x,
+        shown: p.shown,
+        drawnAgo: Math.round(performance.now() - (p.drawnAt as number)),
+        paused: p.renderer.paused,
+        now: Math.round(performance.now()),
+        visibilitySent: p.__visibility,
+      };
+    });
+    console.log("DIAG", JSON.stringify({ ...after, sent: after.frames - before }));
+    return after.frames - before;
   };
   await expect.poll(() => framesIn(400)).toBeGreaterThan(0);
   // Out of view: after a second without being drawn, no more frames.
