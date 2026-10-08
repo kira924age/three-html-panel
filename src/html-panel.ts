@@ -181,8 +181,11 @@ export class HtmlPanel extends Mesh<BufferGeometry, MeshBasicMaterial, HtmlPanel
   /** The geometry was made here (not passed in): the panel disposes it. */
   private readonly ownsGeometry: boolean
   private surface: Surface
-  /** The points of the surface where the caret is, for placing the IME (see toClient). */
-  private caretPoints: { key: string; points: SurfacePoint[] } | null = null
+  /**
+   * The points of the surface at the caret's top and bottom, for placing the
+   * IME every frame (see toClient), by the page point ("x,y") they show.
+   */
+  private readonly caretPoints = new Map<string, SurfacePoint[]>()
   private readonly onError: (error: Error) => void
   private readonly connection: PanelConnection
   private editing = false
@@ -420,7 +423,7 @@ export class HtmlPanel extends Mesh<BufferGeometry, MeshBasicMaterial, HtmlPanel
   private currentSurface(): Surface {
     if (this.surface.geometry !== this.geometry) {
       this.surface = new Surface(this.geometry)
-      this.caretPoints = null
+      this.caretPoints.clear()
     }
     return this.surface
   }
@@ -542,12 +545,16 @@ export class HtmlPanel extends Mesh<BufferGeometry, MeshBasicMaterial, HtmlPanel
   private toClient(x: number, y: number, canvas: HTMLCanvasElement, camera: Camera): { x: number; y: number } | null {
     const surface = this.currentSurface()
     const key = `${x},${y}`
-    if (this.caretPoints?.key !== key) {
-      this.caretPoints = { key, points: surface.pointsAt(new Vector2(x / this.pageWidth, 1 - y / this.pageHeight)) }
+    let points = this.caretPoints.get(key)
+    if (!points) {
+      // Only the caret's top and bottom are asked for: a third point means the caret moved.
+      if (this.caretPoints.size >= 2) this.caretPoints.clear()
+      points = surface.pointsAt(new Vector2(x / this.pageWidth, 1 - y / this.pageHeight))
+      this.caretPoints.set(key, points)
     }
     const eye = new Vector3().setFromMatrixPosition(camera.matrixWorld)
     let best: { position: Vector3; facing: boolean; distance: number } | null = null
-    for (const { position, normal } of this.caretPoints.points) {
+    for (const { position, normal } of points) {
       const world = this.localToWorld(position.clone())
       const facing = normal.clone().transformDirection(this.matrixWorld).dot(eye.clone().sub(world)) > 0
       const distance = world.distanceToSquared(eye)

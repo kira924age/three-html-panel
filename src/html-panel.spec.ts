@@ -3,6 +3,7 @@ import { BoxGeometry, PerspectiveCamera, Ray, Scene, Vector2, Vector3, type WebG
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest"
 import { HtmlPanel, PANEL_SANDBOX, defaultPixelRatio, splitAlpha } from "./html-panel"
 import { PanelKeyboard } from "./panel-keyboard"
+import { Surface } from "./surface"
 
 describe("splitAlpha", () => {
   it("splits the alpha off a CSS color", () => {
@@ -468,12 +469,20 @@ describe("the panel's iframe", () => {
     window.dispatchEvent(ready)
     const port = (postMessage.mock.calls[0]![2] as MessagePort[])[0]!
     // At (0.75, 0.75) of the page: on the front face, (0.25, 0.25, 0.5), 1 unit from the camera.
-    port.postMessage({ type: "editing", editing: true, caret: { x: 600, y: 150, height: 0, color: "rgb(0, 0, 0)" }, selectedText: "", pointers: 0, typing: true })
+    port.postMessage({ type: "editing", editing: true, caret: { x: 600, y: 150, height: 20, color: "rgb(0, 0, 0)" }, selectedText: "", pointers: 0, typing: true })
     await new Promise(resolve => setTimeout(resolve, 20))
+    const pointsAt = vi.spyOn(Surface.prototype, "pointsAt")
     panel.onBeforeRender(renderer, new Scene(), camera)
     const placement = placeIme.mock.calls[0]![0]!
     expect(placement.x).toBe(475)
     expect(placement.y).toBe(225)
+    // The caret's top and bottom are found on the surface once, not every frame.
+    camera.position.x = 0.1
+    camera.updateMatrixWorld()
+    panel.onBeforeRender(renderer, new Scene(), camera)
+    expect(placeIme).toHaveBeenCalledTimes(2)
+    expect(pointsAt).toHaveBeenCalledTimes(2)
+    pointsAt.mockRestore()
 
     port.close()
     // Not the panel's to dispose.
