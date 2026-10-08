@@ -38,6 +38,18 @@ describe("parsePageMessage", () => {
     expect(parsePageMessage(frame({ svg: "x".repeat(MAX_SVG_LENGTH) }), limits)).not.toBeNull()
   })
 
+  it("takes the editing reports of an agent older than the host, with what they meant", () => {
+    // Before `pointers` and `typing`: no count, and typing wherever there is a caret.
+    expect(parsePageMessage({ type: "editing", editing: true, caret: caret(), selectedText: "" }, limits)).toMatchObject({
+      pointers: 0,
+      typing: true
+    })
+    expect(parsePageMessage({ type: "editing", editing: true, caret: null, selectedText: "", pointers: 2 }, limits)).toMatchObject({
+      pointers: 2,
+      typing: false
+    })
+  })
+
   it("accepts the editing state with a valid caret or none", () => {
     expect(parsePageMessage({ type: "editing", editing: true, caret: caret(), selectedText: "abc", pointers: 3, typing: true }, limits)).toEqual({
       type: "editing",
@@ -48,9 +60,8 @@ describe("parsePageMessage", () => {
       typing: true
     })
     expect(parsePageMessage({ type: "editing", editing: true, caret: null, selectedText: "", pointers: -1, typing: false }, limits)).toBeNull()
-    expect(parsePageMessage({ type: "editing", editing: true, caret: null, selectedText: "", pointers: 0 }, limits)).toBeNull()
     expect(parsePageMessage({ type: "editing", editing: true, caret: null, selectedText: "", pointers: 0, typing: "yes" }, limits)).toBeNull()
-    expect(parsePageMessage({ type: "editing", editing: true, caret: null, selectedText: "" }, limits)).toBeNull()
+    expect(parsePageMessage({ type: "editing", editing: true, caret: null, selectedText: "", pointers: "3", typing: false }, limits)).toBeNull()
     // The selection to copy must be a string, and not too long.
     expect(parsePageMessage({ type: "editing", editing: true, caret: null, selectedText: 1, pointers: 0, typing: false }, limits)).toBeNull()
     expect(parsePageMessage({ type: "editing", editing: true, caret: null }, limits)).toBeNull()
