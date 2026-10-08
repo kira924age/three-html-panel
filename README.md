@@ -93,6 +93,8 @@ renderer.setAnimationLoop(() => {
 
 If the page's agent does not connect within 15 seconds (`readyTimeout`), the panel is cleared and `onError` is called.
 
+A panel that has not been drawn facing the camera for a second (out of view, seen from behind, `visible = false`, out of the scene) tells its page to stop capturing: an animation or a video playing in it costs nothing meanwhile, and frames that come anyway are kept, not drawn. The first time it is drawn facing the camera again, the page is captured as it is then; until that frame comes, the panel shows what it showed before. This relies on the scene being rendered in a loop, as above. Where a panel takes input without ever being rendered (no WebGL), pass `pauseWhenHidden: false`.
+
 ### Adding the agent to a page
 
 The page loads the agent **before its own scripts**, and names the host's origin. The agent posts nothing anywhere else; without a valid `data-host-origin` (an exact origin, not `*`) it does not start.

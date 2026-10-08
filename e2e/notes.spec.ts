@@ -132,3 +132,33 @@ test("keeps the caret after a space that ends a wrapped line on that line", asyn
   await expect.poll(async () => (await panel.caret())?.x ?? null).toBeGreaterThan(before.x)
   expect((await panel.caret())!.y).toBeCloseTo(before.y, 0)
 })
+
+test("stops the page's frames while the panel is out of view, and shows it as it is now once back", async ({ page }) => {
+  test.skip(!panel.drawn, "without WebGL the panel is never drawn, so it is never paused")
+  // Something that keeps changing: frames keep coming while the panel is seen.
+  await panel.frame.evaluate(() => {
+    const style = document.createElement("style")
+    style.textContent = "@keyframes e2e-spin { to { transform: rotate(360deg) } } .e2e-spin { position: fixed; right: 40px; bottom: 40px; width: 40px; height: 40px; background: #3b82f6; animation: e2e-spin 1s linear infinite }"
+    document.head.appendChild(style)
+    const spinner = document.createElement("div")
+    spinner.className = "e2e-spin"
+    document.body.appendChild(spinner)
+  })
+  const framesIn = async (ms: number) => {
+    const before = await page.evaluate(() => window.harness.frames)
+    await page.waitForTimeout(ms)
+    return (await page.evaluate(() => window.harness.frames)) - before
+  }
+  await expect.poll(() => framesIn(400)).toBeGreaterThan(0)
+  // Out of view: after a second without being drawn, no more frames.
+  await page.evaluate(() => ((window.harness.panel as { position: { x: number } }).position.x = 100))
+  await expect.poll(() => framesIn(400), { timeout: 5000 }).toBe(0)
+  const hidden = await page.evaluate(() => window.harness.frames)
+  // The page changes meanwhile: its text.
+  const field = `${NOTE} textarea`
+  await panel.frame.evaluate(field => (document.querySelector<HTMLTextAreaElement>(field)!.value = "changed out of view"), field)
+  expect(await framesIn(400)).toBe(0)
+  // Back in view: frames come again, the first one at once.
+  await page.evaluate(() => ((window.harness.panel as { position: { x: number } }).position.x = 0))
+  await expect.poll(() => page.evaluate(() => window.harness.frames), { timeout: 2000 }).toBeGreaterThan(hidden)
+})

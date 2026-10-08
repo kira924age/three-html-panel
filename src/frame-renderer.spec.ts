@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { FrameScaler, probeScaling } from "./frame-renderer"
+import { FrameRenderer, FrameScaler, probeScaling } from "./frame-renderer"
 
 afterEach(() => {
   vi.restoreAllMocks()
@@ -81,5 +81,70 @@ describe("FrameScaler", () => {
     expect(await scaler.scale(image, 800, 600)).toBe(image)
     expect(await scaler.scale(image, 800, 600)).toBe(image)
     expect(probe).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe("FrameRenderer", () => {
+  it("keeps the frames that come while paused, and draws only the newest when resumed", async () => {
+    // The SVGs it starts to decode (none decodes: drawing is not what this is about).
+    const decoded: string[] = []
+    vi.stubGlobal(
+      "Image",
+      class {
+        decoding = ""
+        onload: (() => void) | null = null
+        onerror: (() => void) | null = null
+        set src(value: string) {
+          decoded.push(decodeURIComponent(value.slice(value.indexOf(",") + 1)))
+          queueMicrotask(() => this.onerror?.())
+        }
+      }
+    )
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+      fillRect: () => {},
+      drawImage: () => {}
+    } as unknown as CanvasRenderingContext2D)
+    const renderer = new FrameRenderer({ width: 10, height: 10, pixelRatio: 1, background: "#fff" })
+    renderer.setPaused(true)
+    renderer.submit({ svg: "<svg>1</svg>", width: 10, height: 10 })
+    renderer.submit({ svg: "<svg>2</svg>", width: 10, height: 10 })
+    await new Promise(resolve => setTimeout(resolve, 10))
+    expect(decoded).toEqual([])
+    renderer.setPaused(false)
+    await vi.waitFor(() => expect(decoded).toEqual(["<svg>2</svg>"]))
+    renderer.submit({ svg: "<svg>3</svg>", width: 10, height: 10 })
+    await vi.waitFor(() => expect(decoded).toEqual(["<svg>2</svg>", "<svg>3</svg>"]))
+    renderer.dispose()
+  })
+
+  it("does not go on to the next frame once paused while one was being decoded", async () => {
+    const decoded: string[] = []
+    const finish: (() => void)[] = []
+    vi.stubGlobal(
+      "Image",
+      class {
+        decoding = ""
+        onload: (() => void) | null = null
+        onerror: (() => void) | null = null
+        set src(value: string) {
+          decoded.push(decodeURIComponent(value.slice(value.indexOf(",") + 1)))
+          finish.push(() => this.onerror?.())
+        }
+      }
+    )
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+      fillRect: () => {},
+      drawImage: () => {}
+    } as unknown as CanvasRenderingContext2D)
+    const renderer = new FrameRenderer({ width: 10, height: 10, pixelRatio: 1, background: "#fff" })
+    renderer.submit({ svg: "<svg>1</svg>", width: 10, height: 10 })
+    renderer.setPaused(true)
+    renderer.submit({ svg: "<svg>2</svg>", width: 10, height: 10 })
+    finish.shift()!()
+    await new Promise(resolve => setTimeout(resolve, 10))
+    expect(decoded).toEqual(["<svg>1</svg>"])
+    renderer.setPaused(false)
+    await vi.waitFor(() => expect(decoded).toEqual(["<svg>1</svg>", "<svg>2</svg>"]))
+    renderer.dispose()
   })
 })

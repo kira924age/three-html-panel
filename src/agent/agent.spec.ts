@@ -398,6 +398,56 @@ describe("frames", () => {
     }
   })
 
+  it("sends no frames while the host does not draw the panel, still reports, and sends the page as it is once drawn again", async () => {
+    document.body.innerHTML = `<p id="text">hello</p><button id="go">Go</button>`
+    start()
+    const host = connect()
+    const frames: { svg: string }[] = []
+    const editing: { editing: boolean }[] = []
+    host.onmessage = event => {
+      if (event.data.type === "frame") frames.push(event.data)
+      if (event.data.type === "editing") editing.push(event.data)
+    }
+    await vi.waitFor(() => expect(frames).toHaveLength(1))
+    host.postMessage({ type: "visibility", visible: false })
+    await delivered()
+    ;(document.querySelector("#text")!.firstChild as Text).data = "world"
+    // What the host needs for input is still reported: here, an element took focus.
+    document.querySelector<HTMLButtonElement>("#go")!.focus()
+    host.postMessage({ type: "key", key: "Shift", shiftKey: true, ctrlKey: false, altKey: false, metaKey: false })
+    await vi.waitFor(() => expect(editing.at(-1)).toMatchObject({ editing: true }))
+    await delivered()
+    expect(frames).toHaveLength(1)
+    host.postMessage({ type: "visibility", visible: true })
+    await vi.waitFor(() => expect(frames).toHaveLength(2))
+    expect(frames[1]!.svg).toContain("world")
+  })
+
+  it("does not sample an animation while the host does not draw the panel", async () => {
+    const animation = {
+      effect: { target: document.body, pseudoElement: null, getKeyframes: () => [], getTiming: () => ({ iterations: Infinity }) },
+      playState: "running"
+    }
+    document.getAnimations = () => [animation as unknown as Animation]
+    const captures = vi.spyOn(RenderPacer.prototype, "record")
+    try {
+      start()
+      const host = connect()
+      await vi.waitFor(() => expect(captures.mock.calls.length).toBeGreaterThan(2), { timeout: 3000 })
+      host.postMessage({ type: "visibility", visible: false })
+      await delivered()
+      // At most the capture under way when the message came.
+      const hidden = captures.mock.calls.length
+      await new Promise(resolve => setTimeout(resolve, 300))
+      expect(captures.mock.calls.length).toBeLessThanOrEqual(hidden + 1)
+      host.postMessage({ type: "visibility", visible: true })
+      await vi.waitFor(() => expect(captures.mock.calls.length).toBeGreaterThan(hidden + 2), { timeout: 3000 })
+    } finally {
+      captures.mockRestore()
+      delete (document as { getAnimations?: unknown }).getAnimations
+    }
+  })
+
   it("sends the first frame of a new connection even when it looks like the last one sent", async () => {
     start()
     const first = framesOn(connect())

@@ -66,9 +66,18 @@ export interface HtmlPanelOptions {
   /** Data the page sent with `sendToHost()` (agent/page.ts). Check it before use. */
   onMessage?: (data: unknown) => void
   onError?: (error: Error) => void
+  /**
+   * Stops the page's capture while the panel is not drawn facing the camera
+   * (out of view, seen from behind, hidden, out of the scene) for a second, and
+   * captures it again the first time it is. Default true. Turn it off where the
+   * panel takes input without being rendered (no WebGL).
+   */
+  pauseWhenHidden?: boolean
 }
 
 const CARET_BLINK_MS = 530
+/** Not drawn facing the camera for this long, a panel counts as hidden. */
+export const HIDDEN_AFTER_MS = 1000
 
 /**
  * The sandbox of an untrusted panel. Never allow-same-origin: with it, a page on
@@ -137,6 +146,12 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
   private readonly back: Mesh<PlaneGeometry, MeshBasicMaterial>
   private readonly caret: Mesh<PlaneGeometry, MeshBasicMaterial>
   private readonly caretTimer: number
+  private readonly visibilityTimer: number
+  private readonly pauseWhenHidden: boolean
+  /** When the panel was last drawn facing the camera. */
+  private drawnAt = performance.now()
+  /** Whether the page was told the panel is drawn (see pauseWhenHidden). */
+  private shown = true
   private readonly onError: (error: Error) => void
   private readonly connection: PanelConnection
   private editing = false
@@ -160,6 +175,8 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
   /** Where the IME was last placed, to place it again only when it moves. */
   private imePlacement = ""
   private readonly scratch = new Vector3()
+  private readonly toCamera = new Vector3()
+  private readonly worldPosition = new Vector3()
   /** Until when the page may act on the user's behalf: shortly after the user acted on the panel. */
   private userActionUntil = -Infinity
   /** A press on the panel is held (between down and up): dragging is acting on it too. */
@@ -218,6 +235,13 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
       if (this.editing && this.caret.userData.hasCaret) this.caret.visible = !this.caret.visible
     }, CARET_BLINK_MS)
 
+    this.pauseWhenHidden = options.pauseWhenHidden ?? true
+    this.visibilityTimer = this.pauseWhenHidden
+      ? window.setInterval(() => {
+          if (this.shown && performance.now() - this.drawnAt > HIDDEN_AFTER_MS) this.setShown(false)
+        }, HIDDEN_AFTER_MS / 4)
+      : 0
+
     this.connection = new PanelConnection({
       iframe: this.iframe,
       origin: this.origin,
@@ -232,6 +256,8 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
         this.tapAnswerAt = null
         this.setEditing(false, null)
         this.setCursor("default")
+        // A new document starts shown.
+        if (!this.shown) this.send({ type: "visibility", visible: false })
       },
       onFrame: frame => this.renderer.submit(frame),
       onEditing: (editing, caret, selectedText, pointers, typing) => {
@@ -283,6 +309,22 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
     this.keyboard.register(iframe, { sandboxed: this.sandboxed })
     iframe.src = url.href
     container.appendChild(iframe)
+  }
+
+  /** Drawn for `camera`: seen, if from the front (the back is a plain plane). */
+  private drawnFor(camera: Camera): void {
+    const normal = this.scratch.set(0, 0, 1).transformDirection(this.matrixWorld)
+    const toCamera = this.toCamera.setFromMatrixPosition(camera.matrixWorld)
+    toCamera.sub(this.worldPosition.setFromMatrixPosition(this.matrixWorld))
+    if (normal.dot(toCamera) <= 0) return
+    this.drawnAt = performance.now()
+    if (!this.shown) this.setShown(true)
+  }
+
+  private setShown(shown: boolean): void {
+    this.shown = shown
+    this.renderer.setPaused(!shown)
+    this.send({ type: "visibility", visible: shown })
   }
 
   private setCursor(cursor: string): void {
@@ -432,6 +474,7 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
    * candidate window opens next to it.
    */
   override onBeforeRender(renderer: WebGLRenderer, _scene: unknown, camera: Camera): void {
+    if (this.pauseWhenHidden) this.drawnFor(camera)
     const caret = this.caretBox
     if (!caret || !this.keyboard.isTarget(this)) return
     // With a soft keyboard, the field stays in its corner: iOS scrolls the page to
@@ -517,6 +560,7 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
 
   dispose(): void {
     window.clearInterval(this.caretTimer)
+    window.clearInterval(this.visibilityTimer)
     window.clearTimeout(this.keyboardTimer)
     this.connection.dispose()
     this.keyboard.release(this)

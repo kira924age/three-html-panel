@@ -112,6 +112,8 @@ export class PanelAgent {
       this.window.dispatchEvent(new CustomEvent(HOST_MESSAGE_EVENT, { detail: message.data }))
     } else if (message.type === "ping") {
       this.post({ type: "pong" })
+    } else if (message.type === "visibility") {
+      this.capture.setVisible(message.visible)
     } else {
       this.capture.handle(message)
     }

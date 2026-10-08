@@ -445,4 +445,88 @@ describe("the panel's iframe", () => {
     expect(placeIme).not.toHaveBeenCalled()
     port.close()
   })
+
+  describe("while it is not drawn", () => {
+    const renderer = { domElement: document.createElement("canvas") } as unknown as WebGLRenderer
+    /** A camera 1 unit in front of the panel (at the origin, facing +z), or behind it. */
+    const cameraAt = (z: number) => {
+      const camera = new PerspectiveCamera(90, 1, 0.01, 10)
+      camera.position.set(0, 0, z)
+      camera.lookAt(0, 0, 0)
+      camera.updateMatrixWorld()
+      return camera
+    }
+    const front = cameraAt(1)
+    const behind = cameraAt(-1)
+    const delivered = () => new Promise(resolve => setTimeout(resolve, 20))
+
+    /** Connects the panel as its page would; returns the page's port and what the host sends it. */
+    const connect = (panel: HtmlPanel) => {
+      const postMessage = vi.fn()
+      panel.iframe.contentWindow!.postMessage = postMessage as typeof window.postMessage
+      const ready = new MessageEvent("message", { data: { type: "ready", version: 1 }, origin: "https://panel.example" })
+      Object.defineProperty(ready, "source", { value: panel.iframe.contentWindow })
+      window.dispatchEvent(ready)
+      const port = (postMessage.mock.calls.at(-1)![2] as MessagePort[])[0]!
+      const visibility: unknown[] = []
+      port.onmessage = event => {
+        if (event.data.type === "visibility") visibility.push(event.data.visible)
+      }
+      return { port, visibility }
+    }
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it("tells the page when it has not been drawn facing the camera for a second, and when it is again", async () => {
+      vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "performance"] })
+      const panel = open()
+      panel.updateMatrixWorld()
+      const { port, visibility } = connect(panel)
+      const draw = (camera: PerspectiveCamera, times: number) => {
+        for (let i = 0; i < times; i++) {
+          panel.onBeforeRender(renderer, new Scene(), camera)
+          vi.advanceTimersByTime(100)
+        }
+      }
+      // Drawn all along: nothing to say.
+      draw(front, 20)
+      // Drawn, but seen from behind (its back is a plain plane): not for a second yet.
+      draw(behind, 9)
+      await delivered()
+      expect(visibility).toEqual([])
+      draw(behind, 4)
+      await delivered()
+      expect(visibility).toEqual([false])
+      // Drawn facing the camera again: at once.
+      panel.onBeforeRender(renderer, new Scene(), front)
+      await delivered()
+      expect(visibility).toEqual([false, true])
+      port.close()
+    })
+
+    it("tells a page that connects while it is not drawn", async () => {
+      vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "performance"] })
+      const panel = open()
+      connect(panel).port.close()
+      vi.advanceTimersByTime(1500)
+      // The page navigated: a new document connects.
+      const { port, visibility } = connect(panel)
+      await delivered()
+      expect(visibility).toEqual([false])
+      port.close()
+    })
+
+    it("leaves the page alone with pauseWhenHidden off", async () => {
+      vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "performance"] })
+      const panel = new HtmlPanel({ url: "https://panel.example/page/", readyTimeout: 60_000, pauseWhenHidden: false })
+      panels.push(panel)
+      const { port, visibility } = connect(panel)
+      vi.advanceTimersByTime(5000)
+      await delivered()
+      expect(visibility).toEqual([])
+      port.close()
+    })
+  })
 })

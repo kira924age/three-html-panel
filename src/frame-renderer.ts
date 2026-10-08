@@ -113,6 +113,7 @@ export class FrameRenderer {
   private pending: Frame | null = null
   private drawing = false
   private disposed = false
+  private paused = false
 
   constructor(private readonly options: FrameRendererOptions) {
     const ratio = Math.min(options.pixelRatio, MAX_CANVAS_LENGTH / Math.max(options.width, options.height))
@@ -129,12 +130,21 @@ export class FrameRenderer {
   /**
    * Queues a frame. Frames of the wrong size (taken while the iframe was being
    * resized) are dropped. While a frame is being decoded, only the newest of
-   * the frames that arrive is kept.
+   * the frames that arrive is kept, and while paused.
    */
   submit(frame: Frame): void {
     if (frame.width !== this.options.width || frame.height !== this.options.height) return
     this.pending = frame
-    if (!this.drawing) void this.drain()
+    if (!this.drawing && !this.paused) void this.drain()
+  }
+
+  /**
+   * Paused (the panel is not seen), frames are kept rather than drawn; resumed,
+   * the newest of them is. A page that sends frames anyway costs no drawing.
+   */
+  setPaused(paused: boolean): void {
+    this.paused = paused
+    if (!paused && this.pending && !this.drawing) void this.drain()
   }
 
   /** Paints the background only, e.g. when the page failed to load. */
@@ -152,7 +162,7 @@ export class FrameRenderer {
 
   private async drain(): Promise<void> {
     this.drawing = true
-    while (this.pending && !this.disposed) {
+    while (this.pending && !this.disposed && !this.paused) {
       const frame = this.pending
       this.pending = null
       try {

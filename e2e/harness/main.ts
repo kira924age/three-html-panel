@@ -48,7 +48,9 @@ const panel = new HtmlPanel({
   width,
   height,
   size: width / height,
-  sandbox: true
+  sandbox: true,
+  // Without WebGL the panel is never drawn: it would count as hidden.
+  pauseWhenHidden: renderer !== null
 })
 scene.add(panel)
 // Rendering would do it; without WebGL, nothing else updates the matrices the pointer's raycast uses.
