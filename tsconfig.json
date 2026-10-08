@@ -13,5 +13,12 @@
     "verbatimModuleSyntax": true,
     "skipLibCheck": true
   },
-  "include": ["src", "panels", "e2e", "vite.config.ts", "vite.panels.config.ts", "playwright.config.ts"]
+  "include": [
+    "src",
+    "panels",
+    "e2e",
+    "vite.config.ts",
+    "vite.panels.config.ts",
+    "playwright.config.ts"
+  ]
 }

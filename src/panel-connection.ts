@@ -28,149 +28,170 @@ import {
   parsePageMessage,
   parseReady,
   type ConnectMessage,
-  type HostMessage
-} from "./protocol"
-import type { Box, Caret, Frame } from "./types"
+  type HostMessage,
+} from "./protocol";
+import type { Box, Caret, Frame } from "./types";
 
-export const READY_TIMEOUT_MS = 15_000
+export const READY_TIMEOUT_MS = 15_000;
 
 export interface PanelConnectionOptions {
-  iframe: HTMLIFrameElement
+  iframe: HTMLIFrameElement;
   /** The origin of the panel URL. `ready` from any other origin is ignored. */
-  origin: string
+  origin: string;
   /** The iframe is sandboxed (opaque origin): `ready` comes from "null", `connect` goes to "*". */
-  sandboxed?: boolean
+  sandboxed?: boolean;
   /** The page size the iframe is laid out at; frames of another size are dropped. */
-  width: number
-  height: number
-  readyTimeout?: number
+  width: number;
+  height: number;
+  readyTimeout?: number;
   /** A new document's agent connected. Whatever the previous one reported is stale. */
-  onConnect: () => void
-  onFrame: (frame: Frame) => void
-  onEditing: (editing: boolean, caret: Caret | null, selectedText: string, pointers: number, typing: boolean) => void
+  onConnect: () => void;
+  onFrame: (frame: Frame) => void;
+  onEditing: (
+    editing: boolean,
+    caret: Caret | null,
+    selectedText: string,
+    pointers: number,
+    typing: boolean,
+  ) => void;
   /** The mouse cursor the page wants where the pointer is (a CSS keyword). */
-  onCursor: (cursor: string) => void
+  onCursor: (cursor: string) => void;
   /** Where the page's text fields are (CSS px). */
-  onEditables: (boxes: Box[]) => void
+  onEditables: (boxes: Box[]) => void;
   /** The page asks for a link to be opened (a checked http(s) URL). */
-  onOpen: (url: string) => void
-  onMessage: (data: unknown) => void
+  onOpen: (url: string) => void;
+  onMessage: (data: unknown) => void;
   /** No agent connected in time, or the agent speaks another protocol version. */
-  onError: (error: Error) => void
+  onError: (error: Error) => void;
 }
 
 export class PanelConnection {
-  private port: MessagePort | null = null
-  private lastSeq = -1
-  private timer = 0
-  private disposed = false
+  private port: MessagePort | null = null;
+  private lastSeq = -1;
+  private timer = 0;
+  private disposed = false;
 
   constructor(private readonly options: PanelConnectionOptions) {
-    window.addEventListener("message", this.onWindowMessage)
-    options.iframe.addEventListener("load", this.onLoad)
-    this.startTimer()
+    window.addEventListener("message", this.onWindowMessage);
+    options.iframe.addEventListener("load", this.onLoad);
+    this.startTimer();
   }
 
   get connected(): boolean {
-    return this.port !== null
+    return this.port !== null;
   }
 
   send(message: HostMessage): void {
-    this.port?.postMessage(message)
+    this.port?.postMessage(message);
   }
 
   dispose(): void {
-    this.disposed = true
-    window.removeEventListener("message", this.onWindowMessage)
-    this.options.iframe.removeEventListener("load", this.onLoad)
-    window.clearTimeout(this.timer)
-    this.closePort()
+    this.disposed = true;
+    window.removeEventListener("message", this.onWindowMessage);
+    this.options.iframe.removeEventListener("load", this.onLoad);
+    window.clearTimeout(this.timer);
+    this.closePort();
   }
 
   private readonly onWindowMessage = (event: MessageEvent) => {
-    const { iframe, origin } = this.options
+    const { iframe, origin } = this.options;
     // Both checks matter: the source ties the message to this iframe (not
     // another panel or a popup), the origin to the page that was asked for
     // (not whatever the iframe navigated to since).
-    const expectedOrigin = this.options.sandboxed ? "null" : origin
-    if (event.source === null || event.source !== iframe.contentWindow || event.origin !== expectedOrigin) return
-    const ready = parseReady(event.data)
-    if (!ready) return
+    const expectedOrigin = this.options.sandboxed ? "null" : origin;
+    if (
+      event.source === null ||
+      event.source !== iframe.contentWindow ||
+      event.origin !== expectedOrigin
+    )
+      return;
+    const ready = parseReady(event.data);
+    if (!ready) return;
     if (ready.version !== PROTOCOL_VERSION) {
-      this.options.onError(new Error(`the panel agent speaks protocol ${ready.version}, not ${PROTOCOL_VERSION}`))
-      return
+      this.options.onError(
+        new Error(`the panel agent speaks protocol ${ready.version}, not ${PROTOCOL_VERSION}`),
+      );
+      return;
     }
-    this.connect(event.source as Window)
-  }
+    this.connect(event.source as Window);
+  };
 
   private connect(target: Window): void {
-    this.closePort()
-    this.stopTimer()
-    this.lastSeq = -1
+    this.closePort();
+    this.stopTimer();
+    this.lastSeq = -1;
 
-    const channel = new MessageChannel()
-    this.port = channel.port1
-    channel.port1.onmessage = this.onPortMessage
-    const message: ConnectMessage = { type: "connect", version: PROTOCOL_VERSION }
+    const channel = new MessageChannel();
+    this.port = channel.port1;
+    channel.port1.onmessage = this.onPortMessage;
+    const message: ConnectMessage = { type: "connect", version: PROTOCOL_VERSION };
     // An opaque origin cannot be named; "*" still only reaches this iframe's document.
-    target.postMessage(message, this.options.sandboxed ? "*" : this.options.origin, [channel.port2])
-    this.options.onConnect()
+    target.postMessage(message, this.options.sandboxed ? "*" : this.options.origin, [
+      channel.port2,
+    ]);
+    this.options.onConnect();
   }
 
   private readonly onPortMessage = (event: MessageEvent) => {
-    if (this.disposed) return
-    const { width, height } = this.options
-    const message = parsePageMessage(event.data, { width, height, lastSeq: this.lastSeq })
-    if (!message) return
+    if (this.disposed) return;
+    const { width, height } = this.options;
+    const message = parsePageMessage(event.data, { width, height, lastSeq: this.lastSeq });
+    if (!message) return;
     switch (message.type) {
       case "pong":
-        this.stopTimer()
-        break
+        this.stopTimer();
+        break;
       case "frame":
-        this.lastSeq = message.seq
-        this.options.onFrame({ svg: message.svg, width: message.width, height: message.height })
-        break
+        this.lastSeq = message.seq;
+        this.options.onFrame({ svg: message.svg, width: message.width, height: message.height });
+        break;
       case "editing":
-        this.options.onEditing(message.editing, message.caret, message.selectedText, message.pointers, message.typing)
-        break
+        this.options.onEditing(
+          message.editing,
+          message.caret,
+          message.selectedText,
+          message.pointers,
+          message.typing,
+        );
+        break;
       case "cursor":
-        this.options.onCursor(message.cursor)
-        break
+        this.options.onCursor(message.cursor);
+        break;
       case "open":
-        this.options.onOpen(message.url)
-        break
+        this.options.onOpen(message.url);
+        break;
       case "editables":
-        this.options.onEditables(message.boxes)
-        break
+        this.options.onEditables(message.boxes);
+        break;
       case "app":
-        this.options.onMessage(message.data)
-        break
+        this.options.onMessage(message.data);
+        break;
     }
-  }
+  };
 
   private readonly onLoad = () => {
-    this.startTimer()
-    this.send({ type: "ping" })
-  }
+    this.startTimer();
+    this.send({ type: "ping" });
+  };
 
   private startTimer(): void {
-    if (this.timer || this.disposed) return
+    if (this.timer || this.disposed) return;
     this.timer = window.setTimeout(() => {
-      this.timer = 0
-      this.closePort()
-      this.options.onError(new Error("the panel page did not start the three-html-panel agent"))
-    }, this.options.readyTimeout ?? READY_TIMEOUT_MS)
+      this.timer = 0;
+      this.closePort();
+      this.options.onError(new Error("the panel page did not start the three-html-panel agent"));
+    }, this.options.readyTimeout ?? READY_TIMEOUT_MS);
   }
 
   private stopTimer(): void {
-    window.clearTimeout(this.timer)
-    this.timer = 0
+    window.clearTimeout(this.timer);
+    this.timer = 0;
   }
 
   private closePort(): void {
-    if (!this.port) return
-    this.port.onmessage = null
-    this.port.close()
-    this.port = null
+    if (!this.port) return;
+    this.port.onmessage = null;
+    this.port.close();
+    this.port = null;
   }
 }

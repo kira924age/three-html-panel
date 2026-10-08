@@ -4,13 +4,13 @@
 // server or proxy in front of an existing site could; a build has the tag
 // already (vite.config.ts uses the same plugin).
 
-import { posix } from "node:path"
-import { defineConfig, loadEnv, type InlineConfig, type Plugin } from "vite"
+import { posix } from "node:path";
+import { defineConfig, loadEnv, type InlineConfig, type Plugin } from "vite";
 
 /** The same sandbox as the demo's iframes (PANEL_SANDBOX in src/html-panel.ts). */
-const PANEL_SANDBOX_CSP = "sandbox allow-scripts allow-forms allow-popups"
+const PANEL_SANDBOX_CSP = "sandbox allow-scripts allow-forms allow-popups";
 
-export const AGENT_SOURCE = "/src/agent/entry.ts"
+export const AGENT_SOURCE = "/src/agent/entry.ts";
 
 /**
  * Where the scene and the panel pages are served: `pnpm dev` and `pnpm
@@ -20,16 +20,19 @@ export const AGENT_SOURCE = "/src/agent/entry.ts"
  */
 const DEFAULT_ORIGINS = {
   development: { host: "http://localhost:5173", panel: "http://localhost:5174" },
-  production: { host: "http://localhost:4173", panel: "http://localhost:4174" }
-}
+  production: { host: "http://localhost:4173", panel: "http://localhost:4174" },
+};
 
 export function originsFor(mode: string): { host: string; panel: string } {
-  const env = loadEnv(mode, import.meta.dirname, "VITE_")
-  const defaults = mode === "production" ? DEFAULT_ORIGINS.production : DEFAULT_ORIGINS.development
-  return { host: env.VITE_HOST_ORIGIN || defaults.host, panel: env.VITE_PANEL_ORIGIN || defaults.panel }
+  const env = loadEnv(mode, import.meta.dirname, "VITE_");
+  const defaults = mode === "production" ? DEFAULT_ORIGINS.production : DEFAULT_ORIGINS.development;
+  return {
+    host: env.VITE_HOST_ORIGIN || defaults.host,
+    panel: env.VITE_PANEL_ORIGIN || defaults.panel,
+  };
 }
 /** Where a build puts the agent, so that pages can load it without bundling it. */
-export const AGENT_BUILD_FILE = "agent.js"
+export const AGENT_BUILD_FILE = "agent.js";
 
 /**
  * Puts `<script type="module" src=".../agent" data-host-origin="...">` first in
@@ -43,20 +46,20 @@ export function injectPanelAgent(hostOrigin: string): Plugin {
       // After bundling, so that a build keeps the tag (and its attribute) as is.
       order: "post",
       handler(_html, context) {
-        if (!context.path.startsWith("/panels/")) return
+        if (!context.path.startsWith("/panels/")) return;
         const src = context.server
           ? AGENT_SOURCE
-          : posix.relative(posix.dirname(context.path), `/${AGENT_BUILD_FILE}`)
+          : posix.relative(posix.dirname(context.path), `/${AGENT_BUILD_FILE}`);
         return [
           {
             tag: "script",
             attrs: { type: "module", src, "data-host-origin": hostOrigin },
-            injectTo: "head-prepend"
-          }
-        ]
-      }
-    }
-  }
+            injectTo: "head-prepend",
+          },
+        ];
+      },
+    },
+  };
 }
 
 /**
@@ -66,15 +69,15 @@ export function injectPanelAgent(hostOrigin: string): Plugin {
  * restarting on their own would race for the port).
  */
 export function panelServerConfig(mode: string): InlineConfig {
-  return { ...panelConfig(mode), configFile: false, envDir: false, mode }
+  return { ...panelConfig(mode), configFile: false, envDir: false, mode };
 }
 
-export default defineConfig(({ mode }) => panelConfig(mode))
+export default defineConfig(({ mode }) => panelConfig(mode));
 
 function panelConfig(mode: string) {
-  const origins = originsFor(mode)
-  const hostOrigin = origins.host
-  const panelPort = Number(new URL(origins.panel).port)
+  const origins = originsFor(mode);
+  const hostOrigin = origins.host;
+  const panelPort = Number(new URL(origins.panel).port);
   const server = {
     port: panelPort,
     strictPort: true,
@@ -86,13 +89,13 @@ function panelConfig(mode: string) {
     cors: { origin: [hostOrigin, "null"] },
     // The sandbox also comes with the response, so that it holds when a panel
     // page is opened directly or embedded anywhere else, not only in the demo.
-    headers: { "Content-Security-Policy": PANEL_SANDBOX_CSP }
-  }
+    headers: { "Content-Security-Policy": PANEL_SANDBOX_CSP },
+  };
   return {
     root: import.meta.dirname,
     clearScreen: false,
     server,
     preview: server,
-    plugins: [injectPanelAgent(hostOrigin)]
-  }
+    plugins: [injectPanelAgent(hostOrigin)],
+  };
 }
