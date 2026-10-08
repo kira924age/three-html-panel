@@ -114,6 +114,8 @@ export class PanelAgent {
       this.post({ type: "pong" })
     } else if (message.type === "visibility") {
       this.capture.setVisible(message.visible)
+    } else if (message.type === "pace") {
+      this.capture.setPace(message.intervalMs)
     } else {
       this.capture.handle(message)
     }

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
-import { PerspectiveCamera, Scene, Vector2, type WebGLRenderer } from "three"
+import { PerspectiveCamera, Scene, Vector2, Vector4, type WebGLRenderer } from "three"
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest"
-import { HtmlPanel, PANEL_SANDBOX, defaultPixelRatio, splitAlpha } from "./html-panel"
+import { FAR_PACE_MS, HtmlPanel, PANEL_SANDBOX, defaultPixelRatio, splitAlpha } from "./html-panel"
 import { PanelKeyboard } from "./panel-keyboard"
 
 describe("splitAlpha", () => {
@@ -405,7 +405,7 @@ describe("the panel's iframe", () => {
     camera.updateMatrixWorld()
     const canvas = document.createElement("canvas")
     canvas.getBoundingClientRect = () => new DOMRect(0, 0, 800, 600)
-    const renderer = { domElement: canvas } as unknown as WebGLRenderer
+    const renderer = { domElement: canvas, getSize: (size: Vector2) => size.set(800, 600) } as unknown as WebGLRenderer
 
     const postMessage = vi.fn()
     panel.iframe.contentWindow!.postMessage = postMessage as typeof window.postMessage
@@ -447,7 +447,10 @@ describe("the panel's iframe", () => {
   })
 
   describe("while it is not drawn", () => {
-    const renderer = { domElement: document.createElement("canvas") } as unknown as WebGLRenderer
+    const renderer = {
+      domElement: document.createElement("canvas"),
+      getSize: (size: Vector2) => size.set(800, 600)
+    } as unknown as WebGLRenderer
     /** A camera 1 unit in front of the panel (at the origin, facing +z), or behind it. */
     const cameraAt = (z: number) => {
       const camera = new PerspectiveCamera(90, 1, 0.01, 10)
@@ -526,6 +529,113 @@ describe("the panel's iframe", () => {
       vi.advanceTimersByTime(5000)
       await delivered()
       expect(visibility).toEqual([])
+      port.close()
+    })
+  })
+
+  describe("drawn small", () => {
+    // An 800x600 page, 1 unit wide; a 90° camera over an 800x600 canvas: at a
+    // distance d, it is drawn at 0.375 / d screen px per page px.
+    const renderer = {
+      domElement: document.createElement("canvas"),
+      getSize: (size: Vector2) => size.set(800, 600)
+    } as unknown as WebGLRenderer
+    const cameraAt = (z: number) => {
+      const camera = new PerspectiveCamera(90, 800 / 600, 0.01, 100)
+      camera.position.set(0, 0, z)
+      camera.updateMatrixWorld()
+      return camera
+    }
+    const delivered = () => new Promise(resolve => setTimeout(resolve, 20))
+    const connect = (panel: HtmlPanel) => {
+      const postMessage = vi.fn()
+      panel.iframe.contentWindow!.postMessage = postMessage as typeof window.postMessage
+      const ready = new MessageEvent("message", { data: { type: "ready", version: 1 }, origin: "https://panel.example" })
+      Object.defineProperty(ready, "source", { value: panel.iframe.contentWindow })
+      window.dispatchEvent(ready)
+      const port = (postMessage.mock.calls.at(-1)![2] as MessagePort[])[0]!
+      const paces: number[] = []
+      port.onmessage = event => {
+        if (event.data.type === "pace") paces.push(event.data.intervalMs)
+      }
+      return { port, paces }
+    }
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it("asks the page for fewer frames once drawn small for a while, and for all at once when drawn larger", async () => {
+      vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "performance"] })
+      const panel = open()
+      panel.updateMatrixWorld()
+      const { port, paces } = connect(panel)
+      /** Draws the panel from these distances, then lets the panel decide. */
+      const frame = async (...distances: number[]) => {
+        for (const z of distances) panel.onBeforeRender(renderer, new Scene(), cameraAt(z))
+        vi.advanceTimersByTime(250)
+        await delivered()
+      }
+      await frame(1) // 0.375: near
+      expect(paces).toEqual([])
+      panel.onBeforeRender(renderer, new Scene(), cameraAt(2)) // 0.19
+      await delivered()
+      // Not at once: another view may still draw it large.
+      expect(paces).toEqual([])
+      await frame(2)
+      expect(paces).toEqual([FAR_PACE_MS])
+      // Between the two scales it stays as it was, either way: no flipping at the edge.
+      await frame(1.4) // 0.27
+      expect(paces).toEqual([FAR_PACE_MS])
+      panel.onBeforeRender(renderer, new Scene(), cameraAt(1))
+      await delivered()
+      // Near: at once.
+      expect(paces).toEqual([FAR_PACE_MS, 0])
+      vi.advanceTimersByTime(250)
+      await frame(1.4)
+      expect(paces).toEqual([FAR_PACE_MS, 0])
+      port.close()
+    })
+
+    it("stays near while any view draws it large, as a minimap or a mirror drawing it small too", async () => {
+      vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "performance"] })
+      const panel = open()
+      panel.updateMatrixWorld()
+      const { port, paces } = connect(panel)
+      for (let i = 0; i < 8; i++) {
+        panel.onBeforeRender(renderer, new Scene(), cameraAt(1))
+        panel.onBeforeRender(renderer, new Scene(), cameraAt(4))
+        vi.advanceTimersByTime(250)
+      }
+      await delivered()
+      expect(paces).toEqual([])
+      port.close()
+    })
+
+    it("measures a camera of a stereo pair by its own viewport, not the whole canvas", async () => {
+      vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "performance"] })
+      const panel = open()
+      panel.updateMatrixWorld()
+      const { port, paces } = connect(panel)
+      // Near over the whole 800x600 canvas (0.375), but this eye draws into 400x300 of it: 0.19.
+      const eye = Object.assign(cameraAt(1), { viewport: new Vector4(0, 0, 400, 300) })
+      panel.onBeforeRender(renderer, new Scene(), eye)
+      vi.advanceTimersByTime(250)
+      await delivered()
+      expect(paces).toEqual([FAR_PACE_MS])
+      port.close()
+    })
+
+    it("tells a page that connects while the panel is drawn small", async () => {
+      vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "performance"] })
+      const panel = open()
+      panel.updateMatrixWorld()
+      connect(panel).port.close()
+      panel.onBeforeRender(renderer, new Scene(), cameraAt(3))
+      vi.advanceTimersByTime(250)
+      const { port, paces } = connect(panel)
+      await delivered()
+      expect(paces).toEqual([FAR_PACE_MS])
       port.close()
     })
   })

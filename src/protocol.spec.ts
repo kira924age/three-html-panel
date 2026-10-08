@@ -123,6 +123,14 @@ describe("parseReady", () => {
 })
 
 describe("parseHostMessage", () => {
+  it("accepts a pace from 0 to a second", () => {
+    expect(parseHostMessage({ type: "pace", intervalMs: 200 })).toEqual({ type: "pace", intervalMs: 200 })
+    expect(parseHostMessage({ type: "pace", intervalMs: 0 })).toEqual({ type: "pace", intervalMs: 0 })
+    for (const intervalMs of [-1, 1001, Number.NaN, Infinity, "200", undefined]) {
+      expect(parseHostMessage({ type: "pace", intervalMs })).toBeNull()
+    }
+  })
+
   it("accepts whether the host draws the panel, as a boolean only", () => {
     expect(parseHostMessage({ type: "visibility", visible: false })).toEqual({ type: "visibility", visible: false })
     expect(parseHostMessage({ type: "visibility", visible: true })).toEqual({ type: "visibility", visible: true })

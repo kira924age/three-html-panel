@@ -24,6 +24,7 @@ import {
   Vector2,
   Vector3,
   type Camera,
+  type Vector4,
   type Object3DEventMap,
   type Ray,
   type WebGLRenderer
@@ -78,6 +79,18 @@ export interface HtmlPanelOptions {
 const CARET_BLINK_MS = 530
 /** Not drawn facing the camera for this long, a panel counts as hidden. */
 export const HIDDEN_AFTER_MS = 1000
+/** How often whether a panel is hidden, or far, is decided. */
+const VIEW_CHECK_MS = HIDDEN_AFTER_MS / 4
+/**
+ * Drawn smaller than this by every view for VIEW_CHECK_MS (screen px per page
+ * CSS px, along its larger side), a panel counts as far: its page is captured
+ * at most every FAR_PACE_MS. Drawn above NEAR_SCALE by any view, it counts as
+ * near again at once. Between the two it stays as it was, so that it does not
+ * flip at the edge.
+ */
+export const FAR_SCALE = 0.25
+export const NEAR_SCALE = 0.3
+export const FAR_PACE_MS = 200
 
 /**
  * The sandbox of an untrusted panel. Never allow-same-origin: with it, a page on
@@ -146,12 +159,16 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
   private readonly back: Mesh<PlaneGeometry, MeshBasicMaterial>
   private readonly caret: Mesh<PlaneGeometry, MeshBasicMaterial>
   private readonly caretTimer: number
-  private readonly visibilityTimer: number
+  private readonly viewTimer: number
   private readonly pauseWhenHidden: boolean
   /** When the panel was last drawn facing the camera. */
   private drawnAt = performance.now()
   /** Whether the page was told the panel is drawn (see pauseWhenHidden). */
   private shown = true
+  /** Whether the page was told the panel is drawn small (see FAR_SCALE). */
+  private far = false
+  /** The largest scale any view drew the panel at since the pace was last decided; -1: none drew it. */
+  private largestScale = -1
   private readonly onError: (error: Error) => void
   private readonly connection: PanelConnection
   private editing = false
@@ -176,6 +193,8 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
   private imePlacement = ""
   private readonly scratch = new Vector3()
   private readonly toCamera = new Vector3()
+  private readonly corners = [new Vector3(), new Vector3(), new Vector3()] as const
+  private readonly screenSize = new Vector2()
   private readonly worldPosition = new Vector3()
   /** Until when the page may act on the user's behalf: shortly after the user acted on the panel. */
   private userActionUntil = -Infinity
@@ -236,11 +255,10 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
     }, CARET_BLINK_MS)
 
     this.pauseWhenHidden = options.pauseWhenHidden ?? true
-    this.visibilityTimer = this.pauseWhenHidden
-      ? window.setInterval(() => {
-          if (this.shown && performance.now() - this.drawnAt > HIDDEN_AFTER_MS) this.setShown(false)
-        }, HIDDEN_AFTER_MS / 4)
-      : 0
+    this.viewTimer = window.setInterval(() => {
+      if (this.pauseWhenHidden && this.shown && performance.now() - this.drawnAt > HIDDEN_AFTER_MS) this.setShown(false)
+      this.decidePace()
+    }, VIEW_CHECK_MS)
 
     this.connection = new PanelConnection({
       iframe: this.iframe,
@@ -258,6 +276,7 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
         this.setCursor("default")
         // A new document starts shown.
         if (!this.shown) this.send({ type: "visibility", visible: false })
+        if (this.far) this.send({ type: "pace", intervalMs: FAR_PACE_MS })
       },
       onFrame: frame => this.renderer.submit(frame),
       onEditing: (editing, caret, selectedText, pointers, typing) => {
@@ -319,6 +338,54 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
     if (normal.dot(toCamera) <= 0) return
     this.drawnAt = performance.now()
     if (!this.shown) this.setShown(true)
+  }
+
+  /**
+   * Notes how large a view draws the panel. Several views may draw it each
+   * frame (a minimap, a mirror, two eyes): it is near as soon as one draws it
+   * large, and far only once none has for a while (decidePace).
+   */
+  private paceFor(renderer: WebGLRenderer, camera: Camera): void {
+    const scale = this.screenScale(renderer, camera)
+    this.largestScale = Math.max(this.largestScale, scale)
+    if (this.far && scale >= NEAR_SCALE) this.setFar(false)
+  }
+
+  /** Far, if every view since the last check drew the panel small. Not drawn at all, it is left as it was. */
+  private decidePace(): void {
+    const scale = this.largestScale
+    this.largestScale = -1
+    if (scale >= 0 && !this.far && scale < FAR_SCALE) this.setFar(true)
+  }
+
+  private setFar(far: boolean): void {
+    this.far = far
+    this.send({ type: "pace", intervalMs: far ? FAR_PACE_MS : 0 })
+  }
+
+  /**
+   * How large the panel is drawn: screen px per page CSS px, along its larger
+   * side on screen (seen at an angle, one side shrinks). Infinity when a corner
+   * is behind the camera: then it is close.
+   */
+  private screenScale(renderer: WebGLRenderer, camera: Camera): number {
+    // A camera of a stereo pair (WebXR) draws into its own part of the canvas.
+    const viewport = (camera as Camera & { viewport?: Vector4 }).viewport
+    const size = viewport ? this.screenSize.set(viewport.z, viewport.w) : renderer.getSize(this.screenSize)
+    const [topLeft, topRight, bottomLeft] = this.corners
+    if (!this.projectCorner(-0.5, 0.5, topLeft, camera)) return Infinity
+    if (!this.projectCorner(0.5, 0.5, topRight, camera)) return Infinity
+    if (!this.projectCorner(-0.5, -0.5, bottomLeft, camera)) return Infinity
+    const width = Math.hypot(((topRight.x - topLeft.x) * size.x) / 2, ((topRight.y - topLeft.y) * size.y) / 2)
+    const height = Math.hypot(((bottomLeft.x - topLeft.x) * size.x) / 2, ((bottomLeft.y - topLeft.y) * size.y) / 2)
+    return Math.max(width / this.pageWidth, height / this.pageHeight)
+  }
+
+  /** A corner of the panel (-0.5 to 0.5 across) in the camera's clip space; false if behind it or beyond its range. */
+  private projectCorner(x: number, y: number, target: Vector3, camera: Camera): boolean {
+    target.set(x * this.worldWidth, y * this.worldHeight, 0)
+    this.localToWorld(target).project(camera)
+    return target.z >= -1 && target.z <= 1
   }
 
   private setShown(shown: boolean): void {
@@ -475,6 +542,7 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
    */
   override onBeforeRender(renderer: WebGLRenderer, _scene: unknown, camera: Camera): void {
     if (this.pauseWhenHidden) this.drawnFor(camera)
+    this.paceFor(renderer, camera)
     const caret = this.caretBox
     if (!caret || !this.keyboard.isTarget(this)) return
     // With a soft keyboard, the field stays in its corner: iOS scrolls the page to
@@ -560,7 +628,7 @@ export class HtmlPanel extends Mesh<PlaneGeometry, MeshBasicMaterial, HtmlPanelE
 
   dispose(): void {
     window.clearInterval(this.caretTimer)
-    window.clearInterval(this.visibilityTimer)
+    window.clearInterval(this.viewTimer)
     window.clearTimeout(this.keyboardTimer)
     this.connection.dispose()
     this.keyboard.release(this)
