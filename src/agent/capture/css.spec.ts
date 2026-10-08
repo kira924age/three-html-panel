@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { inlineCssUrls, rewriteSelector } from "./css";
+import { inlineCssUrls, liveSelector, rewriteSelector } from "./css";
 
 describe("rewriteSelector", () => {
   it("turns interaction pseudo-classes into attributes", () => {
@@ -19,6 +19,29 @@ describe("rewriteSelector", () => {
   it("leaves other pseudo-classes alone", () => {
     expect(rewriteSelector("li:hover-like, a:hovered, p:not(:first-child)")).toBe(
       "li:hover-like, a:hovered, p:not(:first-child)",
+    );
+  });
+});
+
+describe("liveSelector", () => {
+  it("lets each interaction pseudo-class also match its attribute", () => {
+    expect(liveSelector(".row:hover .tools, a:active")).toBe(
+      ".row:is(:hover,[data-thp-hover]) .tools, a:is(:active,[data-thp-active])",
+    );
+    expect(liveSelector("form:focus-within .hint, input:focus, input:focus-visible")).toBe(
+      "form:is(:focus-within,[data-thp-focus-within]) .hint, input:is(:focus,[data-thp-focus]), input:is(:focus-visible,[data-thp-focus])",
+    );
+    expect(liveSelector("li:not(:hover)")).toBe("li:not(:is(:hover,[data-thp-hover]))");
+  });
+
+  it("is null for selectors without them, or rewritten already", () => {
+    expect(liveSelector("li:hover-like, p:first-child")).toBeNull();
+    expect(liveSelector(".row:is(:hover, [data-thp-hover])")).toBeNull();
+  });
+
+  it("is rewritten for the image as the page's own selector is", () => {
+    expect(rewriteSelector(liveSelector(".row:hover .tools")!)).toBe(
+      ".row:is([data-thp-hover],[data-thp-hover]) .tools",
     );
   });
 });

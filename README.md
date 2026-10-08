@@ -130,6 +130,7 @@ These rely on the scene being rendered every frame. Without WebGL (a panel that 
 - Only what the DOM and CSS describe is drawn: no cross-origin iframes inside the page, no native widgets other than `<select>`'s list (no date pickers or video controls). CSS transitions jump to their end.
 - A cross-origin video without CORS shows only its poster.
 - contenteditable editing relies on `document.execCommand()`; editors that handle input in other ways may not work.
+- The panel page never gets a real pointer or real focus, so the agent keeps hover, press and focus itself. It marks the elements (`data-thp-hover`, `data-thp-active`, `data-thp-focus`, `data-thp-focus-within`) and rewrites the page's `:hover`, `:active`, `:focus`, `:focus-visible` and `:focus-within` selectors in place to match the marks too (`.row:hover` becomes `.row:is(:hover,[data-thp-hover])`), so that the page lays out as the panel shows it and a press lands on what is drawn. The page's script can see both. Rules added later inside an existing `@media` block, or edited in place, are not rewritten. The interaction rules of a cross-origin stylesheet loaded without CORS come after the page's own.
 - No IME in VR. Touch and VR were tested in emulation, not on devices.
 - A same-site page shares the host's main thread; a heavy one slows the scene. Prefer another site for panel pages.
 
@@ -145,9 +146,9 @@ pnpm build      # the demo, into dist/
 vp check        # format, lint and types
 ```
 
-`E2E_NO_WEBGL=1 pnpm e2e` runs the end-to-end tests without WebGL, as headless Firefox on Linux does.
+`pnpm e2e` starts `pnpm dev`, or uses one already running at its origins. For other ports, set `VITE_HOST_ORIGIN` and `VITE_PANEL_ORIGIN` (see `.env.example`) in the environment: the tests do not read `.env` files. `E2E_NO_WEBGL=1 pnpm e2e` runs the end-to-end tests without WebGL, as headless Firefox on Linux does.
 
-The library is `src/` (the agent, which runs in panel pages, is `src/agent/`). The demo is in `examples/`: `examples/showcase/` is the 3D scene (`index.html` loads it), and `examples/sites/` holds the pages it shows as panels, served from the other origin. The end-to-end tests drive those pages in `e2e/harness/`, a scene with one flat panel.
+The library is `src/` (the agent, which runs in panel pages, is `src/agent/`). The demo is in `examples/`: `examples/showcase/` is the 3D scene (`index.html` loads it), and `examples/sites/` holds the pages it shows as panels (and a few only the end-to-end tests use), served from the other origin. The end-to-end tests drive those pages in `e2e/harness/`, a scene with one flat panel.
 
 ## License
 

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { PageCapture } from "./page-capture";
 import { RenderPacer } from "./pacer";
 
@@ -37,6 +37,7 @@ beforeEach(() => {
 
 afterEach(() => {
   capture.dispose();
+  document.head.innerHTML = "";
   delete (document as { elementFromPoint?: unknown }).elementFromPoint;
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -139,4 +140,59 @@ it("updates auto cursors over text within the same element without capturing", a
   } finally {
     delete doc.caretPositionFromPoint;
   }
+});
+
+describe("interaction states in the live page", () => {
+  const press = () => {
+    capture.handle({ type: "pointer", kind: "down", x: 5, y: 5 });
+    capture.handle({ type: "pointer", kind: "up", x: 5, y: 5 });
+  };
+
+  beforeEach(() => {
+    document.head.innerHTML =
+      "<style>.tools { display: none } .row:hover .tools { display: flex } .row:focus-within .tools { display: grid }</style>";
+    document.body.innerHTML = `<div class="row"><span class="tools"><button>Act</button></span></div>`;
+    const [row, tools, button] = ["div", ".tools", "button"].map((s) => document.querySelector(s)!);
+    // As a browser hit tests: the button only where it is laid out.
+    Object.defineProperty(document, "elementFromPoint", {
+      configurable: true,
+      value: () => (getComputedStyle(tools!).display === "none" ? row : button),
+    });
+  });
+
+  it("shows a button that appears on its row's :hover, so that a press lands on it", async () => {
+    const clicked = vi.fn();
+    document.querySelector("button")!.addEventListener("click", clicked);
+    capture.start();
+    move();
+    await settle();
+    expect(getComputedStyle(document.querySelector(".tools")!).display).toBe("flex");
+    // The image shows what the page lays out: the copy carries the mark.
+    expect(frames.at(-1)).toMatch(/class="row" data-thp-hover=""/);
+    press();
+    expect(clicked).toHaveBeenCalledOnce();
+    capture.handle({ type: "pointer", kind: "leave", x: 0, y: 0 });
+    expect(document.querySelector("[data-thp-hover]")).toBeNull();
+    // Pressed, the button has focus: :focus-within keeps it shown, until the host takes the keys back.
+    expect(getComputedStyle(document.querySelector(".tools")!).display).toBe("grid");
+    capture.handle({ type: "blur" });
+    expect(getComputedStyle(document.querySelector(".tools")!).display).toBe("none");
+  });
+
+  it("follows the focus the page moves, with :focus-within", async () => {
+    capture.start();
+    document.querySelector("button")!.focus();
+    expect(getComputedStyle(document.querySelector(".tools")!).display).toBe("grid");
+    await settle();
+    expect(frames.at(-1)).toMatch(/class="row" data-thp-focus-within=""/);
+  });
+
+  it("does not count its marks as changes of the page", async () => {
+    capture.start();
+    await settle();
+    const count = captures.mock.calls.length;
+    document.querySelector("button")!.setAttribute("data-thp-hover", "");
+    await settle();
+    expect(captures).toHaveBeenCalledTimes(count);
+  });
 });

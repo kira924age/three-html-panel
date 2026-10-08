@@ -7,7 +7,8 @@
 // skips some of its usual default actions. Those that matter for typical pages
 // are reimplemented:
 //
-// - hover/enter/leave bookkeeping, and the :hover/:active state (via attributes)
+// - hover/enter/leave bookkeeping, and the :hover/:active/:focus state, as
+//   attributes on the page's elements (interaction-marks.ts)
 // - pointer capture, which throws for a pointer the browser does not know
 // - focus (see VirtualFocus), and placing the caret where a field was pressed;
 //   selecting text by dragging, double click (word) and triple click (line)
@@ -36,6 +37,7 @@ import {
 import { contentAction } from "./contenteditable";
 import { editAction, lineEnd, lineStart, wordAt } from "./editing";
 import { EditHistory, type FieldState } from "./history";
+import { InteractionMarks } from "./interaction-marks";
 import { PAN_START_DISTANCE, panAxes, type PanAxes } from "./pan";
 import {
   announceChange,
@@ -277,6 +279,7 @@ export class InputSynthesizer {
   readonly active = new Set<Element>();
   private readonly window: FrameWindow;
   private readonly focus: VirtualFocus;
+  private readonly marks = new InteractionMarks();
   private hoverTarget: Element | null = null;
   private captureTarget: Element | null = null;
   private press: Press | null = null;
@@ -356,7 +359,10 @@ export class InputSynthesizer {
   ) {
     this.window = document.defaultView as FrameWindow;
     this.patchPointerCapture();
-    this.focus = new VirtualFocus(document, options.onChange);
+    this.focus = new VirtualFocus(document, () => {
+      this.syncMarks();
+      options.onChange();
+    });
     // Added before the page's scripts run, so it comes before their listeners.
     this.window.addEventListener(
       "beforeinput",
@@ -451,6 +457,7 @@ export class InputSynthesizer {
     // The list closes when its <select> loses focus (or leaves the page).
     if (this.popup && (this.focused !== this.popup.select || !this.popup.select.isConnected))
       this.popup = null;
+    this.syncMarks();
     // Always dispatch the page's events. DOM mutations and capture's event
     // listeners still invalidate; only skip this blanket notification when
     // the pointer stayed over the same element and scrollbar. Canvas/CSSOM
@@ -573,6 +580,16 @@ export class InputSynthesizer {
 
   dispose(): void {
     window.clearTimeout(this.pageTimer);
+    this.marks.dispose();
+  }
+
+  /**
+   * Puts the hover, press and focus on the page's elements, for its CSS to
+   * match: right when they change, so that the next hit test finds what they
+   * show (a button shown only while its row is hovered, say).
+   */
+  private syncMarks(): void {
+    this.marks.update({ hovered: this.hovered, active: this.active, focused: this.focus.current });
   }
 
   /** Whether a point is on a character of the page's text (not only inside an element with text). */
@@ -858,6 +875,7 @@ export class InputSynthesizer {
     this.hovered.clear();
     for (const element of chain) this.hovered.add(element);
     this.hoverTarget = target;
+    this.syncMarks();
   }
 
   private pointerDown(
@@ -898,6 +916,7 @@ export class InputSynthesizer {
     this.captureTarget = null;
     this.active.clear();
     for (const element of ancestors(target)) this.active.add(element);
+    this.syncMarks();
 
     const init = this.pointerInit(x, y, 1);
     const pointerOk = target.dispatchEvent(this.pointerEvent("pointerdown", init));

@@ -28,8 +28,9 @@ import {
   visibleBoxOf,
 } from "../input/selection";
 import type { Box, Caret, Frame, FrameWindow, PanelInput } from "../../types";
-import { DocumentCss } from "./css";
+import { DocumentCss, INTERACTION_ATTRIBUTES } from "./css";
 import { ImageInliner } from "./images";
+import { LiveInteractionCss } from "./live-css";
 import { MAX_EDITABLES, MAX_TEXT_LENGTH } from "../../protocol";
 import { RenderPacer } from "./pacer";
 import { buildFrameSvg, isSampledLive, snapshotDocument, type ListBoxRow } from "./snapshot";
@@ -82,6 +83,7 @@ export interface PageCaptureOptions {
 export class PageCapture {
   private readonly window: FrameWindow;
   private readonly css: DocumentCss;
+  private readonly liveCss: LiveInteractionCss;
   private readonly images: ImageInliner;
   private readonly input: InputSynthesizer;
   private readonly mutations: MutationObserver;
@@ -134,10 +136,22 @@ export class PageCapture {
     this.css = new DocumentCss(
       document,
       (url) => this.images.get(url),
-      () => this.changed(),
+      () => {
+        // A cross-origin stylesheet's copy arrived: its interaction rules apply to the live page too.
+        this.liveCss.invalidate();
+        this.changed();
+      },
     );
+    this.liveCss = new LiveInteractionCss(document, (sheet) => this.css.readable(sheet));
     this.mutations = new this.window.MutationObserver((records) => {
-      if (records.some((record) => record.type !== "attributes")) this.textVersion++;
+      // The agent's own interaction marks: changing them is input, which says
+      // itself whether the page may look different (see optimizeHover).
+      const changes = records.filter(
+        (record) =>
+          record.type !== "attributes" || !INTERACTION_ATTRIBUTES.has(record.attributeName!),
+      );
+      if (changes.length === 0) return;
+      if (changes.some((record) => record.type !== "attributes")) this.textVersion++;
       this.changed();
     });
     this.input = new InputSynthesizer(document, {
@@ -197,6 +211,8 @@ export class PageCapture {
 
   handle(input: PanelInput): void {
     if (this.disposed) return;
+    // Rules the page added since apply to the hover before the input is hit tested.
+    this.liveCss.sync();
     this.input.handle(input);
     // Cursor hit testing depends on pointer coordinates, even when an
     // unchanged hover skips capture. Keep its notification independent.
@@ -212,6 +228,7 @@ export class PageCapture {
     this.disposed = true;
     clearTimeout(this.timer);
     this.input.dispose();
+    this.liveCss.dispose();
     this.mutations.disconnect();
     for (const type of INVALIDATING_EVENTS)
       this.window.removeEventListener(type, this.changed, true);
@@ -263,6 +280,8 @@ export class PageCapture {
   private render(): void {
     if (this.disposed || !this.dirty) return;
     this.dirty = false;
+    // Before measuring anything: the page may have added rules since the last input.
+    this.liveCss.sync();
     const started = performance.now();
     try {
       // The viewport, including any scrollbar: exactly the iframe's size.
@@ -315,9 +334,6 @@ export class PageCapture {
     // The snapshot measures scrolled text fields with a mirror (caret.ts).
     const xhtml = this.measure(() =>
       snapshotDocument(this.document, {
-        hovered: this.input.hovered,
-        active: this.input.active,
-        focused,
         selection,
         selectionColor,
         // The page's selection, when the keys do not go to it (the host took them, or the page made it).

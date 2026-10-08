@@ -7,7 +7,8 @@
 // - form state (value, checked, selected) lives in properties, not attributes
 // - scroll positions are not rendered by foreignObject at all, and the real
 //   scrollbars would not show them either: they are replaced (scrollbars.ts)
-// - interaction states (:hover, :focus) are expressed as attributes, see css.ts
+// - interaction states (:hover, :focus) are attributes the agent sets on the
+//   page's elements (interaction-marks.ts), copied with them; see css.ts
 // - animations are frozen: finite ones as they will end, the others as they are
 //   now (see collectAnimatedValues)
 // - images and canvases must be embedded as data URLs, and a video as its
@@ -22,7 +23,6 @@ import type { Box, FrameWindow } from "../../types";
 import { scrolledText } from "../input/caret";
 import { scrollbarsOf, type Scrollbar } from "../input/scrollbars";
 import type { PopupView } from "../input/select-popup";
-import { ACTIVE_ATTRIBUTE, FOCUS_ATTRIBUTE, FOCUS_WITHIN_ATTRIBUTE, HOVER_ATTRIBUTE } from "./css";
 
 /** Elements that do not contribute to what is on screen. <style> is collected separately. */
 const SKIPPED_ELEMENTS = new Set([
@@ -38,9 +38,6 @@ const SKIPPED_ELEMENTS = new Set([
 ]);
 
 export interface SnapshotOptions {
-  hovered: ReadonlySet<Element>;
-  active: ReadonlySet<Element>;
-  focused: Element | null;
   /** Elements added to the page only for measuring (e.g. the caret mirror); left out of the copy. */
   ignored?: ReadonlySet<Element>;
   /** Returns a data URL for an image, or null if it is not available yet. */
@@ -216,7 +213,6 @@ class Snapshotter {
   private readonly inert = globalThis.document.implementation.createHTMLDocument("");
   private readonly window: FrameWindow;
   private readonly animated: Map<Element, Map<string, string | null>>;
-  private readonly focusWithin = new Set<Element>();
   /** Scrollbars to draw over the copy. */
   readonly scrollbars: Scrollbar[] = [];
 
@@ -226,8 +222,6 @@ class Snapshotter {
   ) {
     this.window = document.defaultView as FrameWindow;
     this.animated = collectAnimatedValues(document);
-    for (let element = options.focused; element; element = element.parentElement)
-      this.focusWithin.add(element);
   }
 
   copy(live: Node): Node | null {
@@ -246,7 +240,6 @@ class Snapshotter {
     const copy = this.inert.importNode(element, false) as Element;
     this.copyFormState(element, copy);
     this.copyImage(element, copy);
-    this.copyInteractionState(element, copy);
     this.copyAnimatedValues(element, copy);
 
     // <head> carries no visible content, but keep the element so the structure stays valid.
@@ -393,7 +386,6 @@ class Snapshotter {
     // A video letterboxes its frame by default; an image would stretch it.
     image.style.setProperty("object-fit", computed.objectFit);
     image.style.setProperty("object-position", computed.objectPosition);
-    this.copyInteractionState(video, image);
     return image;
   }
 
@@ -418,13 +410,6 @@ class Snapshotter {
     const url = encodeFrame(this.document, video, frameWidth, frameHeight);
     videoFrames.set(video, { key, source, url });
     return url;
-  }
-
-  private copyInteractionState(element: Element, copy: Element): void {
-    if (this.options.hovered.has(element)) copy.setAttribute(HOVER_ATTRIBUTE, "");
-    if (this.options.active.has(element)) copy.setAttribute(ACTIVE_ATTRIBUTE, "");
-    if (this.options.focused === element) copy.setAttribute(FOCUS_ATTRIBUTE, "");
-    if (this.focusWithin.has(element)) copy.setAttribute(FOCUS_WITHIN_ATTRIBUTE, "");
   }
 
   private copyAnimatedValues(element: Element, copy: Element): void {

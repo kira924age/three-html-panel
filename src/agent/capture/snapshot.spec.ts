@@ -33,9 +33,6 @@ function snapshotWith(animations: (box: Element) => Animation[]): HTMLElement {
   const box = document.querySelector("#box")!;
   document.getAnimations = () => animations(box);
   const xhtml = snapshotDocument(document, {
-    hovered: new Set(),
-    active: new Set(),
-    focused: null,
     inlineImage: () => null,
   });
   const copy = new DOMParser().parseFromString(xhtml, "application/xhtml+xml");
@@ -113,9 +110,6 @@ describe("text being composed", () => {
     const field = document.querySelector<HTMLInputElement>("#name")!;
     document.getAnimations = () => [];
     const xhtml = snapshotDocument(document, {
-      hovered: new Set(),
-      active: new Set(),
-      focused: field,
       inlineImage: () => null,
       composition: {
         field,
@@ -159,9 +153,6 @@ describe("endOffsetOf", () => {
 describe("what the browser draws outside the page", () => {
   const snapshot = (options: Partial<Parameters<typeof snapshotDocument>[1]> = {}) => {
     const xhtml = snapshotDocument(document, {
-      hovered: new Set(),
-      active: new Set(),
-      focused: null,
       inlineImage: () => null,
       ...options,
     });
@@ -375,9 +366,6 @@ describe("what the browser draws outside the page", () => {
 describe("selections in the image", () => {
   const snapshot = (options: Partial<Parameters<typeof snapshotDocument>[1]> = {}) => {
     const xhtml = snapshotDocument(document, {
-      hovered: new Set(),
-      active: new Set(),
-      focused: null,
       inlineImage: () => null,
       ...options,
     });
@@ -459,9 +447,6 @@ describe("the page's background", () => {
     body: HTMLElement;
   } {
     const xhtml = snapshotDocument(document, {
-      hovered: new Set(),
-      active: new Set(),
-      focused: null,
       inlineImage: (url) => images[url] ?? null,
     });
     const root = new DOMParser().parseFromString(xhtml, "application/xhtml+xml").documentElement;

@@ -5,8 +5,9 @@
 // adjustments:
 //
 // - Interaction states (:hover, :active, :focus) depend on real input, which
-//   the image never receives. The snapshot marks the elements with attributes
-//   instead, and the selectors are rewritten to match those attributes.
+//   the image never receives. The agent marks the elements with attributes
+//   instead (interaction-marks.ts), and the selectors are rewritten to match
+//   those attributes.
 // - :root would match the <svg>, not the copied <html>.
 // - @media is evaluated again inside the image, against the image's own
 //   environment. Only the rules that match in the page right now are kept.
@@ -38,6 +39,35 @@ export function rewriteSelector(selector: string): string {
     (text, [pattern, replacement]) => text.replace(pattern, replacement),
     selector,
   );
+}
+
+const INTERACTION_ATTRIBUTE_OF: Record<string, string> = {
+  hover: HOVER_ATTRIBUTE,
+  active: ACTIVE_ATTRIBUTE,
+  "focus-visible": FOCUS_ATTRIBUTE,
+  "focus-within": FOCUS_WITHIN_ATTRIBUTE,
+  focus: FOCUS_ATTRIBUTE,
+};
+
+export const INTERACTION_ATTRIBUTES: ReadonlySet<string> = new Set(
+  Object.values(INTERACTION_ATTRIBUTE_OF),
+);
+
+const INTERACTION_PSEUDO_CLASS = /:(hover|active|focus-visible|focus-within|focus)(?![-\w])/g;
+
+/**
+ * The selector for the live page: each interaction pseudo-class also matches
+ * its attribute, `:hover` becoming `:is(:hover,[data-thp-hover])`. The
+ * specificity stays the same, and so does the rule's place in the cascade.
+ * Null if the selector has none, or was rewritten already.
+ */
+export function liveSelector(selector: string): string | null {
+  if (selector.includes("[data-thp-")) return null;
+  const rewritten = selector.replace(
+    INTERACTION_PSEUDO_CLASS,
+    (match, name: string) => `:is(${match},[${INTERACTION_ATTRIBUTE_OF[name]}])`,
+  );
+  return rewritten === selector ? null : rewritten;
 }
 
 // Browsers draw a focus ring for text fields from their own user agent
@@ -173,7 +203,11 @@ export class DocumentCss {
     }
   }
 
-  private readable(sheet: CSSStyleSheet): CSSStyleSheet | null {
+  /**
+   * The sheet itself if its rules can be read, or else a copy fetched with
+   * CORS once it has loaded (null until then, or if it cannot be fetched).
+   */
+  readable(sheet: CSSStyleSheet): CSSStyleSheet | null {
     try {
       void sheet.cssRules;
       return sheet;
