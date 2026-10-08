@@ -9,7 +9,7 @@
 
 import { composedValue, isTextField, measureCaret, measureComposition, measureSelection } from "../input/caret"
 import { InputSynthesizer } from "../input/input"
-import { caretAtPoint, editingHostOf, selectedRange, selectionBoxes, selectionColorAt } from "../input/selection"
+import { caretAtPoint, clipCaret, editingHostOf, selectedRange, selectionBoxes, selectionColorAt, visibleBoxOf } from "../input/selection"
 import type { Box, Caret, Frame, FrameWindow, PanelInput } from "../../types"
 import { DocumentCss } from "./css"
 import { ImageInliner } from "./images"
@@ -289,10 +289,12 @@ export class PageCapture {
       { node: range.startContainer, offset: range.startOffset },
       composing ? composing.text.slice(0, composing.cursor) : ""
     )
-    if (!caret) return null
+    // Cut to what shows of the editable.
+    const shown = caret && clipCaret(caret, visibleBoxOf(host))
+    if (!shown) return null
     const computed = this.window.getComputedStyle(host)
     const color = computed.caretColor === "auto" ? computed.color : computed.caretColor
-    return { ...caret, color }
+    return { ...shown, color }
   }
 
   /** The text fields and editables in view, for the host to open a soft keyboard on a tap right away. */

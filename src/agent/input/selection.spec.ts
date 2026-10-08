@@ -2,7 +2,8 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 import type { FrameWindow } from "../../types"
 import { InputSynthesizer } from "./input"
-import { selectedText } from "./selection"
+import { measureCaret } from "./caret"
+import { clipCaret, selectedText, selectionBoxes, visibleBoxOf } from "./selection"
 
 // jsdom rejects the `view` the agent passes (Vitest's window is not jsdom's
 // Window); events are made here without it.
@@ -312,5 +313,132 @@ describe("editing a contenteditable element", () => {
     click(50, 5)
     input.handle({ type: "composition", text: "にほ", cursor: 2 })
     expect(input.composition).toEqual({ text: "にほ", cursor: 2 })
+  })
+})
+
+describe("the caret, cut to what shows", () => {
+  /** Gives an element a box: its border box and its padding box (clientLeft/Top/Width/Height). */
+  function box(element: Element, left: number, top: number, width: number, height: number, border = 0) {
+    element.getBoundingClientRect = () => new DOMRect(left, top, width, height)
+    Object.defineProperties(element, {
+      clientLeft: { configurable: true, value: border },
+      clientTop: { configurable: true, value: border },
+      clientWidth: { configurable: true, value: width - 2 * border },
+      clientHeight: { configurable: true, value: height - 2 * border }
+    })
+  }
+
+  beforeEach(() => {
+    Object.defineProperty(document.documentElement, "clientWidth", { configurable: true, value: 800 })
+    Object.defineProperty(document.documentElement, "clientHeight", { configurable: true, value: 600 })
+  })
+
+  it("keeps a caret that shows whole, and trims one partly out of the box", () => {
+    const shown = { left: 10, top: 100, width: 200, height: 50 }
+    expect(clipCaret({ x: 20, y: 110, height: 18 }, shown)).toEqual({ x: 20, y: 110, height: 18 })
+    // A line scrolled half out at the bottom.
+    expect(clipCaret({ x: 20, y: 140, height: 18 }, shown)).toEqual({ x: 20, y: 140, height: 10 })
+    // And at the top.
+    expect(clipCaret({ x: 20, y: 92, height: 18 }, shown)).toEqual({ x: 20, y: 100, height: 10 })
+    // Out of it: none.
+    expect(clipCaret({ x: 20, y: 150, height: 18 }, shown)).toBeNull()
+    expect(clipCaret({ x: 300, y: 110, height: 18 }, shown)).toBeNull()
+    // At the right edge (the end of a full line), it still shows.
+    expect(clipCaret({ x: 210.5, y: 110, height: 18 }, shown)).not.toBeNull()
+  })
+
+  it("finds what shows of a field: its padding box, cut by an ancestor that hides what overflows", () => {
+    document.body.innerHTML = `<div id="note" style="overflow-x: hidden; overflow-y: hidden"><textarea id="text"></textarea></div>`
+    const note = document.querySelector("#note")!
+    const text = document.querySelector("#text")!
+    box(note, 0, 0, 220, 160)
+    box(text, 0, 30, 244, 150, 2)
+    expect(visibleBoxOf(text)).toEqual({ left: 2, top: 32, width: 218, height: 128 })
+  })
+
+  it("cuts an editable's caret by its own box only where it clips: not an inline one (overflow does not apply), nor one that lets text overflow", () => {
+    document.body.innerHTML = `
+      <div id="page" style="overflow-x: hidden; overflow-y: hidden">
+        <span id="inline" contenteditable="true" style="display: inline; overflow-x: hidden; overflow-y: hidden">Untitled</span>
+        <div id="spills" contenteditable="true" style="display: block; height: 20px">long text</div>
+        <div id="scrolls" contenteditable="true" style="display: block; overflow-x: auto; overflow-y: auto">long text</div>
+      </div>`
+    box(document.querySelector("#page")!, 0, 0, 400, 300)
+    for (const id of ["inline", "spills", "scrolls"]) box(document.querySelector(`#${id}`)!, 10, 10, id === "inline" ? 0 : 100, id === "inline" ? 0 : 20)
+    const page = { left: 0, top: 0, width: 400, height: 300 }
+    expect(visibleBoxOf(document.querySelector("#inline")!)).toEqual(page)
+    expect(visibleBoxOf(document.querySelector("#spills")!)).toEqual(page)
+    expect(visibleBoxOf(document.querySelector("#scrolls")!)).toEqual({ left: 10, top: 10, width: 100, height: 20 })
+  })
+
+  it("is not cut by an inline ancestor, whatever its overflow says", () => {
+    document.body.innerHTML = `
+      <div id="page" style="overflow-x: hidden; overflow-y: hidden">
+        <span id="truncate" style="display: inline; overflow-x: hidden; overflow-y: hidden"><input id="field"></span>
+      </div>`
+    box(document.querySelector("#page")!, 0, 0, 400, 300)
+    box(document.querySelector("#truncate")!, 10, 10, 0, 0)
+    box(document.querySelector("#field")!, 10, 10, 100, 20)
+    expect(visibleBoxOf(document.querySelector("#field")!)).toEqual({ left: 10, top: 10, width: 100, height: 20 })
+  })
+
+  it("highlights selected text in an inline element whatever its overflow says", () => {
+    document.body.innerHTML = `<p id="para"><a id="link" style="display: inline; overflow-x: hidden; overflow-y: hidden">linked text</a></p>`
+    box(document.querySelector("#link")!, 10, 10, 0, 0)
+    const original = Range.prototype.getClientRects
+    Range.prototype.getClientRects = () => [new DOMRect(10, 10, 60, 18)] as unknown as DOMRectList
+    try {
+      const range = document.createRange()
+      range.selectNodeContents(document.querySelector("#link")!)
+      expect(selectionBoxes(window as unknown as FrameWindow, range)).toEqual([{ left: 10, top: 10, width: 60, height: 18 }])
+    } finally {
+      Range.prototype.getClientRects = original
+    }
+  })
+
+  it("is not cut by boxes outside its containing block's chain (a positioned popup), but is by those in it", () => {
+    document.body.innerHTML = `
+      <div id="positioned" style="position: relative; overflow-x: hidden; overflow-y: hidden">
+        <div id="toolbar" style="overflow-x: hidden; overflow-y: hidden">
+          <div id="dropdown" style="position: absolute"><input id="search"></div>
+        </div>
+      </div>
+      <div id="shell" style="overflow-x: hidden; overflow-y: hidden">
+        <div id="dialog" style="position: fixed"><input id="name"></div>
+        <div id="moved" style="transform: translateX(0px); overflow-x: hidden; overflow-y: hidden">
+          <div style="position: fixed"><input id="inside"></div>
+        </div>
+      </div>`
+    const $ = (id: string) => document.querySelector(`#${id}`)!
+    box($("positioned"), 0, 0, 400, 300)
+    box($("toolbar"), 0, 0, 400, 40)
+    box($("search"), 10, 50, 100, 20)
+    // Below the toolbar, which does not clip it; inside the positioned box, which does.
+    expect(visibleBoxOf($("search"))).toEqual({ left: 10, top: 50, width: 100, height: 20 })
+    box($("search"), 10, 290, 100, 20)
+    expect(visibleBoxOf($("search"))).toEqual({ left: 10, top: 290, width: 100, height: 10 })
+
+    box($("shell"), 0, 0, 200, 100)
+    box($("name"), 300, 300, 100, 20)
+    expect(visibleBoxOf($("name"))).toEqual({ left: 300, top: 300, width: 100, height: 20 })
+    // A transform makes a box the containing block of fixed elements in it: it clips them.
+    box($("moved"), 0, 0, 200, 100)
+    box($("inside"), 150, 90, 100, 20)
+    expect(visibleBoxOf($("inside"))).toEqual({ left: 150, top: 90, width: 50, height: 10 })
+  })
+
+  it("hides the caret of a field whose line a box above it hides", () => {
+    document.body.innerHTML = `<div id="note" style="overflow-x: hidden; overflow-y: hidden"><input id="name" value="hello"></div>`
+    const note = document.querySelector("#note")!
+    const field = document.querySelector<HTMLInputElement>("#name")!
+    box(note, 0, 0, 200, 20)
+    // The field sits below what the note shows.
+    box(field, 0, 40, 200, 30)
+    field.setSelectionRange(5, 5)
+    expect(measureCaret(field)).toBeNull()
+    box(field, 0, 0, 200, 30)
+    // Its line (centred in the field) is cut by the note's bottom.
+    expect(measureCaret(field)).toMatchObject({ y: expect.any(Number), height: expect.any(Number) })
+    expect(measureCaret(field)!.y + measureCaret(field)!.height).toBeLessThanOrEqual(20)
   })
 })
