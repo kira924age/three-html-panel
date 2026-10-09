@@ -73,6 +73,16 @@ const siteUrl = (name: string) => new URL("/", siteOrigins[name]);
 // All pages run sandboxed (their servers send the same sandbox, see
 // vite.panels.config.ts and examples/sites/vite.site.ts): none can reach the
 // scene's cookies, storage or document, nor take its keyboard.
+/**
+ * A link the user follows in a panel: to another page of the same site, it opens
+ * in the panel (the page loads the agent too, and connects again); elsewhere,
+ * in a new tab, as HtmlPanel does by default.
+ */
+function openLink(url: URL, panel: HtmlPanel): void {
+  if (url.origin === panel.origin) panel.iframe.src = url.href;
+  else window.open(url.href, "_blank", "noopener,noreferrer");
+}
+
 interface PanelSpec {
   name: string;
   /** Where on the ring, to the right of straight ahead. */
@@ -82,7 +92,14 @@ interface PanelSpec {
 
 // The sites built with frameworks (and one with none).
 const sitePanel = (name: string) =>
-  new HtmlPanel({ url: siteUrl(name), width: 1024, height: 720, size: 1.7, sandbox: true });
+  new HtmlPanel({
+    url: siteUrl(name),
+    width: 1024,
+    height: 720,
+    size: 1.7,
+    sandbox: true,
+    onLink: openLink,
+  });
 
 const specs: PanelSpec[] = [
   {
@@ -95,6 +112,7 @@ const specs: PanelSpec[] = [
         height: 640,
         size: 1.6,
         sandbox: true,
+        onLink: openLink,
       }),
   },
   {
@@ -104,6 +122,7 @@ const specs: PanelSpec[] = [
       new HtmlPanel({
         url: pageUrl("examples/sites/controls/"),
         sandbox: true,
+        onLink: openLink,
         width: 480,
         height: 640,
         size: 1.0,
@@ -124,6 +143,7 @@ const specs: PanelSpec[] = [
         height: 720,
         size: 1.1,
         sandbox: true,
+        onLink: openLink,
       }),
   },
   // Web platform features, no framework.
