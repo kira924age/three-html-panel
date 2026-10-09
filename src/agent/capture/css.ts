@@ -181,10 +181,17 @@ export class DocumentCss {
    * "" for an anonymous one), outermost first: its rules go in them, as on the
    * page.
    */
-  private serializeSheet(source: CSSStyleSheet, sheets: string[][], layers: string[] = []): void {
+  private serializeSheet(
+    source: CSSStyleSheet,
+    sheets: string[][],
+    layers: string[] = [],
+    imported = false,
+  ): void {
     if (source.disabled) return;
     const sheet = this.readable(source);
     if (!sheet) return;
+    // An imported sheet's rules count in no document sheet's (see get()).
+    if (imported) this.watch(sheet.cssRules);
     const all = Array.from(sheet.cssRules);
     // Its @import rules, and the @layer statements among them (which declare
     // layers in turn with the imported ones), come first: each becomes a sheet
@@ -252,16 +259,12 @@ export class DocumentCss {
         // Its conditions: media, and supports() (newer browsers).
         const supports = (rule as { supportsText?: string | null }).supportsText;
         const layer = (rule as { layerName?: string | null }).layerName;
-        if (sheet) {
-          const readable = this.readable(sheet);
-          if (readable) this.watch(readable.cssRules);
-        }
         if (
           sheet &&
           this.window.matchMedia(rule.media.mediaText || "all").matches &&
           (!supports || CSS.supports(supports))
         )
-          this.serializeSheet(sheet, sheets, layer == null ? layers : [...layers, layer]);
+          this.serializeSheet(sheet, sheets, layer == null ? layers : [...layers, layer], true);
       } else if (rule instanceof CSSKeyframesRule) {
         // Animations are frozen, so keyframes are never used.
       } else if (

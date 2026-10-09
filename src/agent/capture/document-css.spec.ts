@@ -84,6 +84,54 @@ describe("recollecting", () => {
     layer.insertRule(".b { color: blue }", 1);
     expect(css.get()[1]).toContain(".b{color: blue;}");
   });
+
+  it("notices rules inserted in an @media block that did not match, and in an imported sheet", () => {
+    vi.stubGlobal("matchMedia", (query: string) => ({ matches: query !== "print" }));
+    document.head.innerHTML =
+      "<style>.a { color: red }</style><style>@media print { .p { color: blue } } .c { color: green }</style>";
+    const [imported, importing] = Array.from(document.styleSheets);
+    importSheet(imported!, importing!);
+    const css = new DocumentCss(document, () => null);
+    const first = css.get();
+    (importing!.cssRules[0] as CSSMediaRule).insertRule(".q { color: blue }", 1);
+    const second = css.get();
+    // Collected again (a new array), the same CSS: print still does not match.
+    expect(second).not.toBe(first);
+    expect(second).toEqual(first);
+    imported!.insertRule(".b { color: blue }", 1);
+    expect(css.get()[1]).toContain(".b{color: blue;}");
+  });
+
+  it("does not fetch an imported sheet whose media do not match", () => {
+    vi.stubGlobal("matchMedia", (query: string) => ({ matches: query !== "print" }));
+    const fetch = vi.fn(() => new Promise(() => {}));
+    vi.stubGlobal("fetch", fetch);
+    document.head.innerHTML = "<style>.a { color: red }</style>";
+    // A cross-origin sheet: its rules cannot be read.
+    const crossOrigin = Object.create(window.CSSStyleSheet.prototype, {
+      href: { value: "https://cdn.test/print.css" },
+      disabled: { value: false },
+      cssRules: {
+        get() {
+          throw new DOMException("cross-origin", "SecurityError");
+        },
+      },
+    }) as CSSStyleSheet;
+    const importRule = Object.create(window.CSSImportRule.prototype, {
+      styleSheet: { value: crossOrigin },
+      media: { value: { mediaText: "print" } },
+      layerName: { value: null },
+      supportsText: { value: null },
+    }) as CSSImportRule;
+    const sheet = {
+      href: null,
+      disabled: false,
+      cssRules: [importRule],
+    } as unknown as CSSStyleSheet;
+    vi.spyOn(document, "styleSheets", "get").mockReturnValue([sheet] as unknown as StyleSheetList);
+    new DocumentCss(document, () => null).get();
+    expect(fetch).not.toHaveBeenCalled();
+  });
 });
 
 describe("@import rules", () => {

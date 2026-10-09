@@ -129,7 +129,7 @@ These rely on the scene being rendered every frame. Without WebGL (a panel that 
 - The page has to load the agent.
 - Only what the DOM and CSS describe is drawn: no cross-origin iframes inside the page, no native widgets other than `<select>`'s list (no date pickers or video controls). CSS transitions jump to their end.
 - A cross-origin video without CORS shows only its poster.
-- Scrolled content is drawn by moving it in the copy of the page. A scroll container whose content starts with bare text (or other inline content), floats, multiple columns or vertical writing has its children moved one by one instead: bare text directly in it does not move, absolutely positioned elements placed from outside it are cut off at its edges, and its sticky elements are drawn over the rest of its content (`z-index: 1`). Wrapping the text in an element avoids this.
+- Scrolled content is drawn by moving it in the copy of the page. A scroll container whose content starts with bare text (or other inline content), floats, multiple columns or vertical writing has its children moved one by one instead: bare text directly in it does not move, absolutely positioned elements placed from outside it are cut off at its edges, and its sticky elements are drawn over the rest of its content (`z-index: 1`). For bare text, wrapping it in an element avoids this.
 - contenteditable editing relies on `document.execCommand()`; editors that handle input in other ways may not work.
 - No IME in VR. Touch and VR were tested in emulation, not on devices.
 - A same-site page shares the host's main thread; a heavy one slows the scene. Prefer another site for panel pages.
