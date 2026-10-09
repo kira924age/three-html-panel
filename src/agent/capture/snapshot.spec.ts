@@ -763,7 +763,7 @@ describe("scrolled content", () => {
         `left:0px !important;bottom:auto !important;right:auto !important;z-index:auto !important}`,
     );
     // Declared in a sheet of its own, before the page's (which may start with @namespace).
-    expect(buildFrameSvg("", "@namespace svg url(x);", 10, 10)).toContain(
+    expect(buildFrameSvg("", ["@namespace svg url(x);"], 10, 10)).toContain(
       "<style>@layer thp-scrolled;</style><style><![CDATA[@namespace svg url(x);",
     );
   });

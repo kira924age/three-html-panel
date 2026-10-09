@@ -4,6 +4,7 @@ import { DocumentCss } from "./css";
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
   document.head.innerHTML = "";
 });
 
@@ -13,29 +14,52 @@ describe("DocumentCss", () => {
     vi.stubGlobal("matchMedia", (query: string) => ({ matches: query.includes("min-width") }));
     document.head.innerHTML =
       "<style>@media (min-width: 1px) { .wide { color: red } } @media print { .printed { color: blue } }</style>";
-    const css = new DocumentCss(document, () => null).get();
+    const css = new DocumentCss(document, () => null).get().join("\n");
     expect(css).toContain(".wide");
     expect(css).not.toContain(".printed");
   });
 });
 
 describe("@namespace rules", () => {
-  it("come first in the copied CSS, prefixed ones only, each sheet's prefixes its own", () => {
+  it("stay first in their own sheet, which the copy keeps apart from the others", () => {
     vi.stubGlobal("matchMedia", () => ({ matches: true }));
     document.head.innerHTML =
-      '<style>@namespace x url("urn:a"); x|item { color: red }</style>' +
-      '<style>@namespace x url("urn:b"); @namespace url("urn:c"); x|item, [lang|=en] { color: blue }</style>' +
+      '<style>@namespace x url("urn:a"); x|item, .sep::after { content: "x|y" }</style>' +
+      '<style>@namespace url("http://www.w3.org/2000/svg"); a, [lang|=en] { fill: blue }</style>' +
       "<style>x|item { color: green }</style>";
-    const css = new DocumentCss(document, () => null).get();
-    expect(css.split("\n").slice(0, 2)).toEqual([
-      '@namespace thp1-x url("urn:a");',
-      '@namespace thp2-x url("urn:b");',
+    const sheets = new DocumentCss(document, () => null).get();
+    // The focus ring's, the page's three, and the animations' freeze.
+    expect(sheets).toHaveLength(5);
+    // As written: prefixes and the default namespace count in their own sheet only.
+    expect(sheets[1]).toBe('@namespace x url("urn:a");\nx|item, .sep::after{content: "x|y";}');
+    expect(sheets[2]).toBe(
+      '@namespace url("http://www.w3.org/2000/svg");\na, [lang|=en]{fill: blue;}',
+    );
+    expect(sheets[3]).toBe("x|item{color: green;}");
+  });
+
+  it("put an @import'ed sheet in a sheet of its own, before the one importing it", () => {
+    vi.stubGlobal("matchMedia", () => ({ matches: true }));
+    document.head.innerHTML =
+      '<style>x|item { color: red }</style><style>@namespace x url("urn:o"); x|item { color: blue }</style>';
+    const [imported, importing] = Array.from(document.styleSheets);
+    // jsdom loads no @import: one standing for it, of the sheet it imports.
+    const importRule = Object.create(window.CSSImportRule.prototype, {
+      styleSheet: { value: imported },
+      media: { value: { mediaText: "" } },
+    }) as CSSImportRule;
+    const sheet = {
+      href: null,
+      disabled: false,
+      cssRules: [importRule, ...Array.from(importing!.cssRules)],
+    } as unknown as CSSStyleSheet;
+    vi.spyOn(document, "styleSheets", "get").mockReturnValue([sheet] as unknown as StyleSheetList);
+    const sheets = new DocumentCss(document, () => null).get();
+    // The importing sheet's prefix does not count in the imported one.
+    expect(sheets.slice(1, 3)).toEqual([
+      "x|item{color: red;}",
+      '@namespace x url("urn:o");\nx|item{color: blue;}',
     ]);
-    expect(css.match(/@namespace/g)).toHaveLength(2);
-    expect(css).toContain("\nthp1-x|item{color: red;}");
-    expect(css).toContain("\nthp2-x|item, [lang|=en]{color: blue;}");
-    // Not declared in its own sheet: dropped by the page, and by the copy.
-    expect(css).toContain("\nx|item{color: green;}");
   });
 
   it("keep a linked sheet's relative namespace as it is", () => {
@@ -44,7 +68,7 @@ describe("@namespace rules", () => {
     Object.defineProperty(document.styleSheets[0]!, "href", {
       value: "https://site.test/css/main.css",
     });
-    const css = new DocumentCss(document, () => null).get();
-    expect(css.startsWith('@namespace thp1-app url("app");')).toBe(true);
+    const sheets = new DocumentCss(document, () => null).get();
+    expect(sheets[1]!.startsWith('@namespace app url("app");')).toBe(true);
   });
 });

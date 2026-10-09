@@ -1502,16 +1502,22 @@ export function snapshotDocument(document: Document, options: SnapshotOptions): 
   return new XMLSerializer().serializeToString(root);
 }
 
-/** Wraps the page's XHTML and CSS in an SVG document of the given size. */
-export function buildFrameSvg(xhtml: string, css: string, width: number, height: number): string {
+/** Wraps the page's XHTML and CSS (its sheets, see DocumentCss) in an SVG document of the given size. */
+export function buildFrameSvg(
+  xhtml: string,
+  sheets: readonly string[],
+  width: number,
+  height: number,
+): string {
   // "]]>" inside CSS would end the CDATA section early.
-  const safeCss = css.replace(/]]>/g, "]]]]><![CDATA[>");
+  const styles = sheets
+    .map((css) => `<style><![CDATA[${css.replace(/]]>/g, "]]]]><![CDATA[>")}]]></style>`)
+    .join("");
   return (
     `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">` +
-    // The agent's layer first (see SCROLLED_LAYER), in a sheet of its own: the
-    // page's may start with rules that must come first (@import, @namespace).
+    // The agent's layer first (see SCROLLED_LAYER), before the page's sheets.
     `<style>@layer ${SCROLLED_LAYER};</style>` +
-    `<style><![CDATA[${safeCss}]]></style>` +
+    styles +
     `<foreignObject x="0" y="0" width="100%" height="100%">${xhtml}</foreignObject>` +
     `</svg>`
   );

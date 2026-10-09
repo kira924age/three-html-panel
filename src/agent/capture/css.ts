@@ -100,7 +100,7 @@ function ruleCount(sheet: CSSStyleSheet): number {
  */
 export class DocumentCss {
   private signature = "";
-  private css = "";
+  private css: readonly string[] = [];
   /**
    * Cross-origin stylesheets (a web font service, say) hide their rules from
    * script unless they were loaded with CORS. They are fetched again with CORS
@@ -108,8 +108,6 @@ export class DocumentCss {
    */
   private readonly fetched = new Map<string, CSSStyleSheet | "loading" | "failed">();
   private readonly window: FrameWindow;
-  /** Namespace prefixes given names of their own so far (see scopeNamespaces). */
-  private namespaces = 0;
 
   constructor(
     private readonly document: Document,
@@ -123,80 +121,56 @@ export class DocumentCss {
     this.signature = "";
   }
 
-  get(): string {
+  /**
+   * The CSS, as sheets: one for each of the page's (an @import'ed one before
+   * the sheet importing it), as some rules only count in their own sheet
+   * (@namespace, which must come first in it).
+   */
+  get(): readonly string[] {
     const sheets = Array.from(this.document.styleSheets);
     const signature = sheets
       .map((sheet) => `${sheet.href ?? "inline"}:${ruleCount(sheet)}`)
       .join("|");
     if (signature !== this.signature) {
-      const parts: string[] = [];
-      for (const sheet of sheets) this.serializeSheet(sheet, parts);
-      // @namespace rules only count before all other rules (the sheets are put
-      // together: a prefix declared in one counts in the rest too), and their
-      // url() names a namespace, not a file to inline.
-      const rules = [DEFAULT_FOCUS_RING_CSS, ...parts.filter((part) => !isNamespace(part))];
-      rules.push(FREEZE_ANIMATIONS_CSS);
-      this.css = [
-        ...parts.filter(isNamespace),
-        inlineCssUrls(rules.join("\n"), this.document.baseURI, this.resolveUrl),
-      ].join("\n");
+      const out: string[][] = [[DEFAULT_FOCUS_RING_CSS]];
+      for (const sheet of sheets) this.serializeSheet(sheet, out);
+      out.push([FREEZE_ANIMATIONS_CSS]);
+      // A namespace's url() is a name, not a file to inline.
+      this.css = out
+        .filter((rules) => rules.length > 0)
+        .map((rules) =>
+          [
+            ...rules.filter(isNamespace),
+            inlineCssUrls(
+              rules.filter((rule) => !isNamespace(rule)).join("\n"),
+              this.document.baseURI,
+              this.resolveUrl,
+            ),
+          ].join("\n"),
+        );
       this.signature = signature;
     }
     return this.css;
   }
 
-  private serializeSheet(source: CSSStyleSheet, out: string[]): void {
+  /** Adds a sheet's rules to `sheets`, as a sheet (after those it imports). */
+  private serializeSheet(source: CSSStyleSheet, sheets: string[][]): void {
     if (source.disabled) return;
     const sheet = this.readable(source);
     if (!sheet) return;
-    const start = out.length;
-    this.serializeRules(sheet.cssRules, out);
-    this.scopeNamespaces(out, start);
+    const rules: string[] = [];
+    this.serializeRules(sheet.cssRules, rules, sheets);
     if (source.href) {
       // A namespace's url() is a name, not a file.
-      for (let i = start; i < out.length; i++)
-        if (!isNamespace(out[i]!)) out[i] = absolutizeUrls(out[i]!, source.href);
+      for (let i = 0; i < rules.length; i++)
+        if (!isNamespace(rules[i]!)) rules[i] = absolutizeUrls(rules[i]!, source.href);
     }
+    sheets.push(rules);
   }
 
-  /**
-   * Gives a sheet's namespace prefixes (its rules from `start` in `out`) names
-   * of their own: a prefix only counts in the sheet that declares it, but the
-   * copy puts all sheets together. A selector of another sheet with the same
-   * prefix (not declared there, so dropped) stays dropped.
-   */
-  private scopeNamespaces(out: string[], start: number): void {
-    const prefixes = new Map<string, string>();
-    for (let i = start; i < out.length; i++) {
-      const declared = /^@namespace\s+([\w-]+)\s/.exec(out[i]!);
-      if (!declared) continue;
-      const scoped = `thp${++this.namespaces}-${declared[1]}`;
-      prefixes.set(declared[1]!, scoped);
-      out[i] = `@namespace ${scoped} ${out[i]!.slice(declared[0].length)}`;
-    }
-    if (prefixes.size === 0) return;
-    // `prefix|name`, not `[attribute|=value]`.
-    const names = [...prefixes.keys()].map((prefix) => prefix.replace(/-/g, "\\-")).join("|");
-    const used = new RegExp(`(^|[^\\w-])(${names})\\|(?!=)`, "g");
-    for (let i = start; i < out.length; i++) {
-      if (!isNamespace(out[i]!))
-        out[i] = out[i]!.replace(
-          used,
-          (_, before: string, prefix: string) => `${before}${prefixes.get(prefix)}|`,
-        );
-    }
-  }
-
-  private serializeRules(rules: CSSRuleList, out: string[]): void {
-    const {
-      CSSStyleRule,
-      CSSMediaRule,
-      CSSSupportsRule,
-      CSSImportRule,
-      CSSKeyframesRule,
-      CSSNamespaceRule,
-      CSS,
-    } = this.window;
+  private serializeRules(rules: CSSRuleList, out: string[], sheets: string[][]): void {
+    const { CSSStyleRule, CSSMediaRule, CSSSupportsRule, CSSImportRule, CSSKeyframesRule, CSS } =
+      this.window;
     for (const rule of Array.from(rules)) {
       if (rule instanceof CSSStyleRule) {
         // Nested rules (CSS nesting) are serialized with the parent; rewrite the whole text then.
@@ -207,19 +181,15 @@ export class DocumentCss {
         );
       } else if (rule instanceof CSSMediaRule) {
         if (this.window.matchMedia(rule.conditionText).matches)
-          this.serializeRules(rule.cssRules, out);
+          this.serializeRules(rule.cssRules, out, sheets);
       } else if (rule instanceof CSSSupportsRule) {
-        if (CSS.supports(rule.conditionText)) this.serializeRules(rule.cssRules, out);
+        if (CSS.supports(rule.conditionText)) this.serializeRules(rule.cssRules, out, sheets);
       } else if (rule instanceof CSSImportRule) {
         const sheet = rule.styleSheet;
         if (sheet && this.window.matchMedia(rule.media.mediaText || "all").matches)
-          this.serializeSheet(sheet, out);
+          this.serializeSheet(sheet, sheets);
       } else if (rule instanceof CSSKeyframesRule) {
         // Animations are frozen, so keyframes are never used.
-      } else if (CSSNamespaceRule && rule instanceof CSSNamespaceRule) {
-        // A default namespace would apply to the type selectors of every other
-        // sheet put together with it: only prefixed ones are kept.
-        if (rule.prefix) out.push(rule.cssText);
       } else {
         out.push(rule.cssText);
       }
