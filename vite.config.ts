@@ -10,11 +10,15 @@ import {
 } from "vite-plus";
 import {
   AGENT_BUILD_FILE,
+  PANEL_PAGES,
+  PANEL_PAGE_HEADERS,
   SITES_DIR,
   injectPanelAgent,
+  staticHeaders,
   originsFor,
   panelServerConfig,
 } from "./vite.panels.config.ts";
+import { siteOrigins } from "./examples/sites/vite.site.ts";
 
 type PanelServer = ViteDevServer | PreviewServer;
 
@@ -110,7 +114,7 @@ export default defineConfig(({ mode }) => {
       outDir: "lib",
       format: "esm",
       platform: "browser",
-      // For browsers, not the Node version package.json's engines asks for (that is for development).
+      // For browsers, not the Node version package.json's devEngines asks for (that is for development).
       target: "es2022",
       dts: true,
       sourcemap: true,
@@ -123,24 +127,43 @@ export default defineConfig(({ mode }) => {
       options: { typeAware: true, typeCheck: true },
     },
     base: "./",
+    // The pages this server serves. Without this, Vite scans every index.html in
+    // the repository for dependencies, including the example sites that are
+    // packages of their own, whose imports only their own configs resolve.
+    optimizeDeps: { entries: ["index.html", "e2e/harness/index.html"] },
     server: { port: hostPort, strictPort: true },
     preview: { port: hostPort, strictPort: true },
     // The scene's pages load the panel pages from the panel server's origin.
     define: {
       "import.meta.env.VITE_HOST_ORIGIN": JSON.stringify(origins.host),
       "import.meta.env.VITE_PANEL_ORIGIN": JSON.stringify(origins.panel),
+      // The example sites that are packages of their own, each on its own origin.
+      "import.meta.env.VITE_SITE_ORIGINS": JSON.stringify(siteOrigins(mode)),
     },
-    plugins: lazyPlugins(() => [panelServer(), injectPanelAgent(origins.host)]),
+    plugins: lazyPlugins(() => [
+      panelServer(),
+      injectPanelAgent(origins.host),
+      // The same build is deployed twice: as the scene, and as the panel pages
+      // on another origin (see .github/workflows/deploy.yml). Their pages, the
+      // agent and the assets they load are sandboxed and readable from "null".
+      staticHeaders({
+        [`/${SITES_DIR}/*`]: PANEL_PAGE_HEADERS,
+        [`/${AGENT_BUILD_FILE}`]: { "Access-Control-Allow-Origin": "*" },
+        "/assets/*": { "Access-Control-Allow-Origin": "*" },
+      }),
+    ]),
     build: {
       // three.js alone is about 500 kB.
       chunkSizeWarningLimit: 800,
       rolldownOptions: {
         input: {
           main: resolve(import.meta.dirname, "index.html"),
-          notes: resolve(import.meta.dirname, SITES_DIR, "notes/index.html"),
-          controls: resolve(import.meta.dirname, SITES_DIR, "controls/index.html"),
-          reader: resolve(import.meta.dirname, SITES_DIR, "reader/index.html"),
-          article: resolve(import.meta.dirname, SITES_DIR, "article/index.html"),
+          ...Object.fromEntries(
+            PANEL_PAGES.map((name) => [
+              name,
+              resolve(import.meta.dirname, SITES_DIR, name, "index.html"),
+            ]),
+          ),
           agent: resolve(import.meta.dirname, "src/agent/entry.ts"),
         },
         output: {

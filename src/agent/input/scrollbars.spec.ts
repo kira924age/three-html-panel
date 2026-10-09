@@ -34,9 +34,17 @@ function scroller(
     set: (value: number) =>
       (scrollTop = Math.max(0, Math.min(value, sizes.scrollHeight - sizes.clientHeight))),
   });
-  box.scrollBy = ((_x: number, y: number) => {
-    box.scrollTop += y;
+  // As the agent scrolls: with options, at once (see scrollByUser in input.ts).
+  const scrolls: ScrollToOptions[] = [];
+  box.scrollBy = ((options: ScrollToOptions) => {
+    scrolls.push(options);
+    box.scrollTop += options.top ?? 0;
   }) as typeof box.scrollBy;
+  box.scrollTo = ((options: ScrollToOptions) => {
+    scrolls.push(options);
+    if (options.top !== undefined) box.scrollTop = options.top;
+  }) as typeof box.scrollTo;
+  Object.assign(box, { scrolls });
   box.getBoundingClientRect = () => new DOMRect(10, 20, sizes.offsetWidth, 100);
   document.elementFromPoint = () => box.querySelector("p");
   return box;
@@ -104,6 +112,19 @@ describe("pressing a scrollbar", () => {
     pointer("move", 205, 50);
     pointer("up", 205, 50);
     expect(box.scrollTop).toBe(87.5);
+  });
+
+  it("scrolls at once, whatever the page's scroll-behavior (a user's scroll is never smooth)", () => {
+    box.style.scrollBehavior = "smooth";
+    const scrolls = (box as unknown as { scrolls: ScrollToOptions[] }).scrolls;
+    // (Wheels go the same way; jsdom cannot make the agent's WheelEvent.)
+    pointer("down", 205, 110);
+    pointer("up", 205, 110);
+    pointer("down", 205, 40);
+    pointer("move", 205, 50);
+    pointer("up", 205, 50);
+    expect(scrolls.length).toBeGreaterThanOrEqual(2);
+    expect(scrolls.every((scroll) => scroll.behavior === "instant")).toBe(true);
   });
 
   it("does not pass the press on to the page", () => {

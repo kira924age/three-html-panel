@@ -151,6 +151,24 @@ describe("parsePageMessage", () => {
     ).not.toBeNull();
   });
 
+  it("keeps carets whose color uses any CSS color syntax", () => {
+    for (const color of [
+      "color(srgb 0 0 0 / 0.87)",
+      "oklch(0.627955 0.257683 29.2339 / 0.5)",
+      "color(prophoto-rgb 0.123456789 -0.0123456789 1.23456789 / 0.87654321)",
+    ]) {
+      const message = {
+        type: "editing",
+        editing: true,
+        caret: caret({ color }),
+        selectedText: "",
+        pointers: 0,
+        typing: false,
+      };
+      expect(parsePageMessage(message, limits)).toEqual(message);
+    }
+  });
+
   it("drops carets with numbers that are not finite or colors that are not short strings", () => {
     for (const bad of [
       caret({ x: Number.NaN }),
@@ -158,7 +176,7 @@ describe("parsePageMessage", () => {
       caret({ height: "16" }),
       caret({ height: -1 }),
       caret({ color: "" }),
-      caret({ color: "x".repeat(65) }),
+      caret({ color: "x".repeat(129) }),
       caret({ color: 0 }),
       "caret",
     ]) {

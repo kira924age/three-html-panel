@@ -18,6 +18,20 @@ describe("DocumentCss", () => {
     expect(css).toContain(".wide");
     expect(css).not.toContain(".printed");
   });
+
+  it("rewrites the selectors of nested rules, not the text of declarations", () => {
+    document.head.innerHTML =
+      '<style>.tip { content: "use :hover"; &:hover { opacity: 1 } }</style>';
+    const css = new DocumentCss(document, () => null).get().join("\n");
+    expect(css).toContain("&:is(:hover,[data-thp-hover])");
+    expect(css).toContain('"use :hover"');
+  });
+
+  it("draws the default focus ring of a field only where focus shows", () => {
+    const css = new DocumentCss(document, () => null).get().join("\n");
+    expect(css).toContain("select[data-thp-focus-visible]");
+    expect(css).not.toContain("select[data-thp-focus]");
+  });
 });
 
 /**
@@ -56,8 +70,8 @@ describe("blocks of rules", () => {
       "@media print { .printed { color: green } } } @container (min-width: 1px) { .b:focus { color: red } }</style>";
     const css = new DocumentCss(document, () => null).get()[1];
     expect(css).toBe(
-      "@layer utilities {\n.a[data-thp-hover]{color: red;}\n.wide{color: blue;}\n}\n" +
-        "@container (min-width: 1px) {\n.b[data-thp-focus]{color: red;}\n}",
+      "@layer utilities {\n.a:is(:hover,[data-thp-hover]){color: red;}\n.wide{color: blue;}\n}\n" +
+        "@container (min-width: 1px) {\n.b:is(:focus,[data-thp-focus]){color: red;}\n}",
     );
   });
 });
@@ -69,7 +83,7 @@ describe("nested rules", () => {
       "<style>.card { color: black; &:hover { color: red } @media (min-width: 800px) { color: blue; } " +
       "@media print { color: green; } }</style>";
     expect(new DocumentCss(document, () => null).get()[1]).toBe(
-      ".card {color: black;\n&[data-thp-hover]{color: red;}\ncolor: blue;\n}",
+      ".card {color: black;\n&:is(:hover,[data-thp-hover]){color: red;}\ncolor: blue;\n}",
     );
   });
 });

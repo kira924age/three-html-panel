@@ -46,7 +46,10 @@ const camera = new PerspectiveCamera(FOV, width / height, 0.01, 10);
 camera.position.set(0, 0, 0.5 / Math.tan((FOV * Math.PI) / 360));
 
 const panel = new HtmlPanel({
-  url: new URL(`examples/sites/${page}/`, import.meta.env.VITE_PANEL_ORIGIN || location.href),
+  // &url=<url> shows any page instead (an example site served on its own origin, say).
+  url:
+    params.get("url") ??
+    new URL(`examples/sites/${page}/`, import.meta.env.VITE_PANEL_ORIGIN || location.href),
   width,
   height,
   size: width / height,

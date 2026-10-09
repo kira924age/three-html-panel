@@ -1,0 +1,107 @@
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  padding: 16px 24px;
+  font-family: system-ui, "Hiragino Sans", "Noto Sans JP", sans-serif;
+  color: #1f2430;
+  background: #f6f7f9;
+}
+h1 {
+  margin: 0 0 12px;
+  font-size: 22px;
+}
+#messages {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.message {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 56px;
+  padding: 0 16px;
+  border-bottom: 1px solid #dde1e7;
+  background: #fff;
+}
+.message:hover {
+  background: #eef3ff;
+}
+.subject {
+  flex: 1;
+  transition: transform 0.5s;
+}
+/* Slides a little on hover: in the panel, it is where it ends at once, as drawn. */
+.message:hover .subject {
+  transform: translateX(6px);
+}
+/* The actions show only while the message is hovered, or a menu in them is open. */
+.actions {
+  display: none;
+  gap: 8px;
+}
+.message:hover .actions,
+.message:focus-within .actions {
+  display: flex;
+}
+.actions button {
+  padding: 6px 12px;
+  border: 1px solid #b8c2d3;
+  border-radius: 6px;
+  background: #fff;
+  font: inherit;
+}
+.actions button:hover {
+  background: #dbe5ff;
+}
+/* "More" opens its menu while focus is in it. */
+.more {
+  position: relative;
+}
+.menu {
+  display: none;
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 1;
+  margin: 4px 0 0;
+  padding: 4px 0;
+  list-style: none;
+  border: 1px solid #b8c2d3;
+  border-radius: 6px;
+  background: #fff;
+  box-shadow: 0 4px 12px rgb(0 0 0 / 15%);
+}
+.more:focus-within .menu {
+  display: block;
+}
+.menu button {
+  display: block;
+  width: 100%;
+  border: 0;
+  border-radius: 0;
+  text-align: left;
+  white-space: nowrap;
+}
+#status {
+  margin-top: 16px;
+  color: #4a5263;
+}
+/* Opens slowly, by the page's own doing: pressing elsewhere meanwhile must not cut it short. */
+#compose {
+  margin-bottom: 8px;
+  padding: 6px 12px;
+  font: inherit;
+}
+#draft {
+  max-height: 0;
+  overflow: hidden;
+  background: #fff;
+  transition: max-height 3s linear;
+}
+#draft.open {
+  max-height: 120px;
+}

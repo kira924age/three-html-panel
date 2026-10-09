@@ -1,0 +1,51 @@
+.root {
+  padding: 0 var(--mantine-spacing-md) 6px;
+}
+
+.reply {
+  margin-bottom: 6px;
+  background-color: var(--mantine-color-body);
+}
+
+.replyIcon {
+  flex: none;
+  color: var(--mantine-primary-color-filled);
+}
+
+.editor {
+  border: 1px solid var(--mantine-color-default-border);
+  border-radius: var(--mantine-radius-md);
+  background-color: var(--mantine-color-body);
+  overflow: hidden;
+
+  &:focus-within {
+    border-color: var(--mantine-primary-color-filled);
+  }
+}
+
+.toolbar {
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--mantine-color-default-border);
+  background-color: light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6));
+}
+
+.content {
+  max-height: 180px;
+  overflow-y: auto;
+  background-color: transparent;
+}
+
+.prose {
+  padding: 8px 12px !important;
+  min-height: 40px;
+  font-size: var(--mantine-font-size-sm);
+}
+
+.count {
+  font-variant-numeric: tabular-nums;
+}
+
+.hint {
+  margin-top: 4px;
+  text-align: right;
+}

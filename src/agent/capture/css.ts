@@ -5,8 +5,10 @@
 // adjustments:
 //
 // - Interaction states (:hover, :active, :focus) depend on real input, which
-//   the image never receives. The snapshot marks the elements with attributes
-//   instead, and the selectors are rewritten to match those attributes.
+//   the image never receives. The agent marks the elements with attributes
+//   instead (interaction-marks.ts), and the selectors are rewritten to match
+//   those attributes, as for the live page (live-css.ts, which has rewritten
+//   most of them in place already).
 // - :root would match the <svg>, not the copied <html>.
 // - @media is evaluated again inside the image, against the image's own
 //   environment. Only the rules that match in the page right now are kept.
@@ -19,32 +21,136 @@ export const HOVER_ATTRIBUTE = "data-thp-hover";
 export const ACTIVE_ATTRIBUTE = "data-thp-active";
 export const FOCUS_ATTRIBUTE = "data-thp-focus";
 export const FOCUS_WITHIN_ATTRIBUTE = "data-thp-focus-within";
+/** Focus the browser would show (from keys, or in a text field), not every focus. */
+export const FOCUS_VISIBLE_ATTRIBUTE = "data-thp-focus-visible";
+
+const INTERACTION_ATTRIBUTE_OF: Record<string, string> = {
+  hover: HOVER_ATTRIBUTE,
+  active: ACTIVE_ATTRIBUTE,
+  "focus-visible": FOCUS_VISIBLE_ATTRIBUTE,
+  "focus-within": FOCUS_WITHIN_ATTRIBUTE,
+  focus: FOCUS_ATTRIBUTE,
+};
+
+export const INTERACTION_ATTRIBUTES: ReadonlySet<string> = new Set(
+  Object.values(INTERACTION_ATTRIBUTE_OF),
+);
 
 // A pseudo-class followed by something other than a name character, so that
 // :focus does not also match :focus-visible.
-const pseudoClass = (name: string) => new RegExp(`:${name}(?![-\\w])`, "g");
+const INTERACTION_PSEUDO_CLASS = /:(hover|active|focus-visible|focus-within|focus)(?![-\w])/g;
+const ROOT_PSEUDO_CLASS = /:root(?![-\w])/g;
 
-const SELECTOR_REWRITES: [RegExp, string][] = [
-  [pseudoClass("root"), "html"],
-  [pseudoClass("hover"), `[${HOVER_ATTRIBUTE}]`],
-  [pseudoClass("active"), `[${ACTIVE_ATTRIBUTE}]`],
-  [pseudoClass("focus-visible"), `[${FOCUS_ATTRIBUTE}]`],
-  [pseudoClass("focus-within"), `[${FOCUS_WITHIN_ATTRIBUTE}]`],
-  [pseudoClass("focus"), `[${FOCUS_ATTRIBUTE}]`],
-];
+/**
+ * Whether the compound selector that ends at `end` has a pseudo-element in it
+ * (`::-webkit-scrollbar-thumb:hover`, `::part(x):hover`). Only a few
+ * pseudo-classes may follow one, not an attribute: those are left alone.
+ */
+function followsPseudoElement(selector: string, end: number): boolean {
+  let depth = 0;
+  for (let i = end - 1; i >= 0; i--) {
+    const char = selector[i]!;
+    if (char === ")" || char === "]") depth++;
+    else if (char === "(" || char === "[") {
+      if (depth === 0) return false;
+      depth--;
+    } else if (depth === 0) {
+      if (char === ":" && selector[i - 1] === ":") return true;
+      if (/[\s>+~,]/.test(char)) return false;
+    }
+  }
+  return false;
+}
 
-export function rewriteSelector(selector: string): string {
-  return SELECTOR_REWRITES.reduce(
-    (text, [pattern, replacement]) => text.replace(pattern, replacement),
+/** Whether the pseudo-class at `start` to `end` is the one in a rewrite already: `:is(:hover,[data-thp-hover])`. */
+const isWrapped = (selector: string, start: number, end: number) =>
+  /:is\(\s*$/.test(selector.slice(Math.max(0, start - 8), start)) &&
+  /^\s*,\s*\[data-thp-/.test(selector.slice(end, end + 16));
+
+/**
+ * Where in `selector` the text is not selector syntax: inside an attribute
+ * selector (`[title=":hover"]`) or a string, or escaped (Tailwind's
+ * `.md\:hover\:underline`). One flag per character.
+ */
+function quotedText(selector: string): boolean[] {
+  const quoted: boolean[] = [];
+  let quote = "";
+  let brackets = 0;
+  for (let i = 0; i < selector.length; i++) {
+    const char = selector[i]!;
+    quoted.push(quote !== "" || brackets > 0);
+    if (char === "\\") {
+      // The character escaped is part of a name (or of the string).
+      quoted.push(true);
+      i++;
+    } else if (quote) {
+      if (char === quote) quote = "";
+    } else if (char === '"' || char === "'") quote = char;
+    else if (char === "[") brackets++;
+    else if (char === "]" && brackets > 0) brackets--;
+  }
+  return quoted;
+}
+
+/**
+ * Replaces the interaction pseudo-classes, but those inside an attribute
+ * selector, a string or an escape (not pseudo-classes), those that follow a
+ * pseudo-element, and those rewritten already (a selector the page read back
+ * and added to, say).
+ */
+function replaceInteractionPseudoClasses(
+  selector: string,
+  replace: (match: string, attribute: string) => string,
+): string {
+  let quoted: boolean[] | null = null;
+  return selector.replace(INTERACTION_PSEUDO_CLASS, (match, name: string, offset: number) => {
+    // Only for selectors with a bracket, a quote or an escape at all: most have none.
+    if (/["'[\\]/.test(selector)) quoted ??= quotedText(selector);
+    return quoted?.[offset] ||
+      followsPseudoElement(selector, offset) ||
+      isWrapped(selector, offset, offset + match.length)
+      ? match
+      : replace(match, INTERACTION_ATTRIBUTE_OF[name]!);
+  });
+}
+
+const LIVE_REWRITE =
+  /:is\(\s*(:(?:hover|active|focus-visible|focus-within|focus))\s*,\s*\[data-thp-[\w-]+\]\s*\)/g;
+
+/** The selector as the page wrote it: what liveSelector added taken out. */
+export function unwrapLiveSelector(selector: string): string {
+  return selector.replace(LIVE_REWRITE, "$1");
+}
+
+/**
+ * The selector for the live page: each interaction pseudo-class also matches
+ * its attribute, `:hover` becoming `:is(:hover,[data-thp-hover])`. The
+ * specificity stays the same, and so does the rule's place in the cascade.
+ * Null if there is nothing (more) to rewrite.
+ */
+export function liveSelector(selector: string): string | null {
+  const rewritten = replaceInteractionPseudoClasses(
     selector,
+    (match, attribute) => `:is(${match},[${attribute}])`,
   );
+  return rewritten === selector ? null : rewritten;
+}
+
+/**
+ * The selector for the image: as for the live page
+ * (:hover never matches in an image, the attribute does), and :root is html.
+ */
+export function rewriteSelector(selector: string): string {
+  const rooted = selector.replace(ROOT_PSEUDO_CLASS, "html");
+  return liveSelector(rooted) ?? rooted;
 }
 
 // Browsers draw a focus ring for text fields from their own user agent
 // stylesheet, which is not in document.styleSheets. This stands in for it with
-// zero specificity, so any rule the page writes about the outline wins.
+// zero specificity, so any rule the page writes about the outline wins. Only
+// where the focus shows (:focus-visible): not a <select> pressed with a mouse.
 const DEFAULT_FOCUS_RING_CSS =
-  `:where(input[${FOCUS_ATTRIBUTE}], textarea[${FOCUS_ATTRIBUTE}], select[${FOCUS_ATTRIBUTE}])` +
+  `:where(input[${FOCUS_VISIBLE_ATTRIBUTE}], textarea[${FOCUS_VISIBLE_ATTRIBUTE}], select[${FOCUS_VISIBLE_ATTRIBUTE}])` +
   `{outline:2px solid #3b82f6;outline-offset:1px}`;
 
 export const FREEZE_ANIMATIONS_CSS =
@@ -72,7 +178,7 @@ export function inlineCssUrls(
 }
 
 /** Makes relative url() in a linked stylesheet absolute (they are relative to the stylesheet). */
-function absolutizeUrls(css: string, sheetUrl: string): string {
+export function absolutizeUrls(css: string, sheetUrl: string): string {
   return css.replace(URL_PATTERN, (match, _quote: string, raw: string) => {
     if (raw.startsWith("data:")) return match;
     try {
@@ -98,22 +204,96 @@ function inLayers(rules: string[], layers: readonly string[]): string[] {
   return [...rules.filter(isNamespace), layered];
 }
 
-function ruleCount(sheet: CSSStyleSheet): number {
+/**
+ * Stylesheets whose rules the page's script may not read (cross-origin,
+ * without CORS). That does not change, and finding out throws: checked once.
+ * A sheet still loading throws too (InvalidAccessError), but not for good.
+ */
+const unreadable = new WeakSet<CSSStyleSheet>();
+
+/** How many rules a stylesheet has, or -1 if they cannot be read. */
+export function ruleCount(sheet: CSSStyleSheet): number {
+  if (unreadable.has(sheet)) return -1;
   try {
     return sheet.cssRules.length;
-  } catch {
+  } catch (error) {
+    if ((error as Error).name === "SecurityError") unreadable.add(sheet);
     return -1;
   }
 }
 
+const sheetIds = new WeakMap<CSSStyleSheet, number>();
+let nextSheetId = 0;
+
+/** The agent's own sheets in document.adoptedStyleSheets (live-css.ts): not the page's. */
+export const agentSheets = new WeakSet<CSSStyleSheet>();
+
+/** The page's stylesheets, in cascade order: its <style> and <link> sheets, then those it adopted. */
+export function pageStylesheets(document: Document): CSSStyleSheet[] {
+  const adopted = (document as Document & { adoptedStyleSheets?: CSSStyleSheet[] })
+    .adoptedStyleSheets;
+  const sheets = Array.from(document.styleSheets);
+  return adopted ? [...sheets, ...adopted.filter((sheet) => !agentSheets.has(sheet))] : sheets;
+}
+
+/** A stylesheet's own part of the signature: which it is, how many rules it has, whether it is disabled. */
+export function sheetSignature(sheet: CSSStyleSheet): string {
+  let id = sheetIds.get(sheet);
+  if (id === undefined) {
+    id = nextSheetId++;
+    sheetIds.set(sheet, id);
+  }
+  return `${id}:${ruleCount(sheet)}${sheet.disabled ? "d" : ""}`;
+}
+
 /**
- * Collects a document's CSS, recollecting only when the set of stylesheets or
- * the number of rules in them (or in the blocks and imported sheets in them)
- * changes. Editing an existing rule in place (CSSStyleRule.style) is not
- * noticed; call invalidate() for that.
+ * The parts of the signature: each stylesheet's own (sheetSignature), each
+ * followed by those of the sheets it imports, which load after it ("-" for one
+ * not loaded yet). Each sheet has its own part, so that a change to one can be
+ * accounted for without hiding what else changed.
+ */
+export function signatureParts(sheets: CSSStyleSheet[]): [CSSStyleSheet | null, string][] {
+  const parts: [CSSStyleSheet | null, string][] = [];
+  const add = (sheet: CSSStyleSheet) => {
+    parts.push([sheet, sheetSignature(sheet)]);
+    const count = ruleCount(sheet);
+    // @import comes first in a sheet.
+    for (let i = 0; i < count; i++) {
+      const rule = sheet.cssRules[i]!;
+      if ("styleSheet" in rule) {
+        const imported = (rule as CSSImportRule).styleSheet;
+        if (imported) add(imported);
+        else parts.push([null, "-"]);
+      } else if ("cssRules" in rule || !rule.cssText.startsWith("@layer")) {
+        // Only @layer statements may come before an @import.
+        break;
+      }
+    }
+  };
+  for (const sheet of sheets) add(sheet);
+  return parts;
+}
+
+/**
+ * What the page's stylesheets are: which (a <style> whose text is replaced
+ * has a new sheet, with as many rules maybe), how many rules each has, whether
+ * it is disabled, and the same of the sheets they import.
+ */
+export function stylesheetsSignature(sheets: CSSStyleSheet[]): string {
+  return signatureParts(sheets)
+    .map(([, part]) => part)
+    .join("|");
+}
+
+/**
+ * Collects a document's CSS, recollecting only when its stylesheets or the
+ * number of rules in them (or in the blocks and imported sheets in them)
+ * change (see stylesheetsSignature). Editing an existing rule in place
+ * (CSSStyleRule.style) is not noticed; call invalidate() for that.
  */
 export class DocumentCss {
-  private signature = "";
+  /** Null until collected (a page without stylesheets has the signature ""). */
+  private signature: string | null = null;
   private css: readonly string[] = [];
   /**
    * The lists of rules inside the sheets (of blocks, nested rules, imported
@@ -138,7 +318,7 @@ export class DocumentCss {
   }
 
   invalidate(): void {
-    this.signature = "";
+    this.signature = null;
   }
 
   /**
@@ -147,10 +327,8 @@ export class DocumentCss {
    * (@namespace, which must come first in it).
    */
   get(): readonly string[] {
-    const sheets = Array.from(this.document.styleSheets);
-    const signature = sheets
-      .map((sheet) => `${sheet.href ?? "inline"}:${ruleCount(sheet)}`)
-      .join("|");
+    const sheets = pageStylesheets(this.document);
+    const signature = stylesheetsSignature(sheets);
     const changedInside = this.inner.some(({ rules, length }) => rules.length !== length);
     if (signature !== this.signature || changedInside) {
       this.inner = [];
@@ -289,13 +467,13 @@ export class DocumentCss {
     this.inner.push({ rules, length: rules.length });
   }
 
-  private readable(sheet: CSSStyleSheet): CSSStyleSheet | null {
-    try {
-      void sheet.cssRules;
-      return sheet;
-    } catch {
-      if (!sheet.href) return null;
-    }
+  /**
+   * The sheet itself if its rules can be read, or else a copy fetched with
+   * CORS once it has loaded (null until then, or if it cannot be fetched).
+   */
+  readable(sheet: CSSStyleSheet): CSSStyleSheet | null {
+    if (ruleCount(sheet) >= 0) return sheet;
+    if (!sheet.href) return null;
     const href = sheet.href;
     const fetched = this.fetched.get(href);
     if (fetched instanceof this.window.CSSStyleSheet) return fetched;

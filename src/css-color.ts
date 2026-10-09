@@ -1,0 +1,292 @@
+// Parses the CSS colors the agent reports (a computed `color` or `caret-color`)
+// into sRGB and an alpha, for three.js.
+//
+// A computed color keeps the syntax the page wrote it in: rgb() for sRGB
+// colors (hex, names, hsl() and hwb() compute to it), but color(), lab(),
+// lch(), oklab() and oklch() for the others, and color-mix() resolved to one of
+// those. WebKit keeps hsl() and hwb() with a `none` component as they are
+// (`hsl(none 100 50)`). THREE.Color only reads sRGB syntaxes, and none of them with an alpha.
+// This is done in code rather than by drawing into a canvas: it gives the same
+// result in every browser (and in tests), and canvas readback can be noised
+// by anti-fingerprinting.
+//
+// The conversions follow CSS Color 4 (https://www.w3.org/TR/css-color-4/#color-conversion-code).
+// Colors outside sRGB are clipped to it, not gamut mapped.
+
+/** An sRGB color (gamma encoded, each channel 0–1) and an alpha (0–1). */
+export interface SrgbColor {
+  readonly r: number;
+  readonly g: number;
+  readonly b: number;
+  readonly alpha: number;
+}
+
+type Vec3 = [number, number, number];
+type Mat3 = [Vec3, Vec3, Vec3];
+
+const multiply = (m: Mat3, [x, y, z]: Vec3): Vec3 =>
+  m.map((row) => row[0] * x + row[1] * y + row[2] * z) as Vec3;
+
+const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+const clamp01 = (value: number) => clamp(value, 0, 1);
+
+/** sRGB's transfer function (display-p3 uses it too), applied to each channel of linear light. */
+const encodeSrgb = (rgb: Vec3): Vec3 =>
+  rgb.map((c) => {
+    const abs = Math.abs(c);
+    return abs > 0.0031308 ? Math.sign(c) * (1.055 * abs ** (1 / 2.4) - 0.055) : 12.92 * c;
+  }) as Vec3;
+
+const decodeSrgb = (rgb: Vec3): Vec3 =>
+  rgb.map((c) => {
+    const abs = Math.abs(c);
+    return abs <= 0.04045 ? c / 12.92 : Math.sign(c) * ((abs + 0.055) / 1.055) ** 2.4;
+  }) as Vec3;
+
+const decodeGamma = (rgb: Vec3, gamma: number): Vec3 =>
+  rgb.map((c) => Math.sign(c) * Math.abs(c) ** gamma) as Vec3;
+
+const decodeProPhoto = (rgb: Vec3): Vec3 =>
+  rgb.map((c) => (Math.abs(c) <= 16 / 512 ? c / 16 : Math.sign(c) * Math.abs(c) ** 1.8)) as Vec3;
+
+const decodeRec2020 = (rgb: Vec3): Vec3 => {
+  const alpha = 1.09929682680944;
+  const beta = 0.018053968510807;
+  return rgb.map((c) => {
+    const abs = Math.abs(c);
+    return abs < beta * 4.5 ? c / 4.5 : Math.sign(c) * ((abs + alpha - 1) / alpha) ** (1 / 0.45);
+  }) as Vec3;
+};
+
+const XYZ_D65_TO_LINEAR_SRGB: Mat3 = [
+  [3.2409699419045226, -1.537383177570094, -0.4986107602930034],
+  [-0.9692436362808796, 1.8759675015077202, 0.04155505740717559],
+  [0.05563007969699366, -0.20397695888897652, 1.0569715142428786],
+];
+/** Bradford chromatic adaptation. */
+const XYZ_D50_TO_D65: Mat3 = [
+  [0.955473421488075, -0.02309845494876471, 0.06325924320057072],
+  [-0.0283697093338637, 1.0099953980813041, 0.021041441191917323],
+  [0.012314014864481998, -0.020507649298898964, 1.330365926242124],
+];
+const LINEAR_P3_TO_XYZ_D65: Mat3 = [
+  [0.48657094864821615, 0.26566769316909306, 0.19821728523436247],
+  [0.22897456406974878, 0.6917385218365064, 0.079286914093745],
+  [0, 0.04511338185890264, 1.043944368900976],
+];
+const LINEAR_A98_TO_XYZ_D65: Mat3 = [
+  [573536 / 994567, 263643 / 1420810, 187206 / 994567],
+  [591459 / 1989134, 6239551 / 9945670, 374412 / 4972835],
+  [53769 / 1989134, 351524 / 4972835, 4929758 / 4972835],
+];
+const LINEAR_PROPHOTO_TO_XYZ_D50: Mat3 = [
+  [0.7977666449006423, 0.1351812974005331, 0.0313477341283922],
+  [0.2880748288194013, 0.711835234241873, 0.00008993693872564],
+  [0, 0, 0.8251046025104602],
+];
+const LINEAR_REC2020_TO_XYZ_D65: Mat3 = [
+  [63426534 / 99577255, 20160776 / 139408157, 47086771 / 278816314],
+  [26158966 / 99577255, 472592308 / 697040785, 8267143 / 139408157],
+  [0, 19567812 / 697040785, 295819943 / 278816314],
+];
+const D50_WHITE: Vec3 = [0.3457 / 0.3585, 1, (1 - 0.3457 - 0.3585) / 0.3585];
+
+const xyzD65ToSrgb = (xyz: Vec3): Vec3 => encodeSrgb(multiply(XYZ_D65_TO_LINEAR_SRGB, xyz));
+const xyzD50ToSrgb = (xyz: Vec3): Vec3 => xyzD65ToSrgb(multiply(XYZ_D50_TO_D65, xyz));
+
+/** The rgb spaces of color(), each to sRGB. */
+const COLOR_SPACES: Record<string, (rgb: Vec3) => Vec3> = {
+  srgb: (rgb) => rgb,
+  "srgb-linear": encodeSrgb,
+  "display-p3": (rgb) => xyzD65ToSrgb(multiply(LINEAR_P3_TO_XYZ_D65, decodeSrgb(rgb))),
+  "a98-rgb": (rgb) => xyzD65ToSrgb(multiply(LINEAR_A98_TO_XYZ_D65, decodeGamma(rgb, 563 / 256))),
+  "prophoto-rgb": (rgb) => xyzD50ToSrgb(multiply(LINEAR_PROPHOTO_TO_XYZ_D50, decodeProPhoto(rgb))),
+  rec2020: (rgb) => xyzD65ToSrgb(multiply(LINEAR_REC2020_TO_XYZ_D65, decodeRec2020(rgb))),
+  xyz: xyzD65ToSrgb,
+  "xyz-d65": xyzD65ToSrgb,
+  "xyz-d50": xyzD50ToSrgb,
+};
+
+function labToSrgb([l, a, b]: Vec3): Vec3 {
+  const kappa = 24389 / 27;
+  const epsilon = 216 / 24389;
+  const fy = (l + 16) / 116;
+  const fx = a / 500 + fy;
+  const fz = fy - b / 200;
+  const x = fx ** 3 > epsilon ? fx ** 3 : (116 * fx - 16) / kappa;
+  const y = l > kappa * epsilon ? fy ** 3 : l / kappa;
+  const z = fz ** 3 > epsilon ? fz ** 3 : (116 * fz - 16) / kappa;
+  return xyzD50ToSrgb([x * D50_WHITE[0], y * D50_WHITE[1], z * D50_WHITE[2]]);
+}
+
+const LMS_TO_LINEAR_SRGB: Mat3 = [
+  [4.0767416621, -3.3077115913, 0.2309699292],
+  [-1.2684380046, 2.6097574011, -0.3413193965],
+  [-0.0041960863, -0.7034186147, 1.707614701],
+];
+
+function oklabToSrgb([l, a, b]: Vec3): Vec3 {
+  const lms: Vec3 = [
+    (l + 0.3963377774 * a + 0.2158037573 * b) ** 3,
+    (l - 0.1055613458 * a - 0.0638541728 * b) ** 3,
+    (l - 0.0894841775 * a - 1.291485548 * b) ** 3,
+  ];
+  return encodeSrgb(multiply(LMS_TO_LINEAR_SRGB, lms));
+}
+
+/** Polar (lightness, chroma, hue in degrees) to rectangular (lightness, a, b). */
+const fromPolar = ([l, c, h]: Vec3): Vec3 => {
+  const radians = (h * Math.PI) / 180;
+  return [l, c * Math.cos(radians), c * Math.sin(radians)];
+};
+
+function hslToSrgb([h, s, l]: Vec3): Vec3 {
+  s /= 100;
+  l /= 100;
+  const f = (n: number) => {
+    const k = (n + h / 30) % 12;
+    return l - s * Math.min(l, 1 - l) * Math.max(-1, Math.min(k - 3, 9 - k, 1));
+  };
+  return [f(0), f(8), f(4)];
+}
+
+function hwbToSrgb([h, w, b]: Vec3): Vec3 {
+  w /= 100;
+  b /= 100;
+  if (w + b >= 1) return [w / (w + b), w / (w + b), w / (w + b)];
+  return hslToSrgb([h, 100, 50]).map((c) => c * (1 - w - b) + w) as Vec3;
+}
+
+const ANGLE_UNITS: Record<string, number> = {
+  "": 1,
+  deg: 1,
+  grad: 0.9,
+  rad: 180 / Math.PI,
+  turn: 360,
+};
+const NUMBER = /^([+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:e[+-]?\d+)?)(%|deg|grad|rad|turn)?$/;
+
+/**
+ * A component: a number, a percentage of `percent`, or `none` (0). Without
+ * `percent`, a hue: a number or an angle, in degrees.
+ */
+function component(token: string, percent?: number): number | null {
+  if (token === "none") return 0;
+  const match = NUMBER.exec(token);
+  if (!match) return null;
+  const value = Number(match[1]);
+  const unit = match[2] ?? "";
+  if (percent === undefined) {
+    if (unit === "%") return null;
+    const degrees = value * ANGLE_UNITS[unit]!;
+    return Number.isFinite(degrees) ? ((degrees % 360) + 360) % 360 : null;
+  }
+  if (unit !== "" && unit !== "%") return null;
+  const result = unit === "%" ? (value / 100) * percent : value;
+  return Number.isFinite(result) ? result : null;
+}
+
+type Range = readonly [min: number, max: number];
+const ANY: Range = [-Infinity, Infinity];
+const NOT_NEGATIVE: Range = [0, Infinity];
+
+interface ColorFunction {
+  /** The percentage reference of each component (undefined: a hue). */
+  percent: (number | undefined)[];
+  toSrgb: (v: Vec3) => Vec3;
+  /**
+   * What each component is clamped to before the conversion, as browsers do
+   * when they parse the color: lightness, chroma and hsl()'s saturation (not
+   * above 100%, as only Firefox does). The colors come computed, so this
+   * only matters for what a page sends on its own.
+   */
+  ranges?: Range[];
+  /** It has the legacy, comma separated syntax too: `rgba(1, 2, 3, 0.5)`. */
+  legacy?: boolean;
+}
+
+const RGB: ColorFunction = {
+  percent: [255, 255, 255],
+  toSrgb: (v) => v.map((c) => c / 255) as Vec3,
+  legacy: true,
+};
+/**
+ * The color functions but color(). hsl() and hwb() only come from WebKit, with
+ * a `none` component, in the modern syntax (the others compute them to rgb()),
+ * and take numbers for their percentages too: `hsl(none 100 50)`.
+ */
+const FUNCTIONS: Record<string, ColorFunction> = {
+  rgb: RGB,
+  rgba: RGB,
+  hsl: { percent: [undefined, 100, 100], toSrgb: hslToSrgb, ranges: [ANY, NOT_NEGATIVE, ANY] },
+  // Whiteness and blackness not clamped, as WebKit draws them: hwb(30 -20 10)
+  // is rgb(230, 89, 0) there (Chromium and Firefox clamp them at 0).
+  hwb: { percent: [undefined, 100, 100], toSrgb: hwbToSrgb },
+  lab: { percent: [100, 125, 125], toSrgb: labToSrgb, ranges: [[0, 100], ANY, ANY] },
+  lch: {
+    percent: [100, 150, undefined],
+    toSrgb: (v) => labToSrgb(fromPolar(v)),
+    ranges: [[0, 100], NOT_NEGATIVE, ANY],
+  },
+  oklab: { percent: [1, 0.4, 0.4], toSrgb: oklabToSrgb, ranges: [[0, 1], ANY, ANY] },
+  oklch: {
+    percent: [1, 0.4, undefined],
+    toSrgb: (v) => oklabToSrgb(fromPolar(v)),
+    ranges: [[0, 1], NOT_NEGATIVE, ANY],
+  },
+};
+
+/** A table's own entry: the string comes from the page, and could be `constructor`. */
+const own = <T>(table: Record<string, T>, key: string): T | undefined =>
+  Object.hasOwn(table, key) ? table[key] : undefined;
+
+const FUNCTION = /^([a-z-]+)\((.*)\)$/;
+
+/**
+ * The components and the alpha of a color function's body, or null if it is
+ * not in its syntax. The legacy syntax (where `legacy` allows it) has no
+ * `none`, and numbers or percentages but not both.
+ */
+function split(body: string, legacy: boolean): { tokens: string[]; alpha?: string } | null {
+  if (!body.includes(",")) {
+    const [main, alpha, extra] = body.split("/");
+    if (extra !== undefined) return null;
+    return { tokens: main!.trim().split(/\s+/), alpha: alpha?.trim() };
+  }
+  if (!legacy) return null;
+  const tokens = body.split(",").map((t) => t.trim());
+  const alpha = tokens.length === 4 ? tokens.pop() : undefined;
+  if (tokens.includes("none") || alpha === "none") return null;
+  const percents = tokens.filter((t) => t.endsWith("%")).length;
+  if (percents !== 0 && percents !== tokens.length) return null;
+  return { tokens, alpha };
+}
+
+/** color()'s space, as a function whose components are percentages of 1. */
+function colorSpace(space: string): ColorFunction | undefined {
+  const toSrgb = own(COLOR_SPACES, space);
+  return toSrgb && { percent: [1, 1, 1], toSrgb };
+}
+
+/** Parses a CSS color into sRGB (clipped to its gamut) and an alpha, or null if it cannot. */
+export function parseCssColor(css: string): SrgbColor | null {
+  const text = css.trim().toLowerCase();
+  if (text === "transparent") return { r: 0, g: 0, b: 0, alpha: 0 };
+  const [, name = "", body = ""] = FUNCTION.exec(text) ?? [];
+  const named = own(FUNCTIONS, name);
+  const parts = split(body, named?.legacy ?? false);
+  if (!parts) return null;
+  const { tokens } = parts;
+  const fn = name === "color" ? colorSpace(tokens.shift() ?? "") : named;
+  if (!fn || tokens.length !== 3) return null;
+  const values = tokens.map((t, i) => {
+    const value = component(t, fn.percent[i]);
+    return value === null ? null : clamp(value, ...(fn.ranges?.[i] ?? ANY));
+  });
+  const alpha = parts.alpha === undefined ? 1 : component(parts.alpha, 1);
+  if (values.includes(null) || alpha === null) return null;
+  const [r, g, b] = fn.toSrgb(values as Vec3).map(clamp01) as Vec3;
+  // Huge components overflow in the conversion (Infinity - Infinity).
+  if (![r, g, b].every(Number.isFinite)) return null;
+  return { r, g, b, alpha: clamp01(alpha) };
+}

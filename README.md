@@ -120,7 +120,7 @@ Serve sandboxed pages with `Content-Security-Policy: sandbox allow-scripts allow
 - A panel not drawn facing the camera for a second (out of view, behind, hidden) stops capturing; a panel drawn small captures at most 5 times a second.
 - The texture's resolution follows how large the panel is drawn, down to a quarter of `pixelRatio`.
 
-`optimizeHover: true` skips captures when an unpressed pointer moves within the same element without changing hover or scrollbar state. Pointer events still fire, and DOM mutations still trigger captures. Set `optimizeHover: false` for pages that draw to canvas, change CSSOM rules, or update other visual state without DOM mutations in pointer handlers. This restores capture invalidation on every pointer move, including after reloads and navigation.
+`optimizeHover: true` skips captures when an unpressed pointer moves within the same element without changing hover or scrollbar state. Pointer events still fire, and DOM mutations still trigger captures. Changes through the CSSOM methods (`insertRule`, `replaceSync`, ...) trigger captures too. Set `optimizeHover: false` for pages that draw to canvas, edit CSS rules' declarations in place (`rule.style`), or update other visual state without DOM mutations in pointer handlers. This restores capture invalidation on every pointer move, including after reloads and navigation.
 
 These rely on the scene being rendered every frame. Without WebGL (a panel that takes input but is never drawn), pass `pauseWhenHidden: false`.
 
@@ -131,6 +131,7 @@ These rely on the scene being rendered every frame. Without WebGL (a panel that 
 - A cross-origin video without CORS shows only its poster.
 - Scrolled content is drawn by moving it in the copy of the page. A scroll container whose content starts with bare text (or other inline content), floats, multiple columns or vertical writing has its children moved one by one instead: bare text directly in it does not move, absolutely positioned elements placed from outside it are cut off at its edges, and its sticky elements are drawn over the rest of its content (`z-index: 1`). For bare text, wrapping it in an element avoids this.
 - contenteditable editing relies on `document.execCommand()`; editors that handle input in other ways may not work.
+- The panel page never gets a real pointer or real focus, so the agent keeps hover, press and focus itself. It marks the elements (`data-thp-hover`, `data-thp-active`, `data-thp-focus`, `data-thp-focus-visible`, `data-thp-focus-within`) and rewrites the page's `:hover`, `:active`, `:focus`, `:focus-visible` and `:focus-within` selectors in place to match the marks too (`.row:hover` becomes `.row:is(:hover,[data-thp-hover])`), so that the page lays out as the panel shows it and a press lands on what is drawn. Its selector queries (`matches`, `closest`, `querySelector(All)`) are rewritten the same way, so its scripts see the states too, and the transitions these states start end at once, as the panel draws them. The page's script can see the marks and the rewritten selectors, and the wrapped methods: the selector queries, and the CSSOM methods and setters that change stylesheets (`insertRule`, `replace`, `selectorText`, `disabled`, `adoptedStyleSheets`, ...). The stylesheets of shadow roots are not rewritten. The interaction rules of a cross-origin stylesheet loaded without CORS come after the page's own.
 - No IME in VR. Touch and VR were tested in emulation, not on devices.
 - A same-site page shares the host's main thread; a heavy one slows the scene. Prefer another site for panel pages.
 
@@ -139,6 +140,7 @@ These rely on the scene being rendered every frame. Without WebGL (a panel that 
 ```bash
 pnpm install
 pnpm dev        # the demo: open http://localhost:5173 (its pages are served from :5174, another origin)
+pnpm dev:all    # the demo and the example sites it also shows (each on its own origin, :5175-5178)
 pnpm test       # unit tests
 pnpm e2e        # Chromium, Firefox and WebKit (Playwright); install them once: pnpm exec playwright install
 pnpm pack:lib   # the npm package, into lib/
@@ -146,9 +148,19 @@ pnpm build      # the demo, into dist/
 vp check        # format, lint and types
 ```
 
-`E2E_NO_WEBGL=1 pnpm e2e` runs the end-to-end tests without WebGL, as headless Firefox on Linux does.
+`pnpm e2e` starts `pnpm dev`, or uses one already running at its origins. For other ports, set `VITE_HOST_ORIGIN` and `VITE_PANEL_ORIGIN` (see `.env.example`) in the environment: the tests do not read `.env` files. `E2E_NO_WEBGL=1 pnpm e2e` runs the end-to-end tests without WebGL, as headless Firefox on Linux does.
 
-The library is `src/` (the agent, which runs in panel pages, is `src/agent/`). The demo is in `examples/`: `examples/showcase/` is the 3D scene (`index.html` loads it), and `examples/sites/` holds the pages it shows as panels, served from the other origin, with two more: `article/`, a long page with sticky and fixed elements, and `boxes/`, a page for the end-to-end tests only (not in the build). The end-to-end tests drive those pages in `e2e/harness/`, a scene with one flat panel.
+The library is `src/` (the agent, which runs in panel pages, is `src/agent/`). The demo is in `examples/`: `examples/showcase/` is the 3D scene (`index.html` loads it), and `examples/sites/` holds the pages it shows as panels: `notes`, `controls` and `reader`, served from the other origin (with a few pages only the end-to-end tests use, such as `article`, a long page with sticky and fixed elements, and `boxes`), and four sites that are packages of their own (`web-standards`, `hn-reader` with Vue, `chat` with React, `gallery` with Svelte), each built and deployed on its own and served from its own origin (see `examples/sites/vite.site.ts`; set `VITE_SITE_*_ORIGIN` where they are deployed, see `.env.example`). The end-to-end tests drive those pages in `e2e/harness/`, a scene with one flat panel.
+
+### Deploying the demo
+
+The demo is six static sites, each on its own origin: the scene, the panel pages (the same build), and the four example sites. To deploy them, for example to Cloudflare Pages:
+
+1. Choose where each will be, and write the origins (no trailing slash) into an untracked `.env.deploy.local` (see `.env.example`): `VITE_HOST_ORIGIN` (the scene), `VITE_PANEL_ORIGIN` (the panel pages), `VITE_SITE_WEB_STANDARDS_ORIGIN`, `VITE_SITE_HN_READER_ORIGIN`, `VITE_SITE_CHAT_ORIGIN` and `VITE_SITE_GALLERY_ORIGIN`. On Cloudflare Pages, a project named `name` is at `https://name.pages.dev` if that name is free: create the six projects first (Workers & Pages › Create › Pages › Upload assets) to know their addresses.
+2. Build: `pnpm build:deploy`. It stops if an origin is missing, since a part pointing at localhost would be deployed broken.
+3. Upload the folders: `dist/` to both the scene's and the panel pages' projects, and `examples/sites/<name>/dist/` to each site's.
+
+Each build writes a `_headers` file (read by Cloudflare Pages and Netlify) with the headers its pages need: the panel pages' sandbox, and CORS for the origin `null` that sandboxed pages request their files from. Elsewhere, send the same headers from the server. The builds point at one another through these origins (the agent answers only the scene's), so only those addresses work together, not per-deployment preview ones.
 
 ## License
 

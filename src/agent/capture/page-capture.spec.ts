@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { LiveInteractionCss } from "./live-css";
 import { PageCapture } from "./page-capture";
 import { RenderPacer } from "./pacer";
 
@@ -37,6 +38,7 @@ beforeEach(() => {
 
 afterEach(() => {
   capture.dispose();
+  document.head.innerHTML = "";
   delete (document as { elementFromPoint?: unknown }).elementFromPoint;
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -139,4 +141,312 @@ it("updates auto cursors over text within the same element without capturing", a
   } finally {
     delete doc.caretPositionFromPoint;
   }
+});
+
+describe("interaction states in the live page", () => {
+  const press = () => {
+    capture.handle({ type: "pointer", kind: "down", x: 5, y: 5 });
+    capture.handle({ type: "pointer", kind: "up", x: 5, y: 5 });
+  };
+
+  beforeEach(() => {
+    document.head.innerHTML =
+      "<style>.tools { display: none } .row:hover .tools { display: flex } .row:focus-within .tools { display: grid }</style>";
+    document.body.innerHTML = `<div class="row"><span class="tools"><button>Act</button></span></div>`;
+    const [row, tools, button] = ["div", ".tools", "button"].map((s) => document.querySelector(s)!);
+    // As a browser hit tests: the button only where it is laid out.
+    Object.defineProperty(document, "elementFromPoint", {
+      configurable: true,
+      value: () => (getComputedStyle(tools!).display === "none" ? row : button),
+    });
+  });
+
+  it("shows a button that appears on its row's :hover, so that a press lands on it", async () => {
+    const clicked = vi.fn();
+    document.querySelector("button")!.addEventListener("click", clicked);
+    capture.start();
+    move();
+    await settle();
+    expect(getComputedStyle(document.querySelector(".tools")!).display).toBe("flex");
+    // The image shows what the page lays out: the copy carries the mark.
+    expect(frames.at(-1)).toMatch(/class="row" data-thp-hover=""/);
+    press();
+    expect(clicked).toHaveBeenCalledOnce();
+    capture.handle({ type: "pointer", kind: "leave", x: 0, y: 0 });
+    expect(document.querySelector("[data-thp-hover]")).toBeNull();
+    // Pressed, the button has focus: :focus-within keeps it shown, until the host takes the keys back.
+    expect(getComputedStyle(document.querySelector(".tools")!).display).toBe("grid");
+    capture.handle({ type: "blur" });
+    expect(getComputedStyle(document.querySelector(".tools")!).display).toBe("none");
+  });
+
+  it("follows the focus the page moves, with :focus-within", async () => {
+    capture.start();
+    document.querySelector("button")!.focus();
+    expect(getComputedStyle(document.querySelector(".tools")!).display).toBe("grid");
+    await settle();
+    expect(frames.at(-1)).toMatch(/class="row" data-thp-focus-within=""/);
+  });
+
+  it("lets the page's click handler see the press ended, and its focus handler the new focus", () => {
+    const button = document.querySelector("button")!;
+    const seen: string[] = [];
+    button.addEventListener("focus", () =>
+      seen.push(`focus: ${getComputedStyle(document.querySelector(".tools")!).display}`),
+    );
+    button.addEventListener("click", () =>
+      seen.push(`click: ${button.hasAttribute("data-thp-active")}`),
+    );
+    capture.start();
+    move();
+    press();
+    expect(seen).toEqual(["focus: grid", "click: false"]);
+  });
+
+  it("shows focus as browsers do: not for a pressed button, but after keys", async () => {
+    capture.start();
+    move();
+    press();
+    const button = document.querySelector("button")!;
+    expect(document.activeElement).toBe(button);
+    expect(button.hasAttribute("data-thp-focus-visible")).toBe(false);
+    // A shortcut (copy) or a modifier alone does not make it show.
+    for (const [key, metaKey] of [
+      ["c", true],
+      ["Shift", false],
+    ] as const) {
+      capture.handle({ type: "key", key, shiftKey: false, ctrlKey: false, altKey: false, metaKey });
+      // A capture brings the marks up to date.
+      await settle();
+      expect(button.hasAttribute("data-thp-focus-visible")).toBe(false);
+    }
+    capture.handle({ type: "blur" });
+    capture.handle({
+      type: "key",
+      key: "Tab",
+      shiftKey: false,
+      ctrlKey: false,
+      altKey: false,
+      metaKey: false,
+    });
+    expect(document.activeElement).toBe(button);
+    expect(button.hasAttribute("data-thp-focus-visible")).toBe(true);
+  });
+
+  it("makes focus show after typed text, as after keys", async () => {
+    capture.start();
+    move();
+    press();
+    const button = document.querySelector("button")!;
+    capture.handle({ type: "text", text: "a" });
+    await settle();
+    expect(button.hasAttribute("data-thp-focus-visible")).toBe(true);
+  });
+
+  /**
+   * Transitions as the browser lists them (jsdom runs none): each starts when
+   * `started` says so (a hover rule's, once the mark is on), and is listed by
+   * getAnimations({ subtree: true }) on its target and the elements around it.
+   */
+  /** Where getAnimations was asked (the elements transitions were looked for in). */
+  let lookedIn: Element[] = [];
+
+  function fakeTransitions(...specs: { target: Element; started: () => boolean }[]) {
+    lookedIn = [];
+    const transitions = specs.map(({ target, started }) => ({
+      transitionProperty: "transform",
+      playState: "running",
+      effect: { target },
+      started,
+      finish: vi.fn(),
+    }));
+    Object.defineProperty(Element.prototype, "getAnimations", {
+      configurable: true,
+      value(this: Element) {
+        lookedIn.push(this);
+        return transitions.filter(
+          (transition) => transition.started() && this.contains(transition.effect.target),
+        );
+      },
+    });
+    return transitions;
+  }
+
+  it("ends at once the transitions a hover starts, as the image shows them", () => {
+    const row = document.querySelector(".row")!;
+    const tools = document.querySelector(".tools")!;
+    const before = document.body.appendChild(document.createElement("p"));
+    let hitTarget: Element = before;
+    Object.defineProperty(document, "elementFromPoint", {
+      configurable: true,
+      value: () => hitTarget,
+    });
+    document.styleSheets[0]!.insertRule(".tools { transition: transform 0.3s }", 0);
+    const [byHover, pageOwn] = fakeTransitions(
+      { target: tools, started: () => row.hasAttribute("data-thp-hover") },
+      // The page's own, running already (an accordion opening, say).
+      { target: tools, started: () => true },
+    );
+    try {
+      capture.start();
+      move();
+      hitTarget = row;
+      move();
+      expect(byHover!.finish).toHaveBeenCalled();
+      // Pressed and released (every ancestor, <html> too, is :active meanwhile).
+      press();
+      expect(pageOwn!.finish).not.toHaveBeenCalled();
+    } finally {
+      delete (Element.prototype as { getAnimations?: unknown }).getAnimations;
+    }
+  });
+
+  it("does not look for transitions in a page that has none", () => {
+    const lookups = vi.fn(() => []);
+    Object.defineProperty(Element.prototype, "getAnimations", {
+      configurable: true,
+      value: lookups,
+    });
+    try {
+      capture.start();
+      move();
+      press();
+      expect(lookups).not.toHaveBeenCalled();
+      // One in an inline style counts.
+      document.querySelector(".row")!.setAttribute("style", "transition: opacity 0.2s");
+      capture.handle({ type: "pointer", kind: "leave", x: 0, y: 0 });
+      expect(lookups).toHaveBeenCalled();
+    } finally {
+      delete (Element.prototype as { getAnimations?: unknown }).getAnimations;
+    }
+  });
+
+  it("ends a transition the hover starts on a sibling, outside the row", () => {
+    const row = document.querySelector(".row")!;
+    const sibling = document.body.appendChild(document.createElement("aside"));
+    const style = document.createElement("style");
+    style.textContent =
+      "aside { transition: transform 0.3s } .row:hover + aside { transform: none }";
+    document.head.append(style);
+    const [onSibling] = fakeTransitions({
+      target: sibling,
+      started: () => row.hasAttribute("data-thp-hover"),
+    });
+    const before = document.body.appendChild(document.createElement("p"));
+    let hitTarget: Element = before;
+    Object.defineProperty(document, "elementFromPoint", {
+      configurable: true,
+      value: () => hitTarget,
+    });
+    try {
+      capture.start();
+      move();
+      lookedIn = [];
+      // From another element onto the row (entering the page changes <html> too).
+      hitTarget = row;
+      move();
+      expect(onSibling!.finish).toHaveBeenCalled();
+      // Around the row (its parent), not the whole page.
+      expect(lookedIn).not.toContain(document.documentElement);
+    } finally {
+      delete (Element.prototype as { getAnimations?: unknown }).getAnimations;
+    }
+  });
+
+  it("looks for transitions everywhere when a hover rule uses :has()", () => {
+    const row = document.querySelector(".row")!;
+    const style = document.createElement("style");
+    style.textContent =
+      "aside { transition: transform 0.3s } body:has(.row:hover) aside { transform: none }";
+    document.head.append(style);
+    fakeTransitions({ target: row, started: () => false });
+    try {
+      capture.start();
+      move();
+      expect(lookedIn).toContain(document.documentElement);
+    } finally {
+      delete (Element.prototype as { getAnimations?: unknown }).getAnimations;
+    }
+  });
+
+  it("does not check the page for transitions on captures where no mark changes", async () => {
+    const checks = vi.spyOn(
+      PageCapture.prototype as unknown as { inlineTransitions: () => boolean },
+      "inlineTransitions",
+    );
+    capture.start();
+    await settle();
+    checks.mockClear();
+    for (let i = 0; i < 3; i++) {
+      document.body.append(document.createElement("span"));
+      await settle();
+    }
+    expect(checks).not.toHaveBeenCalled();
+  });
+
+  it("follows the page moving the focused element elsewhere, on the next capture", async () => {
+    capture.start();
+    const button = document.querySelector("button")!;
+    button.focus();
+    const other = document.createElement("div");
+    document.body.append(other);
+    other.append(button);
+    await settle();
+    expect(other.hasAttribute("data-thp-focus-within")).toBe(true);
+    expect(document.querySelector(".row")!.hasAttribute("data-thp-focus-within")).toBe(false);
+  });
+
+  it("captures a change the page makes through the CSSOM only", async () => {
+    capture.start();
+    await settle();
+    const count = captures.mock.calls.length;
+    document.styleSheets[0]!.insertRule(".row { color: red }", 0);
+    await settle();
+    expect(captures).toHaveBeenCalledTimes(count + 1);
+    expect(frames.at(-1)).toContain(".row{color: red;}");
+  });
+
+  it("rewrites a <style> the page adds in the same task as it inserts a rule elsewhere", async () => {
+    capture.start();
+    move();
+    await settle();
+    const later = document.createElement("span");
+    later.className = "later";
+    document.querySelector(".row")!.append(later);
+    const style = document.createElement("style");
+    style.textContent = ".later { display: none } .row:hover .later { display: inline }";
+    document.head.append(style);
+    // Before the MutationObserver has said anything about the <style>.
+    document.styleSheets[0]!.insertRule(".x { color: red }", 0);
+    await settle();
+    // (jsdom matches :hover by itself here: the rule is checked, not the layout.)
+    expect((style.sheet!.cssRules[1] as CSSStyleRule).selectorText).toBe(
+      ".row:is(:hover,[data-thp-hover]) .later",
+    );
+  });
+
+  it("does not look at all the rules again after rules inserted through the CSSOM", async () => {
+    const walks = vi.spyOn(
+      LiveInteractionCss.prototype as unknown as { syncSheet: () => void },
+      "syncSheet",
+    );
+    capture.start();
+    move();
+    await settle();
+    walks.mockClear();
+    // Several in a row, as CSS-in-JS does while rendering, then input and a capture.
+    for (let i = 0; i < 3; i++) document.styleSheets[0]!.insertRule(`.x${i} { color: red }`, 0);
+    move();
+    await settle();
+    expect(walks).not.toHaveBeenCalled();
+  });
+
+  it("does not count its marks as changes of the page", async () => {
+    capture.start();
+    await settle();
+    const count = captures.mock.calls.length;
+    document.querySelector("button")!.setAttribute("data-thp-hover", "");
+    await settle();
+    expect(captures).toHaveBeenCalledTimes(count);
+  });
 });

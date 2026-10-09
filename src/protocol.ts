@@ -23,7 +23,11 @@ export const PROTOCOL_VERSION = 1;
 export const MAX_PAGE_LENGTH = 4096;
 /** The longest SVG the host accepts, in UTF-16 code units. */
 export const MAX_SVG_LENGTH = 16 * 1024 * 1024;
-const MAX_COLOR_LENGTH = 64;
+/**
+ * The longest caret color. A computed color can be long:
+ * `color(prophoto-rgb 0.123457 -0.0123457 1.23457 / 0.87)`, and more digits in some browsers.
+ */
+const MAX_COLOR_LENGTH = 128;
 const MAX_KEY_LENGTH = 64;
 /** The longest text sent either way: typed or pasted text, and a selection to copy. */
 export const MAX_TEXT_LENGTH = 64 * 1024;
