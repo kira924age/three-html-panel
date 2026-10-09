@@ -1556,7 +1556,12 @@ function layoutBox(
   if (!Matrix || !size) return shown;
   // The individual properties apply before the transform property, in this
   // order; a missing translation is 0px, a missing scale on y is the one on x.
-  const [tx, ty = "0px", tz = "0px"] = translate.split(/\s+/);
+  // A translation in % (`translate: -50% -50%`, to centre) is of the box's size.
+  const percent = (value: string, of: number) =>
+    value.endsWith("%") ? `${(parseFloat(value) / 100) * of}px` : value;
+  const [x = "0px", y = "0px", tz = "0px"] = translate.split(/\s+/);
+  const tx = percent(x, size.width);
+  const ty = percent(y, size.height);
   const [sx, sy = sx, sz = "1"] = scale.split(/\s+/);
   const parts = [
     none(translate) ? "" : `translate3d(${tx},${ty},${tz})`,
@@ -1566,7 +1571,7 @@ function layoutBox(
   ];
   let matrix: DOMMatrix;
   try {
-    matrix = new Matrix(parts.join(" ").trim());
+    matrix = new Matrix(parts.filter(Boolean).join(" "));
   } catch {
     return shown;
   }

@@ -325,12 +325,12 @@ test("draws a modal dialog over its ::backdrop, and a popover opened after it ov
   });
 });
 
-test("draws a rotated popover as the page does", async () => {
+test("draws a rotated popover, centred with a translation in %, as the page does", async () => {
   // Red on its left half, blue on its right: turned a quarter, red on top.
   await panel.frame.evaluate(() => {
     document.body.insertAdjacentHTML(
       "beforeend",
-      `<div id="turned" popover style="margin: 0; inset: auto; left: 600px; top: 400px; width: 200px; height: 100px; border: 0; padding: 0; rotate: 90deg; background: linear-gradient(to right, rgb(220, 20, 20) 50%, rgb(20, 20, 220) 50%)"></div>`,
+      `<div id="turned" popover style="margin: 0; inset: auto; left: 700px; top: 450px; width: 200px; height: 100px; border: 0; padding: 0; translate: -50% -50%; rotate: 90deg; background: linear-gradient(to right, rgb(220, 20, 20) 50%, rgb(20, 20, 220) 50%)"></div>`,
     );
     document.querySelector<HTMLElement>("#turned")!.showPopover();
   });

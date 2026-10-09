@@ -1078,7 +1078,10 @@ describe("the top layer", () => {
     return new DOMParser().parseFromString(xhtml, "application/xhtml+xml").documentElement;
   }
 
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
 
   it("draws an open popover over the page where the page has it, out of its parents", () => {
     document.body.innerHTML = `<header class="bar" style="backdrop-filter: blur(4px)">
@@ -1329,23 +1332,38 @@ describe("the top layer", () => {
     expect(cover.style.backgroundImage).toBe("linear-gradient(red, blue)");
   });
 
-  it("gives a transformed one its unrounded size and its transform as it is now", () => {
-    // jsdom has no DOMMatrix: one that leaves points where they are.
+  /** Stands in for DOMMatrix (jsdom has none): leaves points where they are, and keeps what it was made from. */
+  function stubMatrix(): string[] {
+    const made: string[] = [];
     vi.stubGlobal(
       "DOMMatrix",
       class {
+        constructor(transform: string) {
+          made.push(transform);
+        }
         transformPoint(point: { x: number; y: number }) {
           return point;
         }
       },
     );
+    return made;
+  }
+
+  it("gives a transformed one its unrounded size and its transform as it is now", () => {
+    stubMatrix();
     document.body.innerHTML = `<div id="menu" popover style="width: 151.4px; height: 20px; padding: 4px; border: 0; transform: translateX(0px)">Menu</div>`;
     const root = snapshotWithTopLayer({ menu: ":popover-open" });
-    vi.unstubAllGlobals();
     const menu = root.querySelector<HTMLElement>("[data-thp-lifted]")!;
     expect(menu.style.width).toBe("159.4px");
     expect(menu.style.height).toBe("28px");
     expect(menu.style.transform).toBe("translateX(0px)");
     expect(menu.style.getPropertyPriority("transform")).toBe("important");
+  });
+
+  it("reads a translation in % as of the box's size (DOMMatrix takes none)", () => {
+    const made = stubMatrix();
+    document.body.innerHTML = `<dialog id="ask" style="width: 200px; height: 100px; padding: 0; border: 0; box-sizing: border-box; translate: -50% -25%; scale: 0.5">Sure?</dialog>`;
+    snapshotWithTopLayer({ ask: ":modal" });
+    expect(made).toEqual(["translate3d(-100px,-25px,0px) scale3d(0.5,0.5,1)"]);
   });
 });
