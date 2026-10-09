@@ -277,6 +277,9 @@ function moveInsets(
   }
 }
 
+/** Displays of a scroll container that lays out its children as blocks (in a flow of its own). */
+const BLOCK_CONTAINER = /^(block|inline-block|flow-root|list-item|table-cell|table-caption)$/;
+
 /** Block-level displays: boxes of a block container's flow, not in lines. */
 const BLOCK_LEVEL = /^(block|list-item|table|flex|grid|flow-root|-webkit-box)$/;
 
@@ -308,6 +311,8 @@ class Snapshotter {
   private readonly styles = new Map<Element, CSSStyleDeclaration>();
   /** The absolute and fixed elements copied, by the page's element. */
   private readonly positioned = new Map<Element, Positioned>();
+  /** The elements with fixed ones in them placed from outside them. */
+  private readonly holdingFixed = new Set<Element>();
   /**
    * Copies moved for a scroll, and how: positioned relatively (the containing
    * block of absolute elements in them, now) or translated (of fixed ones too).
@@ -386,6 +391,10 @@ class Snapshotter {
     if (fixed || style.position === "absolute") {
       const container = fixed ? this.fixedContainer : this.absoluteContainer;
       this.positioned.set(live, { copy, fixed, container });
+      if (fixed) {
+        for (let box = live.parentElement; box && box !== container; box = box.parentElement)
+          this.holdingFixed.add(box);
+      }
     }
     return copy;
   }
@@ -552,7 +561,7 @@ class Snapshotter {
 
   private copyAnimatedValues(element: Element, copy: Element): void {
     const values = this.animated.get(element);
-    if (!values?.size || !(copy instanceof HTMLElement || copy instanceof SVGElement)) return;
+    if (!values?.size || !isStyled(copy)) return;
     const computed = this.window.getComputedStyle(element);
     for (const [property, value] of values) {
       const baked = value ?? computed.getPropertyValue(property);
@@ -604,13 +613,14 @@ class Snapshotter {
    * A flex or grid item is moved by its own margins, each side's opposite one
    * keeping its margin box. False, with nothing done, where the content cannot
    * be moved this way: text or inline boxes in a block container (line boxes),
-   * floats, `display: contents`, an empty box that margins collapse through.
+   * floats, `display: contents`, margins that collapse in ways not worked out
+   * (through an empty box, or past clearance).
    */
   private shiftFlow(container: Element, x: number, y: number): boolean {
     const style = this.styles.get(container);
     if (!style || this.options.inlineComposition?.node === container) return false;
     const items = /^(inline-)?(flex|grid)$/.test(style.display);
-    if (!items && !/^(block|flow-root|list-item)$/.test(style.display)) return false;
+    if (!items && !BLOCK_CONTAINER.test(style.display)) return false;
     const boxes = this.inFlowChildren(container, items);
     if (!boxes) return false;
     const margins: [Element, string, number][] = [];
@@ -660,6 +670,26 @@ class Snapshotter {
   }
 
   /**
+   * The first box of a block's flow, if it is a block (its top margin can
+   * collapse with the block's); null if lines come first. What is out of the
+   * flow (floats, absolute and fixed elements) does not separate them.
+   */
+  private firstBlock(container: Element): Element | null {
+    for (const node of Array.from(container.childNodes)) {
+      if (node.nodeType === Node.TEXT_NODE) {
+        if (/\S/.test((node as Text).data)) return null;
+        continue;
+      }
+      const style = node.nodeType === Node.ELEMENT_NODE && this.styles.get(node as Element);
+      if (!style || style.display === "none") continue;
+      if (style.position === "absolute" || style.position === "fixed") continue;
+      if ((style.cssFloat || "none") !== "none") continue;
+      return BLOCK_LEVEL.test(style.display) ? (node as Element) : null;
+    }
+    return null;
+  }
+
+  /**
    * The top margin for a block container's first box that moves its flow up
    * by `y`: its margin collapses with those of the first boxes in it (when
    * nothing separates them), and the margin they make together must be `y`
@@ -671,15 +701,21 @@ class Snapshotter {
       const style: CSSStyleDeclaration = this.styles.get(box)!;
       // An empty box: margins collapse through it, with those after it.
       if ((box as HTMLElement).offsetHeight === 0) return null;
+      // Clearance separates a box's margin from those before it.
+      if (box !== first && (style.clear || "none") !== "none") return null;
       margins.push(parseFloat(style.marginTop) || 0);
+      // Not a new formatting context, and nothing between it and its first box.
       const through: boolean =
         /^(block|list-item)$/.test(style.display) &&
         /^(visible|clip)$/.test(style.overflowY) &&
         /^(visible|clip)$/.test(style.overflowX) &&
         !containsFixed(style) &&
+        (style.columnCount || "auto") === "auto" &&
+        (style.columnWidth || "auto") === "auto" &&
+        /^(normal)?$/.test(style.alignContent ?? "") &&
         (parseFloat(style.borderTopWidth) || 0) === 0 &&
         (parseFloat(style.paddingTop) || 0) === 0;
-      box = through ? (this.inFlowChildren(box, false)?.[0] ?? null) : null;
+      box = through ? this.firstBlock(box) : null;
     }
     const most = (list: number[]) => Math.max(0, ...list);
     const least = (list: number[]) => Math.min(0, ...list);
@@ -757,7 +793,8 @@ class Snapshotter {
     }
     // Its static siblings, positioned now, would paint over it in their order:
     // it is lifted over them, as the page paints it over what is not positioned.
-    if (position === "sticky" && container && style!.zIndex === "auto")
+    // Not with a z-index in it, which would then only count inside it.
+    if (position === "sticky" && container && style!.zIndex === "auto" && !this.ordersInside(live!))
       copy.style.setProperty("z-index", "1", "important");
     if (position === "sticky" && container && this.holdsFixed(live!)) {
       if (this.holdSticky(live!, copy, container, x, y)) return;
@@ -768,10 +805,16 @@ class Snapshotter {
     if (position === "sticky") moveInsets(copy, style!, x, y);
   }
 
-  /** Whether fixed elements in `element` are placed from the viewport (a transform would place them from it). */
+  /** Whether fixed elements in `element` are placed from outside it (a transform would place them from it). */
   private holdsFixed(element: Element): boolean {
-    for (const [live, { fixed, container }] of this.positioned) {
-      if (fixed && live !== element && element.contains(live) && !element.contains(container))
+    return this.holdingFixed.has(element);
+  }
+
+  /** Whether something positioned in `element` has a z-index of its own. */
+  private ordersInside(element: Element): boolean {
+    for (const descendant of Array.from(element.querySelectorAll("*"))) {
+      const style = this.styles.get(descendant);
+      if (style && style.zIndex !== "auto" && style.zIndex !== "" && style.position !== "static")
         return true;
     }
     return false;
@@ -782,7 +825,8 @@ class Snapshotter {
    * box its sticky view rectangle (in the scroll container, unscrolled), so
    * that it is not translated: the fixed elements in it would be clipped to
    * the container with it. False (nothing done) where an inset cannot place it:
-   * above the container's content (sticking in its padding, or scrolled past),
+   * its margin box above the container's content (sticking in its padding or
+   * margin, or scrolled past),
    * or with a transform of its own (then it is their containing block anyway).
    */
   private holdSticky(
@@ -803,10 +847,13 @@ class Snapshotter {
       bottom: box.top + container.clientTop + container.clientHeight,
       right: box.left + container.clientLeft + container.clientWidth,
     };
+    // Its margin box stays in the container's content (its containing block).
     const paddingTop = parseFloat(containerStyle.paddingTop) || 0;
     const paddingLeft = parseFloat(containerStyle.paddingLeft) || 0;
-    if (y !== 0 && rect.top < port.top + paddingTop - 0.5) return false;
-    if (x !== 0 && rect.left < port.left + paddingLeft - 0.5) return false;
+    const marginTop = parseFloat(style.marginTop) || 0;
+    const marginLeft = parseFloat(style.marginLeft) || 0;
+    if (y !== 0 && rect.top - marginTop < port.top + paddingTop - 0.5) return false;
+    if (x !== 0 && rect.left - marginLeft < port.left + paddingLeft - 0.5) return false;
     const set = (property: string, value: number) =>
       copy.style.setProperty(property, `${value}px`, "important");
     if (y !== 0) {
@@ -850,10 +897,6 @@ class Snapshotter {
     trap: Element,
   ): void {
     const style = this.styles.get(live)!;
-    // Used values (in px) for a positioned element.
-    const top = parseFloat(style.top);
-    const left = parseFloat(style.left);
-    if (!Number.isFinite(top) || !Number.isFinite(left)) return;
     const viewport = this.document.scrollingElement;
     const origin = (element: Element | null) => {
       if (element) {
@@ -867,6 +910,19 @@ class Snapshotter {
     };
     const from = origin(container);
     const to = origin(trap);
+    // Used values (in px) for a positioned element, but for insets that are
+    // over-constrained (both, and the size): those are as specified, maybe in
+    // percent. Then from where it is (its border box, less its margin).
+    const inset = (side: "top" | "left", from: number) => {
+      const value = style.getPropertyValue(side);
+      if (/^-?[\d.]+px$/.test(value)) return parseFloat(value);
+      const rect = live.getBoundingClientRect();
+      const margin = parseFloat(style.getPropertyValue(`margin-${side}`)) || 0;
+      return (side === "top" ? rect.top : rect.left) - margin - from;
+    };
+    const top = inset("top", from.y);
+    const left = inset("left", from.x);
+    if (!Number.isFinite(top) || !Number.isFinite(left)) return;
     const set = (property: string, value: string) =>
       copy.style.setProperty(property, value, "important");
     set("top", `${top - (to.y - from.y)}px`);

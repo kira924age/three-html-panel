@@ -17,7 +17,15 @@ async function drawn(selector: string, color: number[]): Promise<boolean> {
   return pixel.every((value, index) => Math.abs(value - color[index]!) < 30);
 }
 
-const BOXES = ["#toolbar-box", "#layer-box", "#badge-box", "#note-box", "#text-box", "#column-box"];
+const BOXES = [
+  "#toolbar-box",
+  "#layer-box",
+  "#badge-box",
+  "#note-box",
+  "#text-box",
+  "#column-box",
+  "#margin-box",
+];
 
 test("draws what is positioned in scrolled boxes where the page shows it", async ({ page }) => {
   for (const selector of BOXES) {
@@ -54,5 +62,12 @@ test("draws what is positioned in scrolled boxes where the page shows it", async
     ];
     for (const [selector, color] of colors)
       await expect.poll(() => drawn(selector, color), { message: selector }).toBe(true);
+    // Moved by the scroll exactly: drawn from its top edge to its bottom one.
+    const marker = await panel.box("#marker");
+    const shade = async (y: number) => (await panel.pixel(marker.left + 20, y))[0];
+    await expect.poll(() => shade(marker.top + 2)).toBeLessThan(120);
+    await expect.poll(() => shade(marker.top + marker.height - 2)).toBeLessThan(120);
+    expect(await shade(marker.top - 3)).toBeGreaterThan(200);
+    expect(await shade(marker.top + marker.height + 3)).toBeGreaterThan(200);
   });
 });

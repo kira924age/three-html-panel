@@ -109,3 +109,16 @@ h1 {
 #column-heading {
   background: rgb(120, 80, 0);
 }
+/* Margins that collapse together at the top of the box's flow (10px and 20px make 20px). */
+.margins {
+  margin-top: 10px;
+}
+.margin-heading {
+  margin: 20px 0 0;
+  font-size: 16px;
+}
+.marker {
+  height: 40px;
+  margin-top: 60px;
+  background: rgb(90, 90, 90);
+}

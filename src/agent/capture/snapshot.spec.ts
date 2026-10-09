@@ -660,6 +660,51 @@ describe("scrolled content", () => {
     expect(style("sticky").getPropertyValue("translate")).toBe("");
   });
 
+  it("counts the margin of a box's first block, whatever comes after it, but not past a new formatting context", () => {
+    vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(20);
+    document.body.innerHTML =
+      `<div id="box" style="overflow: auto">` +
+      `<section id="first" style="margin-top: 10px"><h2 style="margin-top: 20px">A</h2>Some text<span>more</span></section>` +
+      `</div>` +
+      `<div id="columns-box" style="overflow: auto">` +
+      `<section id="columns" style="column-count: 2; margin-top: 10px"><h2 style="margin-top: 20px">A</h2></section>` +
+      `</div>`;
+    scroll(
+      new Map([
+        [document.querySelector("#box")!, { top: 50 }],
+        [document.querySelector("#columns-box")!, { top: 50 }],
+      ]),
+    );
+    const copy = snapshot();
+    // 20px together (the heading's), 50px less: -30px, with the heading's 20px in it.
+    expect(copy.getElementById("first")!.style.marginTop).toBe("-50px");
+    // Its own margin only: columns are a formatting context of their own.
+    expect(copy.getElementById("columns")!.style.marginTop).toBe("-40px");
+    expect(copy.getElementById("columns")!.style.position).toBe("");
+  });
+
+  it("does not move a flow whose first boxes' margins are separated by clearance", () => {
+    vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(20);
+    document.body.innerHTML =
+      `<div id="box" style="overflow: auto">` +
+      `<section id="first"><h2 id="cleared" style="clear: both; margin-top: 20px">A</h2></section>` +
+      `</div>`;
+    scroll(new Map([[document.querySelector("#box")!, { top: 50 }]]));
+    const first = snapshot().getElementById("first")!;
+    // Moved by itself instead.
+    expect(first.style.marginTop).toBe("");
+    expect(first.style.top).toBe("-50px");
+  });
+
+  it("moves the flow of an inline-block scroll container too", () => {
+    vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(20);
+    document.body.innerHTML = `<div id="box" style="overflow: auto; display: inline-block"><p id="a"></p></div>`;
+    scroll(new Map([[document.querySelector("#box")!, { top: 30 }]]));
+    const a = snapshot().getElementById("a")!;
+    expect(a.style.marginTop).toBe("-30px");
+    expect(a.style.position).toBe("");
+  });
+
   it("moves each flex or grid item by its margins", () => {
     document.body.innerHTML = `<div id="box" style="overflow: auto; display: flex"><p id="a" style="margin: 2px"></p><p id="b"></p></div>`;
     scroll(new Map([[document.querySelector("#box")!, { top: 30 }]]));
@@ -668,6 +713,46 @@ describe("scrolled content", () => {
     expect(copy.getElementById("a")!.style.marginBottom).toBe("32px");
     expect(copy.getElementById("b")!.style.marginTop).toBe("-30px");
     expect(copy.getElementById("b")!.style.position).toBe("");
+  });
+
+  it("does not hold a sticky element whose margin would leave the container's content", () => {
+    document.body.innerHTML =
+      `<div id="box" style="overflow: auto">Text` +
+      `<header id="toolbar" style="position: sticky; top: 0; margin-top: 6px"><div style="position: fixed; top: 100px"></div></header>` +
+      `</div>`;
+    const box = document.querySelector("#box")!;
+    scroll(new Map([[box, { top: 50 }]]));
+    box.getBoundingClientRect = () => new DOMRect(10, 30, 300, 200);
+    Object.defineProperty(box, "clientHeight", { value: 200 });
+    document.querySelector("#toolbar")!.getBoundingClientRect = () => new DOMRect(10, 30, 300, 40);
+    const toolbar = snapshot().getElementById("toolbar")!;
+    // Translated, its insets moved, instead.
+    expect(toolbar.style.getPropertyValue("translate")).toBe("0px -50px");
+    expect(toolbar.style.bottom).toBe("");
+  });
+
+  it("lifts a sticky element over its moved siblings, unless something in it has a z-index", () => {
+    document.body.innerHTML =
+      `<div id="box" style="overflow: auto">Text` +
+      `<h3 id="plain" style="position: sticky; top: 0"></h3>` +
+      `<h3 id="menu" style="position: sticky; top: 0"><div style="position: absolute; z-index: 1000"></div></h3>` +
+      `</div>`;
+    scroll(new Map([[document.querySelector("#box")!, { top: 50 }]]));
+    const copy = snapshot();
+    expect(copy.getElementById("plain")!.style.zIndex).toBe("1");
+    expect(copy.getElementById("menu")!.style.zIndex).toBe("");
+  });
+
+  it("places a pinned element from where it is when its insets are in percent (over-constrained)", () => {
+    document.body.innerHTML = `<div id="tip" style="position: absolute; top: 50%; left: 10%; bottom: 0; right: 0"></div>`;
+    scroll(new Map([[document.documentElement, { top: 300 }]]));
+    document.body.getBoundingClientRect = () => new DOMRect(8, 8 - 300, 700, 2000);
+    const tip = document.querySelector("#tip")!;
+    tip.getBoundingClientRect = () => new DOMRect(70, 100, 100, 40);
+    const copy = snapshot().getElementById("tip")!;
+    // From the body's box, where the copy places it: (70, 100) less (8, -292).
+    expect(copy.style.top).toBe("392px");
+    expect(copy.style.left).toBe("62px");
   });
 
   it("places an absolute element of the document (not in any positioned box) from the moved body", () => {
