@@ -119,6 +119,8 @@ function runningTransitions(roots: Element[]): Animation[] {
 
 /** Keys that only modify others: pressed alone, they do not make focus show. */
 const MODIFIER_KEYS = new Set(["Shift", "Control", "Meta", "Alt", "AltGraph", "CapsLock", "Fn"]);
+/** The keys a focused drop-down <select> whose list is closed changes its option with. */
+const CLOSED_SELECT_KEYS = new Set(["ArrowDown", "ArrowUp", "Home", "End"]);
 
 /** A focused element that is a contenteditable element's root (its editing host). */
 const isEditingHost = (element: Element | null): element is HTMLElement =>
@@ -1100,7 +1102,7 @@ export class InputSynthesizer {
     if (primary && !altKey && key.toLowerCase() === "a" && select.multiple) {
       selectRange(select, 0, select.options.length - 1);
     } else {
-      const steps = OPTION_STEPS[key];
+      const steps = OPTION_STEPS.get(key);
       if (steps === undefined || altKey || primary) return;
       const from = this.#listCursors.get(select) ?? Math.max(0, select.selectedIndex);
       const index = stepOption(select.options.length, from, steps, (index) =>
@@ -1244,7 +1246,7 @@ export class InputSynthesizer {
 
   /** The keys while the list is open, which go to it rather than the page. False to handle the key as usual. */
   #popupKey(popup: SelectPopup, input: Extract<PanelInput, { type: "key" }>): boolean {
-    const steps = OPTION_STEPS[input.key];
+    const steps = OPTION_STEPS.get(input.key);
     if (steps !== undefined) {
       popup.step(steps);
       return true;
@@ -1276,8 +1278,8 @@ export class InputSynthesizer {
       return;
     }
     // The arrows step from the selected option, Home and End from the ends; not the page keys.
-    const steps = OPTION_STEPS[key];
-    if (ctrlKey || metaKey || altKey || steps === undefined || key.startsWith("Page")) return;
+    if (ctrlKey || metaKey || altKey || !CLOSED_SELECT_KEYS.has(key)) return;
+    const steps = OPTION_STEPS.get(key)!;
     const options = select.options;
     const from = Number.isFinite(steps) ? select.selectedIndex : steps > 0 ? -1 : options.length;
     const index = stepOption(options.length, from, steps, (index) => isUsable(options[index]!));

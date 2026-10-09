@@ -322,7 +322,7 @@ function measureRange(field: TextField, start: number, end: number, text: string
 
     const rect = field.getBoundingClientRect();
     const origin = mirror.getBoundingClientRect();
-    const clip = paddingBox(field);
+    const clip = paddingBox(field, rect);
     const boxes: Box[] = [];
     for (const line of Array.from(selected.getClientRects())) {
       const left = rect.left + line.left - origin.left - field.scrollLeft;

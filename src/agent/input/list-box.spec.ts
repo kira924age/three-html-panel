@@ -162,6 +162,15 @@ describe("choosing options in the panel", () => {
     expect(changes).toBe(5);
   });
 
+  it("leaves the selection to keys that do not move in the list, whatever their name", () => {
+    press(105);
+    press(165, { ctrlKey: true });
+    expect(chosen()).toBe("ad");
+    // Names an object has from its prototype are not keys of the list.
+    for (const name of ["toString", "constructor", "valueOf"]) key(name);
+    expect(chosen()).toBe("ad");
+  });
+
   it("selects a single list box's option, and lets typing pick one", () => {
     select.multiple = false;
     press(125);

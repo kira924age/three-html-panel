@@ -231,8 +231,7 @@ export function clipCaret<T extends { x: number; y: number; height: number }>(
 }
 
 /** An element's padding box (where its content shows), in CSS px of the viewport. */
-export function paddingBox(element: Element): Box {
-  const rect = element.getBoundingClientRect();
+export function paddingBox(element: Element, rect = element.getBoundingClientRect()): Box {
   return {
     left: rect.left + element.clientLeft,
     top: rect.top + element.clientTop,

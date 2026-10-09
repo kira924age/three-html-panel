@@ -370,16 +370,21 @@ describe("interaction states in the live page", () => {
   });
 
   it("does not check the page for transitions on captures where no mark changes", async () => {
-    // Each change forgets what was found, so a check would query the page again.
-    const queries = vi.spyOn(document, "querySelector");
+    // Each change forgets what was found, so a check would query the page again,
+    // for elements whose style mentions a transition, however it asks.
+    const queries = [
+      vi.spyOn(document, "querySelector"),
+      vi.spyOn(document, "querySelectorAll"),
+    ] as const;
     capture.start();
     await settle();
-    queries.mockClear();
+    for (const query of queries) query.mockClear();
     for (let i = 0; i < 3; i++) {
       document.body.append(document.createElement("span"));
       await settle();
     }
-    expect(queries).not.toHaveBeenCalledWith('[style*="transition"]');
+    const selectors = queries.flatMap((query) => query.mock.calls.map(([selector]) => selector));
+    expect(selectors.filter((selector) => selector.includes("transition"))).toEqual([]);
   });
 
   it("follows the page moving the focused element elsewhere, on the next capture", async () => {

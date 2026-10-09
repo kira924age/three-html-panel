@@ -6,20 +6,8 @@ let input: InputSynthesizer;
 const onChange = vi.fn();
 
 beforeAll(() => {
-  // jsdom has no PointerEvent, and rejects the `view` the agent passes (Vitest's
-  // window is not jsdom's Window); events are made here without it.
-  type EventClass = new (type: string, init?: EventInit) => Event;
-  const withoutView = (Base: EventClass) =>
-    class extends Base {
-      constructor(type: string, init: EventInit & { view?: unknown } = {}) {
-        const { view: _view, ...rest } = init;
-        super(type, rest);
-      }
-    };
-  globalThis.MouseEvent = withoutView(MouseEvent as EventClass) as unknown as typeof MouseEvent;
-  globalThis.PointerEvent = withoutView(
-    (globalThis.PointerEvent ?? MouseEvent) as EventClass,
-  ) as unknown as typeof PointerEvent;
+  // jsdom has no PointerEvent.
+  globalThis.PointerEvent ??= class extends MouseEvent {} as unknown as typeof PointerEvent;
   input = new InputSynthesizer(document, { measure: (run) => run(), onChange });
 });
 
@@ -175,19 +163,38 @@ describe("text editing", () => {
     document.body.innerHTML = `<button id="go" style="cursor: pointer">Go</button><p id="text">text</p>`;
     const go = document.querySelector("#go")!;
     const text = document.querySelector("#text")!;
+    // jsdom rejects the `view` the agent passes (Vitest's window is not jsdom's
+    // Window): the pointer events hovering dispatches are made here without it.
+    type EventClass = new (type: string, init?: EventInit) => Event;
+    const withoutView = (Base: EventClass) =>
+      class extends Base {
+        constructor(type: string, init: EventInit & { view?: unknown } = {}) {
+          const { view: _view, ...rest } = init;
+          super(type, rest);
+        }
+      };
+    vi.stubGlobal("MouseEvent", withoutView(MouseEvent as EventClass));
+    vi.stubGlobal("PointerEvent", withoutView(PointerEvent as EventClass));
+    let hit: Element | null = null;
+    Object.defineProperty(document, "elementFromPoint", { configurable: true, value: () => hit });
     const hover = (target: Element | null) => {
-      document.elementFromPoint = () => target;
+      hit = target;
       input.handle({ type: "pointer", kind: "move", x: 1, y: 1 });
     };
-    hover(go);
-    expect(input.cursor).toBe("pointer");
-    hover(text);
-    expect(input.cursor).toBe("default");
-    document.body.innerHTML = `<textarea></textarea>`;
-    hover(document.querySelector("textarea"));
-    expect(input.cursor).toBe("text");
-    input.handle({ type: "pointer", kind: "leave", x: 0, y: 0 });
-    expect(input.cursor).toBe("");
+    try {
+      hover(go);
+      expect(input.cursor).toBe("pointer");
+      hover(text);
+      expect(input.cursor).toBe("default");
+      document.body.innerHTML = `<textarea></textarea>`;
+      hover(document.querySelector("textarea"));
+      expect(input.cursor).toBe("text");
+      input.handle({ type: "pointer", kind: "leave", x: 0, y: 0 });
+      expect(input.cursor).toBe("");
+    } finally {
+      delete (document as { elementFromPoint?: unknown }).elementFromPoint;
+      vi.unstubAllGlobals();
+    }
   });
 
   it("keeps what is being composed for the focused field until it ends or focus moves", () => {

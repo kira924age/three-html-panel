@@ -74,15 +74,18 @@ export function selectRange(
   }
 }
 
-/** How far the keys move in a list of options: Home and End go as far as there are. */
-export const OPTION_STEPS: Partial<Record<string, number>> = {
-  ArrowDown: 1,
-  ArrowUp: -1,
-  PageDown: 10,
-  PageUp: -10,
-  End: Infinity,
-  Home: -Infinity,
-};
+/**
+ * How far the keys move in a list of options: Home and End go as far as there
+ * are. A Map, so that no key name finds what an object inherits ("toString").
+ */
+export const OPTION_STEPS = new Map([
+  ["ArrowDown", 1],
+  ["ArrowUp", -1],
+  ["PageDown", 10],
+  ["PageUp", -10],
+  ["End", Infinity],
+  ["Home", -Infinity],
+]);
 
 /**
  * The item `steps` usable items on from `from` (back if negative), or the last
