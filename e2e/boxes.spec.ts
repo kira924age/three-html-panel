@@ -13,7 +13,8 @@ test.beforeEach(async ({ page }) => {
 /** Whether the panel draws about this color in the middle of an element. */
 async function drawn(selector: string, color: number[]): Promise<boolean> {
   const box = await panel.box(selector);
-  const pixel = await panel.pixel(box.left + box.width - 6, box.top + box.height / 2);
+  // Inside its right edge, clear of a scrollbar drawn over a box's.
+  const pixel = await panel.pixel(box.left + box.width - 16, box.top + box.height / 2);
   return pixel.every((value, index) => Math.abs(value - color[index]!) < 30);
 }
 
@@ -25,6 +26,8 @@ const BOXES = [
   "#text-box",
   "#column-box",
   "#margin-box",
+  "#generated-box",
+  "#moved-box",
 ];
 
 test("draws what is positioned in scrolled boxes where the page shows it", async ({ page }) => {
@@ -43,6 +46,8 @@ test("draws what is positioned in scrolled boxes where the page shows it", async
   const top = async (selector: string) => (await panel.box(selector)).top;
   expect(Math.abs((await top("#toolbar")) - (await top("#toolbar-box")) - 1)).toBeLessThan(2);
   expect(Math.abs((await top("#text-heading")) - (await top("#text-box")) - 1)).toBeLessThan(2);
+  // (Its own translate puts it 4px lower.)
+  expect(Math.abs((await top("#moved-heading")) - (await top("#moved-box")) - 5)).toBeLessThan(2);
   expect(Math.abs((await top("#column-heading")) - (await top("#column-box")) - 1)).toBeLessThan(2);
 
   await panel.ifDrawn(async () => {
@@ -62,6 +67,23 @@ test("draws what is positioned in scrolled boxes where the page shows it", async
     ];
     for (const [selector, color] of colors)
       await expect.poll(() => drawn(selector, color), { message: selector }).toBe(true);
+    // Its own translate kept: drawn from its top edge (4px into the box), not above it.
+    const heading = await panel.box("#moved-heading");
+    const blue = async (y: number) => {
+      const [red, green, blue] = await panel.pixel(heading.left + heading.width - 16, y);
+      return red < 90 && green < 90 && blue > 160;
+    };
+    await expect.poll(() => blue(heading.top + 2)).toBe(true);
+    expect(await blue(heading.top - 2)).toBe(false);
+    // The generated box at the top of the box, scrolled with it: its lower part, bluer.
+    const generated = await panel.box("#generated-box");
+    const scrolled = await panel.frame.evaluate(
+      () => document.querySelector("#generated-box")!.scrollTop,
+    );
+    const [, greenness, blueness] = await panel.pixel(generated.left + 20, generated.top + 3);
+    // Along its 160px from green to blue: about this much blue at the scroll.
+    expect(Math.abs(blueness - (200 * scrolled) / 160)).toBeLessThan(25);
+    expect(greenness).toBeLessThan(200);
     // Moved by the scroll exactly: drawn from its top edge to its bottom one.
     const marker = await panel.box("#marker");
     const shade = async (y: number) => (await panel.pixel(marker.left + 20, y))[0];

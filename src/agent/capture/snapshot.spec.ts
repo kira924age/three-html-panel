@@ -569,8 +569,7 @@ describe("scrolled content", () => {
     expect(style("table").top).toBe("-50px");
     // It sticks to the unscrolled box where it would to the scrolled one.
     expect(style("heading").getPropertyValue("translate")).toBe("0px -50px");
-    // calc(4px + 50px), however it is serialized.
-    expect(style("heading").top).toMatch(/^calc\((4px \+ 50px|54px)\)$/);
+    expect(style("heading").top).toBe("54px");
     // Over its siblings, positioned now, as the page paints it over them.
     expect(style("heading").zIndex).toBe("1");
     // Not scrolled with the box: their containing blocks are outside it.
@@ -611,11 +610,11 @@ describe("scrolled content", () => {
     );
     const copy = snapshot();
     const style = (id: string) => copy.getElementById(id)!.style;
-    expect(style("badge").top).toMatch(/^calc\((10px \+ -50px|-40px)\)$/);
+    expect(style("badge").top).toBe("-40px");
     expect(style("badge").getPropertyValue("translate")).toBe("");
     // At its place in the flow, which moves (nothing else is in it).
     expect(style("flow").marginTop).toBe("");
-    expect(style("fixed").bottom).toMatch(/^calc\((5px - -20px|25px)\)$/);
+    expect(style("fixed").bottom).toBe("25px");
   });
 
   it("holds a sticky element with fixed ones in it by its insets, not translated (they would be clipped to the box)", () => {
@@ -703,6 +702,83 @@ describe("scrolled content", () => {
     const a = snapshot().getElementById("a")!;
     expect(a.style.marginTop).toBe("-30px");
     expect(a.style.position).toBe("");
+  });
+
+  it("moves a block ::before with the flow by a rule of its own, and not a flow with an inline one", () => {
+    vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(20);
+    document.body.innerHTML =
+      `<div id="block" style="overflow: auto"><p id="a" style="margin-top: 8px"></p></div>` +
+      `<div id="inline" style="overflow: auto"><p id="b"></p></div>`;
+    const generated: Record<string, Record<string, string>> = {
+      block: { display: "block", height: "40px", "margin-top": "10px" },
+      inline: { display: "inline", height: "auto" },
+    };
+    const pageStyle = window.getComputedStyle.bind(window);
+    vi.spyOn(window, "getComputedStyle").mockImplementation((element, pseudo) => {
+      const own = pseudo === "::before" ? generated[(element as Element).id] : undefined;
+      if (!own) return pageStyle(element, pseudo);
+      const values: Record<string, string> = { content: '"Results"', position: "static", ...own };
+      return {
+        ...values,
+        cssFloat: "none",
+        getPropertyValue: (property: string) => values[property] ?? "0px",
+      } as unknown as CSSStyleDeclaration;
+    });
+    scroll(
+      new Map([
+        [document.querySelector("#block")!, { top: 30 }],
+        [document.querySelector("#inline")!, { top: 30 }],
+      ]),
+    );
+    const copy = snapshot();
+    const block = copy.getElementById("block")!;
+    // The ::before box moves the flow (its 10px margin, 30px less); the first child goes with it.
+    expect(copy.getElementById("a")!.style.getPropertyPriority("margin-top")).toBe("");
+    expect(copy.querySelector("style")!.textContent).toBe(
+      `[data-thp-scrolled="${block.getAttribute("data-thp-scrolled")}"]::before{margin-top:-20px !important}`,
+    );
+    // Lines first: moved by itself instead (the ::before, text, does not move).
+    expect(copy.getElementById("b")!.style.top).toBe("-30px");
+    expect(copy.getElementById("inline")!.hasAttribute("data-thp-scrolled")).toBe(false);
+  });
+
+  it("does not move a flow in columns, or in vertical writing", () => {
+    vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(20);
+    document.body.innerHTML =
+      `<div id="columns" style="overflow: auto; column-count: 2"><p id="b"></p></div>` +
+      `<div id="vertical" style="overflow: auto; writing-mode: vertical-rl"><p id="c"></p></div>`;
+    scroll(
+      new Map(["#columns", "#vertical"].map((id) => [document.querySelector(id)!, { top: 30 }])),
+    );
+    const copy = snapshot();
+    // Moved by themselves instead.
+    for (const id of ["b", "c"]) {
+      expect(copy.getElementById(id)!.style.marginTop).toBe("");
+      expect(copy.getElementById(id)!.style.top).toBe("-30px");
+    }
+  });
+
+  it("moves from the values an animation ends on, and adds to a translate of the page's own", () => {
+    document.body.innerHTML =
+      `<div id="row" style="overflow: auto; display: flex"><p id="item" style="margin-top: 4px"></p></div>` +
+      `<div id="box" style="overflow: auto">Text<h3 id="sticky" style="position: sticky; top: 0; translate: 0px -4px"></h3></div>`;
+    const item = document.querySelector("#item")!;
+    document.getAnimations = () => [
+      animation(item, [{ computedOffset: 1, marginTop: "10px" }], {
+        fill: "forwards",
+        iterations: 1,
+      }),
+    ];
+    scroll(
+      new Map([
+        [document.querySelector("#row")!, { top: 30 }],
+        [document.querySelector("#box")!, { top: 50 }],
+      ]),
+    );
+    const copy = snapshot();
+    delete (document as { getAnimations?: unknown }).getAnimations;
+    expect(copy.getElementById("item")!.style.marginTop).toBe("-20px");
+    expect(copy.getElementById("sticky")!.style.getPropertyValue("translate")).toBe("0px -54px");
   });
 
   it("moves each flex or grid item by its margins", () => {
