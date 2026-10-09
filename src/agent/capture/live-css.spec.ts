@@ -84,6 +84,20 @@ describe("LiveInteractionCss", () => {
     }
   });
 
+  it("wraps the CSSOM once, however many watch it, and puts it back when the last stops", () => {
+    const method = () => Reflect.get(CSSStyleSheet.prototype, "insertRule") as unknown;
+    const native = method();
+    const first = new LiveInteractionCss(document);
+    const wrapped = method();
+    const second = new LiveInteractionCss(document);
+    expect(method()).toBe(wrapped);
+    // Stopped out of order.
+    first.dispose();
+    expect(method()).toBe(wrapped);
+    second.dispose();
+    expect(method()).toBe(native);
+  });
+
   it("puts the CSSOM back when disposed, but not over a wrapper put there since", () => {
     // Read as values, compared by identity only (never called unbound).
     const method = () => Reflect.get(CSSStyleSheet.prototype, "insertRule") as unknown;

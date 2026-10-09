@@ -17,4 +17,12 @@ describe("DocumentCss", () => {
     expect(css).toContain(".wide");
     expect(css).not.toContain(".printed");
   });
+
+  it("rewrites the selectors of nested rules, not the text of declarations", () => {
+    document.head.innerHTML =
+      '<style>.tip { content: "use :hover"; &:hover { opacity: 1 } }</style>';
+    const css = new DocumentCss(document, () => null).get();
+    expect(css).toContain("&:is(:hover,[data-thp-hover])");
+    expect(css).toContain('"use :hover"');
+  });
 });

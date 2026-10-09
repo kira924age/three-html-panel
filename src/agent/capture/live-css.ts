@@ -34,7 +34,8 @@ import {
   liveSelector,
   pageStylesheets,
   ruleCount,
-  stylesheetsSignature,
+  sheetSignature,
+  signatureParts,
 } from "./css";
 
 /** What the page changed through the CSSOM (see watchStylesheets). */
@@ -48,16 +49,39 @@ export type CssomChange =
   /** A <style> element disabled or enabled, or a document's adoptedStyleSheets set. */
   | { kind: "owner"; owner: Element | Document };
 
+type CssomListener = (change: CssomChange) => void;
+
+/** Per window: who listens, and what puts the originals back. Wrapped once, however many listen. */
+const watchers = new WeakMap<object, { listeners: Set<CssomListener>; unwrap: () => void }>();
+
 /**
- * Calls `onChange` after the page's script changes a stylesheet through the
+ * Calls `listener` after the page's script changes a stylesheet through the
  * CSSOM (insertRule, replace, disabled, adoptedStyleSheets, ...), which no
  * MutationObserver sees. The methods and setters are replaced in the page's
- * realm. Returns what puts the originals back.
+ * realm, once; the originals come back when the last listener stops. Returns
+ * what stops it.
  */
-function watchStylesheets(
-  window: FrameWindow,
-  onChange: (change: CssomChange) => void,
-): () => void {
+function watchStylesheets(window: FrameWindow, listener: CssomListener): () => void {
+  let watcher = watchers.get(window);
+  if (!watcher) {
+    const listeners = new Set<CssomListener>();
+    const unwrap = wrapCssom(window, (change) => {
+      for (const each of Array.from(listeners)) each(change);
+    });
+    watcher = { listeners, unwrap };
+    watchers.set(window, watcher);
+  }
+  const { listeners, unwrap } = watcher;
+  listeners.add(listener);
+  return () => {
+    if (!listeners.delete(listener) || listeners.size > 0) return;
+    unwrap();
+    watchers.delete(window);
+  };
+}
+
+/** Wraps the CSSOM's methods and setters that change stylesheets; returns what puts them back. */
+function wrapCssom(window: FrameWindow, onChange: CssomListener): () => void {
   const restores: (() => void)[] = [];
   const wrapMethod = (
     proto: Record<string, unknown> | undefined,
@@ -133,6 +157,15 @@ function watchStylesheets(
 }
 
 export class LiveInteractionCss {
+  /**
+   * The parts of the signature as last synced (see signatureParts), and where
+   * each stylesheet's is. A sheet changed through the CSSOM and taken care of
+   * right away has its own part brought up to date, and only that: what else
+   * changed meanwhile (a sheet added, an @import loaded) still shows on the
+   * next sync.
+   */
+  private parts: [CSSStyleSheet | null, string][] = [];
+  private readonly partIndex = new Map<CSSStyleSheet, number>();
   private signature = "";
   /**
    * The stylesheets may have changed since the last sync. Reading them all
@@ -183,6 +216,8 @@ export class LiveInteractionCss {
   reset(): void {
     this.stale = true;
     this.signature = "";
+    this.parts = [];
+    this.partIndex.clear();
   }
 
   /**
@@ -198,8 +233,12 @@ export class LiveInteractionCss {
     this.stale = false;
     this.adoptedList = this.pageAdoptedList();
     const sheets = pageStylesheets(this.document);
-    const signature = stylesheetsSignature(sheets);
+    const parts = signatureParts(sheets);
+    const signature = parts.map(([, part]) => part).join("|");
     if (signature === this.signature) return false;
+    this.parts = parts;
+    this.partIndex.clear();
+    parts.forEach(([sheet], i) => sheet && this.partIndex.set(sheet, i));
     this.signature = signature;
     this.syncing = true;
     try {
@@ -222,7 +261,8 @@ export class LiveInteractionCss {
     if (this.syncing) return;
     switch (change.kind) {
       case "insert": {
-        if (!this.pageSheetOf(change.parent)) return;
+        const sheet = this.pageSheetOf(change.parent);
+        if (!sheet) return;
         const rule = change.parent.cssRules[change.index];
         // Only the rule inserted is rewritten, not all the page's (CSS-in-JS inserts rules all the time).
         // It could be inserted: the sheet is readable.
@@ -233,17 +273,19 @@ export class LiveInteractionCss {
           } finally {
             this.syncing = false;
           }
-          this.signatureChanged();
+          this.sheetChanged(sheet);
         } else {
           this.reset();
         }
         break;
       }
-      case "delete":
-        if (!this.pageSheetOf(change.parent)) return;
+      case "delete": {
+        const sheet = this.pageSheetOf(change.parent);
+        if (!sheet) return;
         // Nothing to rewrite.
-        this.signatureChanged();
+        this.sheetChanged(sheet);
         break;
+      }
       case "sheet":
         if (!this.pageSheetOf(change.sheet)) return;
         this.reset();
@@ -257,20 +299,29 @@ export class LiveInteractionCss {
   }
 
   /**
-   * The stylesheets changed only in what was taken care of already: the
-   * signature is brought up to date (if it was), so that the next sync does
-   * not look at everything again.
+   * A sheet changed only in what was taken care of already: its part of the
+   * signature is brought up to date, so that the next sync does not look at
+   * everything again. A sheet not synced yet is left for the next sync.
    */
-  private signatureChanged(): void {
-    if (this.stale) return;
-    this.signature = stylesheetsSignature(pageStylesheets(this.document));
+  private sheetChanged(sheet: CSSStyleSheet): void {
+    const index = this.partIndex.get(sheet);
+    if (index === undefined) return;
+    this.parts[index] = [sheet, sheetSignature(sheet)];
+    this.signature = this.parts.map(([, part]) => part).join("|");
   }
 
-  /** The document's stylesheet (or the one importing it) that `parent` is in; null if none. */
+  /**
+   * The stylesheet `parent` is (or is in), if it is one of the page's, or
+   * one they import; null if not (a shadow root's, say).
+   */
   private pageSheetOf(parent: CSSStyleSheet | CSSRule): CSSStyleSheet | null {
-    let sheet = parent instanceof this.window.CSSStyleSheet ? parent : parent.parentStyleSheet;
-    while (sheet?.ownerRule?.parentStyleSheet) sheet = sheet.ownerRule.parentStyleSheet;
-    return sheet && pageStylesheets(this.document).includes(sheet) ? sheet : null;
+    const own = parent instanceof this.window.CSSStyleSheet ? parent : parent.parentStyleSheet;
+    if (!own) return null;
+    // The sheets synced last, without listing the page's again (CSS-in-JS inserts rules all the time).
+    if (this.partIndex.has(own)) return own;
+    let top = own;
+    while (top.ownerRule?.parentStyleSheet) top = top.ownerRule.parentStyleSheet;
+    return pageStylesheets(this.document).includes(top) ? own : null;
   }
 
   private pageAdoptedList(): readonly CSSStyleSheet[] {
@@ -294,8 +345,7 @@ export class LiveInteractionCss {
     this.originals.clear();
     this.adopt("");
     this.unwatch();
-    this.signature = "";
-    this.stale = true;
+    this.reset();
   }
 
   /** Rewrites a sheet in place, or, if the page cannot edit it, copies its interaction rules out. */
@@ -305,6 +355,8 @@ export class LiveInteractionCss {
     copied: string[],
     visited: Set<CSSStyleSheet>,
   ): void {
+    // Its copy would not be used: not fetched for nothing.
+    if (source.disabled && ruleCount(source) < 0) return;
     // A disabled sheet is rewritten as well, for when the page enables it.
     const sheet = this.readable(source);
     if (!sheet) return;

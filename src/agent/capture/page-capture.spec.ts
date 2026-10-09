@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { LiveInteractionCss } from "./live-css";
 import { PageCapture } from "./page-capture";
 import { RenderPacer } from "./pacer";
 
@@ -222,6 +223,41 @@ describe("interaction states in the live page", () => {
     await settle();
     expect(captures).toHaveBeenCalledTimes(count + 1);
     expect(frames.at(-1)).toContain(".row{color: red;}");
+  });
+
+  it("rewrites a <style> the page adds in the same task as it inserts a rule elsewhere", async () => {
+    capture.start();
+    move();
+    await settle();
+    const later = document.createElement("span");
+    later.className = "later";
+    document.querySelector(".row")!.append(later);
+    const style = document.createElement("style");
+    style.textContent = ".later { display: none } .row:hover .later { display: inline }";
+    document.head.append(style);
+    // Before the MutationObserver has said anything about the <style>.
+    document.styleSheets[0]!.insertRule(".x { color: red }", 0);
+    await settle();
+    // (jsdom matches :hover by itself here: the rule is checked, not the layout.)
+    expect((style.sheet!.cssRules[1] as CSSStyleRule).selectorText).toBe(
+      ".row:is(:hover,[data-thp-hover]) .later",
+    );
+  });
+
+  it("does not look at all the rules again after rules inserted through the CSSOM", async () => {
+    const walks = vi.spyOn(
+      LiveInteractionCss.prototype as unknown as { syncSheet: () => void },
+      "syncSheet",
+    );
+    capture.start();
+    move();
+    await settle();
+    walks.mockClear();
+    // Several in a row, as CSS-in-JS does while rendering, then input and a capture.
+    for (let i = 0; i < 3; i++) document.styleSheets[0]!.insertRule(`.x${i} { color: red }`, 0);
+    move();
+    await settle();
+    expect(walks).not.toHaveBeenCalled();
   });
 
   it("does not count its marks as changes of the page", async () => {

@@ -88,7 +88,7 @@ export function liveSelector(selector: string): string | null {
 }
 
 /**
- * The selector (or a nested rule's text) for the image: as for the live page
+ * The selector for the image: as for the live page
  * (:hover never matches in an image, the attribute does), and :root is html.
  */
 export function rewriteSelector(selector: string): string {
@@ -171,26 +171,42 @@ export function pageStylesheets(document: Document): CSSStyleSheet[] {
   return adopted ? [...sheets, ...adopted.filter((sheet) => !agentSheets.has(sheet))] : sheets;
 }
 
-function sheetSignature(sheet: CSSStyleSheet): string {
+/** A stylesheet's own part of the signature: which it is, how many rules it has, whether it is disabled. */
+export function sheetSignature(sheet: CSSStyleSheet): string {
   let id = sheetIds.get(sheet);
   if (id === undefined) {
     id = nextSheetId++;
     sheetIds.set(sheet, id);
   }
-  const count = ruleCount(sheet);
-  let signature = `${id}:${count}${sheet.disabled ? "d" : ""}`;
-  // The sheets it imports, which load after it. @import comes first in a sheet.
-  for (let i = 0; i < count; i++) {
-    const rule = sheet.cssRules[i]!;
-    if ("styleSheet" in rule) {
-      const imported = (rule as CSSImportRule).styleSheet;
-      signature += `[${imported ? sheetSignature(imported) : "-"}]`;
-    } else if ("cssRules" in rule || !rule.cssText.startsWith("@layer")) {
-      // Only @layer statements may come before an @import.
-      break;
+  return `${id}:${ruleCount(sheet)}${sheet.disabled ? "d" : ""}`;
+}
+
+/**
+ * The parts of the signature: each stylesheet's own (sheetSignature), each
+ * followed by those of the sheets it imports, which load after it ("-" for one
+ * not loaded yet). Each sheet has its own part, so that a change to one can be
+ * accounted for without hiding what else changed.
+ */
+export function signatureParts(sheets: CSSStyleSheet[]): [CSSStyleSheet | null, string][] {
+  const parts: [CSSStyleSheet | null, string][] = [];
+  const add = (sheet: CSSStyleSheet) => {
+    parts.push([sheet, sheetSignature(sheet)]);
+    const count = ruleCount(sheet);
+    // @import comes first in a sheet.
+    for (let i = 0; i < count; i++) {
+      const rule = sheet.cssRules[i]!;
+      if ("styleSheet" in rule) {
+        const imported = (rule as CSSImportRule).styleSheet;
+        if (imported) add(imported);
+        else parts.push([null, "-"]);
+      } else if ("cssRules" in rule || !rule.cssText.startsWith("@layer")) {
+        // Only @layer statements may come before an @import.
+        break;
+      }
     }
-  }
-  return signature;
+  };
+  for (const sheet of sheets) add(sheet);
+  return parts;
 }
 
 /**
@@ -199,7 +215,9 @@ function sheetSignature(sheet: CSSStyleSheet): string {
  * it is disabled, and the same of the sheets they import.
  */
 export function stylesheetsSignature(sheets: CSSStyleSheet[]): string {
-  return sheets.map(sheetSignature).join("|");
+  return signatureParts(sheets)
+    .map(([, part]) => part)
+    .join("|");
 }
 
 /**
@@ -255,17 +273,37 @@ export class DocumentCss {
     }
   }
 
+  /**
+   * A style rule with its selector rewritten, and those of the rules nested in
+   * it (CSS nesting) one by one: not the declarations' text.
+   */
+  private serializeStyleRule(rule: CSSStyleRule): string {
+    const nested = rule.cssRules
+      ? Array.from(rule.cssRules, (child) => this.serializeNested(child))
+      : [];
+    return `${rewriteSelector(rule.selectorText)}{${rule.style.cssText}${nested.join("\n")}}`;
+  }
+
+  private serializeNested(rule: CSSRule): string {
+    if (rule instanceof this.window.CSSStyleRule) return this.serializeStyleRule(rule);
+    if ("cssRules" in rule) {
+      // @media and the like inside a style rule, kept as they are (evaluated in the image).
+      const nested = Array.from(rule.cssRules as CSSRuleList, (child) =>
+        this.serializeNested(child),
+      );
+      return `${rule.cssText.slice(0, rule.cssText.indexOf("{"))}{${nested.join("\n")}}`;
+    }
+    // Declarations between nested rules (CSSNestedDeclarations).
+    if ("style" in rule) return (rule as CSSStyleRule).style.cssText;
+    return rule.cssText;
+  }
+
   private serializeRules(rules: CSSRuleList, out: string[]): void {
     const { CSSStyleRule, CSSMediaRule, CSSSupportsRule, CSSImportRule, CSSKeyframesRule, CSS } =
       this.window;
     for (const rule of Array.from(rules)) {
       if (rule instanceof CSSStyleRule) {
-        // Nested rules (CSS nesting) are serialized with the parent; rewrite the whole text then.
-        out.push(
-          rule.cssRules.length > 0
-            ? rewriteSelector(rule.cssText)
-            : `${rewriteSelector(rule.selectorText)}{${rule.style.cssText}}`,
-        );
+        out.push(this.serializeStyleRule(rule));
       } else if (rule instanceof CSSMediaRule) {
         if (this.window.matchMedia(rule.conditionText).matches)
           this.serializeRules(rule.cssRules, out);
