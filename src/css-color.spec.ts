@@ -62,6 +62,19 @@ describe("parseCssColor", () => {
     expect(bytes("hwb(0 60 60)")).toEqual([128, 128, 128, 1]);
   });
 
+  it("clamps lightness, chroma, saturation, whiteness and blackness as browsers do", () => {
+    expect(bytes("hsl(0 -50 50)")).toEqual([128, 128, 128, 1]);
+    expect(bytes("lab(150 20 30)")).toEqual(bytes("lab(100 20 30)"));
+    expect(bytes("lch(50 -30 250)")).toEqual(bytes("lch(50 0 250)"));
+    expect(bytes("oklab(-0.5 0.1 0.1)")).toEqual(bytes("oklab(0 0.1 0.1)"));
+    expect(bytes("oklch(0.7 -0.1 150)")).toEqual(bytes("oklch(0.7 0 150)"));
+    expect(bytes("oklch(150% 0.1 150)")).toEqual(bytes("oklch(1 0.1 150)"));
+    // rgb(230, 115, 0) in Chromium and Firefox; WebKit does not clamp, and draws rgb(230, 89, 0).
+    expect(bytes("hwb(30 -20 10)")).toEqual(bytes("hwb(30 0 10)"));
+    expect(bytes("hwb(30 0 10)")?.[1]).toBe(115);
+    expect(bytes("lab(1e300 0 0)")).toEqual([255, 255, 255, 1]);
+  });
+
   it("reads transparent as a zero alpha", () => {
     expect(parseCssColor("transparent")?.alpha).toBe(0);
     expect(parseCssColor("oklch(0.5 0.1 200 / 0)")?.alpha).toBe(0);
@@ -101,7 +114,7 @@ describe("parseCssColor", () => {
       // Components that overflow.
       "oklch(0.5 0.1 1e400)",
       "rgb(1e400 0 0)",
-      "lab(1e300 0 0)",
+      "lab(50 1e300 0)",
       "constructor",
       "constructor(1 2 3)",
       "color(__proto__ 1 2 3)",

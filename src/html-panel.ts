@@ -203,8 +203,11 @@ export class HtmlPanel
    * read keeps it, rather than turning black and vanishing on a dark page.
    */
   private caretColor: SrgbColor = DEFAULT_CARET_COLOR;
-  /** The caret color the page sent last, and what it was read as: it seldom changes. */
-  private caretCss: { css: string; color: SrgbColor | null } | null = null;
+  /**
+   * The caret color string the page sent last, and what it was read as (null:
+   * it could not be): it seldom changes, so it is not read again.
+   */
+  private lastCaretParse: { css: string; color: SrgbColor | null } | null = null;
   /** Where the page's text fields are (CSS px), as it reported last. */
   private editables: Box[] = [];
   /** What drove the pointer last: the IME is placed at the caret only for a mouse. */
@@ -513,8 +516,8 @@ export class HtmlPanel
   }
 
   private readCaretColor(css: string): SrgbColor | null {
-    if (this.caretCss?.css !== css) this.caretCss = { css, color: parseCssColor(css) };
-    return this.caretCss.color;
+    if (this.lastCaretParse?.css !== css) this.lastCaretParse = { css, color: parseCssColor(css) };
+    return this.lastCaretParse.color;
   }
 
   private send(message: HostMessage): void {

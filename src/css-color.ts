@@ -185,10 +185,19 @@ function component(token: string, percent?: number): number | null {
   return Number.isFinite(result) ? result : null;
 }
 
+type Range = readonly [min: number, max: number];
+const ANY: Range = [-Infinity, Infinity];
+const NOT_NEGATIVE: Range = [0, Infinity];
+
 interface ColorFunction {
   /** The percentage reference of each component (undefined: a hue). */
   percent: (number | undefined)[];
   toSrgb: (v: Vec3) => Vec3;
+  /**
+   * What each component is clamped to, as CSS does when it parses the color
+   * (lightness, chroma, saturation). Browsers compute them clamped already.
+   */
+  ranges?: Range[];
   /** It has the legacy, comma separated syntax too: `rgba(1, 2, 3, 0.5)`. */
   legacy?: boolean;
 }
@@ -206,12 +215,25 @@ const RGB: ColorFunction = {
 const FUNCTIONS: Record<string, ColorFunction> = {
   rgb: RGB,
   rgba: RGB,
-  hsl: { percent: [undefined, 100, 100], toSrgb: hslToSrgb },
-  hwb: { percent: [undefined, 100, 100], toSrgb: hwbToSrgb },
-  lab: { percent: [100, 125, 125], toSrgb: labToSrgb },
-  lch: { percent: [100, 150, undefined], toSrgb: (v) => labToSrgb(fromPolar(v)) },
-  oklab: { percent: [1, 0.4, 0.4], toSrgb: oklabToSrgb },
-  oklch: { percent: [1, 0.4, undefined], toSrgb: (v) => oklabToSrgb(fromPolar(v)) },
+  hsl: { percent: [undefined, 100, 100], toSrgb: hslToSrgb, ranges: [ANY, NOT_NEGATIVE, ANY] },
+  // Whiteness and blackness clamped as in Chromium and Firefox (not in WebKit).
+  hwb: {
+    percent: [undefined, 100, 100],
+    toSrgb: hwbToSrgb,
+    ranges: [ANY, NOT_NEGATIVE, NOT_NEGATIVE],
+  },
+  lab: { percent: [100, 125, 125], toSrgb: labToSrgb, ranges: [[0, 100], ANY, ANY] },
+  lch: {
+    percent: [100, 150, undefined],
+    toSrgb: (v) => labToSrgb(fromPolar(v)),
+    ranges: [[0, 100], NOT_NEGATIVE, ANY],
+  },
+  oklab: { percent: [1, 0.4, 0.4], toSrgb: oklabToSrgb, ranges: [[0, 1], ANY, ANY] },
+  oklch: {
+    percent: [1, 0.4, undefined],
+    toSrgb: (v) => oklabToSrgb(fromPolar(v)),
+    ranges: [[0, 1], NOT_NEGATIVE, ANY],
+  },
 };
 
 /** A table's own entry: the string comes from the page, and could be `constructor`. */
@@ -251,16 +273,19 @@ export function parseCssColor(css: string): SrgbColor | null {
   const text = css.trim().toLowerCase();
   if (text === "transparent") return { r: 0, g: 0, b: 0, alpha: 0 };
   const [, name = "", body = ""] = FUNCTION.exec(text) ?? [];
-  const fn = name === "color" ? undefined : own(FUNCTIONS, name);
-  const parts = split(body, fn?.legacy ?? false);
+  const parts = split(body, own(FUNCTIONS, name)?.legacy ?? false);
   if (!parts) return null;
   const { tokens } = parts;
-  const color = name === "color" ? colorSpace(tokens.shift() ?? "") : fn;
-  if (!color || tokens.length !== 3) return null;
-  const values = tokens.map((t, i) => component(t, color.percent[i]));
+  const fn = name === "color" ? colorSpace(tokens.shift() ?? "") : own(FUNCTIONS, name);
+  if (!fn || tokens.length !== 3) return null;
+  const values = tokens.map((t, i) => {
+    const value = component(t, fn.percent[i]);
+    const [min, max] = fn.ranges?.[i] ?? ANY;
+    return value === null ? null : Math.min(max, Math.max(min, value));
+  });
   const alpha = parts.alpha === undefined ? 1 : component(parts.alpha, 1);
   if (values.includes(null) || alpha === null) return null;
-  const [r, g, b] = color.toSrgb(values as Vec3).map(clamp01) as Vec3;
+  const [r, g, b] = fn.toSrgb(values as Vec3).map(clamp01) as Vec3;
   // Huge components overflow in the conversion (Infinity - Infinity).
   if (![r, g, b].every(Number.isFinite)) return null;
   return { r, g, b, alpha: clamp01(alpha) };
