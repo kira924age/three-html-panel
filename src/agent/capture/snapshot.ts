@@ -1446,6 +1446,21 @@ function inlineBackgroundImages(
   return missing ? "none" : inlined;
 }
 
+/**
+ * Whether the browser draws an element: none in a `display: none` box, nor
+ * in one whose content is hidden (an element of its own `display: contents`
+ * is drawn, its children are).
+ */
+function isRendered(element: Element): boolean {
+  const view = element.ownerDocument.defaultView!;
+  if (view.getComputedStyle(element).display === "none") return false;
+  for (let parent = element.parentElement; parent; parent = parent.parentElement) {
+    const style = view.getComputedStyle(parent);
+    if (style.display === "none" || style.contentVisibility === "hidden") return false;
+  }
+  return true;
+}
+
 /** Marks the stand-ins liftToTopLayer moves a top layer element with, and the element. */
 const STAND_IN_ATTRIBUTE = "data-thp-stand-in";
 const LIFTED_ATTRIBUTE = "data-thp-lifted";
@@ -1483,71 +1498,86 @@ function withDisplay<T extends Element>(element: T, display: "none" | "contents"
   return element;
 }
 
-/** What a ::backdrop draws (its background, and the filter it puts on the page under it), or null if nothing. */
+/**
+ * What a ::backdrop draws, its background, or null if nothing. Not its
+ * backdrop-filter: browsers apply none in the SVG images panels are drawn from.
+ */
 function backdropStyle(
   style: CSSStyleDeclaration,
   inlineImage: (url: string) => string | null,
 ): string | null {
   const image = inlineBackgroundImages(style.backgroundImage || "none", inlineImage);
-  const filter =
-    style.backdropFilter || style.getPropertyValue("-webkit-backdrop-filter") || "none";
   const color = style.backgroundColor;
-  if ((!color || TRANSPARENT.test(color)) && image === "none" && filter === "none") return null;
+  if ((!color || TRANSPARENT.test(color)) && image === "none") return null;
   const declarations = BACKGROUND_PROPERTIES.map((property) => {
     const value = property === "background-image" ? image : style.getPropertyValue(property);
     return value ? `${property}:${value}` : "";
   });
-  if (filter !== "none")
-    declarations.push(`backdrop-filter:${filter}`, `-webkit-backdrop-filter:${filter}`);
   if (style.opacity && style.opacity !== "1") declarations.push(`opacity:${style.opacity}`);
   return declarations.filter(Boolean).join(";");
 }
 
+/** An element's border box size as laid out (before its transform), unrounded, or null. */
+function layoutSize(element: Element, style: CSSStyleDeclaration): Box | null {
+  let width = parseFloat(style.width);
+  let height = parseFloat(style.height);
+  if (Number.isNaN(width) || Number.isNaN(height)) return null;
+  if (style.boxSizing !== "border-box") {
+    const sum = (...properties: string[]) =>
+      properties.reduce(
+        (total, property) => total + (parseFloat(style.getPropertyValue(property)) || 0),
+        0,
+      );
+    width += sum("padding-left", "padding-right", "border-left-width", "border-right-width");
+    height += sum("padding-top", "padding-bottom", "border-top-width", "border-bottom-width");
+  }
+  return { left: 0, top: 0, width, height };
+}
+
 /**
- * Where an element's box is laid out, before its transform: the copy keeps
- * the transform (`transformed`), so that a rotated or scaled popover shows as
- * it does. Found from where its transformed corners show; where the transform
- * cannot be read as a matrix (a percentage, a 3D rotation axis, no DOMMatrix),
- * where it shows, untransformed.
+ * Where an element's box is laid out, before its transform, which the copy
+ * is given as the element has it now (`transform`, set when it has one), so
+ * that a rotated or scaled popover shows as it does. Found from where its
+ * transformed corners show; where the transform cannot be read as a matrix
+ * (a percentage, a 3D rotation axis, no DOMMatrix), where it shows,
+ * untransformed.
  */
-function layoutBox(element: Element, style: CSSStyleDeclaration): Box & { transformed: boolean } {
-  const shown = element.getBoundingClientRect();
-  const { left, top, width, height } = shown;
-  const untransformed = { left, top, width, height, transformed: false };
+function layoutBox(
+  element: Element,
+  style: CSSStyleDeclaration,
+): Box & { transform?: Record<string, string> } {
+  const { left, top, width, height } = element.getBoundingClientRect();
+  const shown = { left, top, width, height };
   const { transform, translate, rotate, scale } = style;
   const none = (value: string) => !value || value === "none";
-  if (none(transform) && none(translate) && none(rotate) && none(scale)) return untransformed;
-  const html = element as HTMLElement;
+  if (none(transform) && none(translate) && none(rotate) && none(scale)) return shown;
   const Matrix = element.ownerDocument.defaultView?.DOMMatrix;
-  if (!Matrix || html.offsetWidth === undefined) return untransformed;
-  // The individual properties apply before the transform property, in this order.
-  // A value's words as a function's 3 arguments, the missing ones filled in.
-  const args = (value: string, fill: (words: string[]) => string[]) => {
-    const words = value.trim().split(/\s+/);
-    return [...words, ...fill(words).slice(words.length)].join(",");
-  };
+  const size = layoutSize(element, style);
+  if (!Matrix || !size) return shown;
+  // The individual properties apply before the transform property, in this
+  // order; a missing translation is 0px, a missing scale on y is the one on x.
+  const [tx, ty = "0px", tz = "0px"] = translate.split(/\s+/);
+  const [sx, sy = sx, sz = "1"] = scale.split(/\s+/);
   const parts = [
-    none(translate) ? "" : `translate3d(${args(translate, () => ["0px", "0px", "0px"])})`,
+    none(translate) ? "" : `translate3d(${tx},${ty},${tz})`,
     none(rotate) ? "" : `rotate(${rotate})`,
-    none(scale) ? "" : `scale3d(${args(scale, ([x]) => [x!, x!, "1"])})`,
+    none(scale) ? "" : `scale3d(${sx},${sy},${sz})`,
     none(transform) ? "" : transform,
   ];
   let matrix: DOMMatrix;
   try {
     matrix = new Matrix(parts.join(" ").trim());
   } catch {
-    return untransformed;
+    return shown;
   }
   const [originX = 0, originY = 0] = style.transformOrigin.split(/\s+/).map(parseFloat);
-  const layoutWidth = html.offsetWidth;
-  const layoutHeight = html.offsetHeight;
   let cornerLeft = Infinity;
   let cornerTop = Infinity;
   for (const [x, y] of [
     [0, 0],
-    [layoutWidth, 0],
-    [0, layoutHeight],
-    [layoutWidth, layoutHeight],
+    [size.width, 0],
+    [0, size.height],
+    [size.width, size.height],
   ] as const) {
     const point = matrix.transformPoint({ x: x - originX, y: y - originY });
     cornerLeft = Math.min(cornerLeft, point.x + originX);
@@ -1556,9 +1586,15 @@ function layoutBox(element: Element, style: CSSStyleDeclaration): Box & { transf
   return {
     left: left - cornerLeft,
     top: top - cornerTop,
-    width: layoutWidth,
-    height: layoutHeight,
-    transformed: true,
+    width: size.width,
+    height: size.height,
+    transform: {
+      transform,
+      translate,
+      rotate,
+      scale,
+      "transform-origin": style.transformOrigin,
+    },
   };
 }
 
@@ -1616,9 +1652,12 @@ function liftToTopLayer(
     "position-area": "none",
     "z-index": `${TOP_Z_INDEX}`,
   };
-  // Where its transform could not be undone, it is placed where it shows, untransformed.
-  if (!box.transformed)
-    for (const name of ["transform", "translate", "rotate", "scale"]) place[name] = "none";
+  // Transformed as the element is now (not as an animation in the copy has
+  // it), or, where its transform could not be undone, placed where it shows.
+  Object.assign(
+    place,
+    box.transform ?? { transform: "none", translate: "none", rotate: "none", scale: "none" },
+  );
   for (const [name, value] of Object.entries(place))
     copy.style.setProperty(name, value, "important");
   copy.setAttribute(LIFTED_ATTRIBUTE, "");
@@ -1674,7 +1713,7 @@ export function snapshotDocument(document: Document, options: SnapshotOptions): 
   // page's order); none the browser does not draw (one in a display: none box).
   const openedAt = options.openedAt ?? (() => 0);
   const layers = snapshotter.topLayer
-    .filter(({ live }) => live.checkVisibility?.() ?? true)
+    .filter(({ live }) => isRendered(live))
     .map((entry, index) => ({ entry, index, at: openedAt(entry.live) }))
     .sort((a, b) => a.at - b.at || a.index - b.index)
     .map(({ entry }) => entry);

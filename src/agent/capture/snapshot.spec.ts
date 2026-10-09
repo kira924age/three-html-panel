@@ -1071,6 +1071,8 @@ describe("the top layer", () => {
       vi.spyOn(element, "matches").mockImplementation(
         (selector: string) => selector === pseudoClass || matches(selector),
       );
+      // jsdom's own style for a popover, or a dialog, not open.
+      if (!element.style.display) element.style.display = "block";
     }
     const xhtml = snapshotDocument(document, { inlineImage: () => null, ...options });
     return new DOMParser().parseFromString(xhtml, "application/xhtml+xml").documentElement;
@@ -1304,11 +1306,16 @@ describe("the top layer", () => {
   });
 
   it("leaves one the browser does not draw (in a display: none box) where it is", () => {
-    document.body.innerHTML = `<section><div id="menu" popover>Menu</div></section>`;
-    document.getElementById("menu")!.checkVisibility = () => false;
+    document.body.innerHTML = `<section style="display: none"><div id="menu" popover>Menu</div></section>`;
     const root = snapshotWithTopLayer({ menu: ":popover-open" });
     expect(root.querySelector("#menu")!.parentElement!.localName).toBe("section");
     expect(root.querySelector("[data-thp-lifted]")).toBeNull();
+  });
+
+  it("lifts one of its own display: contents (the browser draws its children over the page)", () => {
+    document.body.innerHTML = `<section style="overflow: hidden"><div id="menu" popover style="display: contents"><p>Card</p></div></section>`;
+    const root = snapshotWithTopLayer({ menu: ":popover-open" });
+    expect(root.querySelector("[data-thp-lifted]")!.id).toBe("menu");
   });
 
   it("draws a ::backdrop's image as well as its color", () => {
@@ -1320,5 +1327,25 @@ describe("the top layer", () => {
     );
     const cover = root.lastElementChild!.previousElementSibling as HTMLElement;
     expect(cover.style.backgroundImage).toBe("linear-gradient(red, blue)");
+  });
+
+  it("gives a transformed one its unrounded size and its transform as it is now", () => {
+    // jsdom has no DOMMatrix: one that leaves points where they are.
+    vi.stubGlobal(
+      "DOMMatrix",
+      class {
+        transformPoint(point: { x: number; y: number }) {
+          return point;
+        }
+      },
+    );
+    document.body.innerHTML = `<div id="menu" popover style="width: 151.4px; height: 20px; padding: 4px; border: 0; transform: translateX(0px)">Menu</div>`;
+    const root = snapshotWithTopLayer({ menu: ":popover-open" });
+    vi.unstubAllGlobals();
+    const menu = root.querySelector<HTMLElement>("[data-thp-lifted]")!;
+    expect(menu.style.width).toBe("159.4px");
+    expect(menu.style.height).toBe("28px");
+    expect(menu.style.transform).toBe("translateX(0px)");
+    expect(menu.style.getPropertyPriority("transform")).toBe("important");
   });
 });

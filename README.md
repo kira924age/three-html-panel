@@ -127,8 +127,8 @@ These rely on the scene being rendered every frame. Without WebGL (a panel that 
 ## Limitations
 
 - The page has to load the agent.
-- Only what the DOM and CSS describe is drawn: no cross-origin iframes inside the page, no native widgets other than `<select>`'s list (no date pickers or video controls). CSS transitions jump to their end.
-- Open popovers and modal dialogs (the top layer) are drawn over the page, moved out of their parents in the copy: rules that count a `<body>`'s siblings (`body:first-of-type`), or more than 16 siblings after one of their parents (`:nth-last-child`), may not match them there.
+- Only what the DOM and CSS describe is drawn: no cross-origin iframes inside the page, no native widgets other than `<select>`'s list (no date pickers or video controls). CSS transitions jump to their end. `backdrop-filter` is not drawn: browsers do not apply it in the SVG images panels are drawn from.
+- Open popovers and modal dialogs (the top layer) are drawn over the page, moved out of their parents in the copy. There, rules that look at the `<body>`'s siblings (`body:first-of-type`), or at more than 16 later siblings of the element or of one of its parents (`:nth-last-child`, `:has(~ …)`), may not match as on the page.
 - A cross-origin video without CORS shows only its poster.
 - Scrolled content is drawn by moving it in the copy of the page. A scroll container whose content starts with bare text (or other inline content), floats, multiple columns or vertical writing has its children moved one by one instead: bare text directly in it does not move, absolutely positioned elements placed from outside it are cut off at its edges, and its sticky elements are drawn over the rest of its content (`z-index: 1`). For bare text, wrapping it in an element avoids this.
 - contenteditable editing relies on `document.execCommand()`; editors that handle input in other ways may not work.
