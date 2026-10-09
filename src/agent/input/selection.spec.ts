@@ -481,7 +481,13 @@ describe("the caret, cut to what shows", () => {
       const range = document.createRange();
       range.selectNodeContents(document.querySelector("#link")!);
       expect(selectionBoxes(window as unknown as FrameWindow, range)).toEqual([
-        { left: 10, top: 10, width: 60, height: 18 },
+        {
+          left: 10,
+          top: 10,
+          width: 60,
+          height: 18,
+          text: document.querySelector("#link")!.firstChild,
+        },
       ]);
     } finally {
       restoreRects();
@@ -517,6 +523,33 @@ describe("the caret, cut to what shows", () => {
     box($("moved"), 0, 0, 200, 100);
     box($("inside"), 150, 90, 100, 20);
     expect(visibleBoxOf($("inside"))).toEqual({ left: 150, top: 90, width: 50, height: 10 });
+  });
+
+  it("is cut by nothing but the viewport in the top layer (an open popover), whatever its parents", () => {
+    document.body.innerHTML = `
+      <div id="moved" style="transform: translateX(0px); overflow-x: hidden; overflow-y: hidden">
+        <div id="menu" popover style="position: fixed"><input id="search"></div>
+      </div>`;
+    const menu = document.querySelector("#menu")!;
+    box(document.querySelector("#moved")!, 0, 0, 200, 100);
+    box(document.querySelector("#search")!, 150, 90, 100, 20);
+    // Closed (or not in the top layer), the transformed box clips it.
+    expect(visibleBoxOf(document.querySelector("#search")!)).toEqual({
+      left: 150,
+      top: 90,
+      width: 50,
+      height: 10,
+    });
+    const matches = menu.matches.bind(menu);
+    vi.spyOn(menu, "matches").mockImplementation(
+      (selector: string) => selector === ":popover-open" || matches(selector),
+    );
+    expect(visibleBoxOf(document.querySelector("#search")!)).toEqual({
+      left: 150,
+      top: 90,
+      width: 100,
+      height: 20,
+    });
   });
 
   it("hides the caret of a field whose line a box above it hides", () => {

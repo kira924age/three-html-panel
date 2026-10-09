@@ -23,6 +23,9 @@ import type { Box, FrameWindow } from "../../types";
 import { scrolledText } from "../input/caret";
 import { scrollbarsOf, type Scrollbar } from "../input/scrollbars";
 import type { PopupView } from "../input/select-popup";
+import type { SelectionBox } from "../input/selection";
+import { topLayerStates } from "../input/top-layer";
+import { MODAL_ATTRIBUTE, POPOVER_OPEN_ATTRIBUTE } from "./css";
 
 /** Elements that do not contribute to what is on screen. <style> is collected separately. */
 const SKIPPED_ELEMENTS = new Set([
@@ -42,8 +45,10 @@ export interface SnapshotOptions {
   ignored?: ReadonlySet<Element>;
   /** Returns a data URL for an image, or null if it is not available yet. */
   inlineImage: (url: string) => string | null;
-  /** The selected text in the focused field, as measured by measureSelection(). */
-  selection?: readonly Box[];
+  /** The selected text in the focused field, as measured by measureSelection(), or the page's (each box with its text). */
+  selection?: readonly (Box | SelectionBox)[];
+  /** The field the selection is in, if it is a field's: drawn in its layer (see liftToTopLayer). */
+  selectionIn?: Element | null;
   /** The page's ::selection background, if any; a default is used when it is transparent. */
   selectionColor?: string;
   /** The selection is not where the keys go (the panel is not active): drawn grey, as browsers do. */
@@ -70,6 +75,10 @@ export interface SnapshotOptions {
    * in their inactive grey (WebKit whatever the page's CSS says).
    */
   listBoxSelection?: readonly ListBoxRow[];
+  /** The list box listBoxSelection is of. */
+  listBox?: Element | null;
+  /** When each open popover and dialog was opened (0 if not seen): the top layer is stacked in that order. */
+  openedAt?: (element: Element) => number;
 }
 
 /** A selected option of a focused list box: where it shows (cut by the box), where it is, and its label. */
@@ -467,6 +476,8 @@ class Snapshotter {
   #fixedContainer: Element | null = null;
   /** Scrollbars to draw over the copy. */
   readonly scrollbars: Scrollbar[] = [];
+  /** Open popovers and modal dialogs, in the order copied: the page's top layer (see liftToTopLayer). */
+  readonly topLayer: { live: Element; copy: HTMLElement }[] = [];
 
   readonly #document: Document;
   readonly #options: SnapshotOptions;
@@ -499,6 +510,7 @@ class Snapshotter {
     this.#copyFormState(element, copy);
     this.#copyImage(element, copy);
     this.#copyAnimatedValues(element, copy);
+    this.#markTopLayer(element, copy);
 
     // <head> carries no visible content, but keep the element so the structure stays valid.
     if (element.tagName === "HEAD") return copy;
@@ -520,6 +532,20 @@ class Snapshotter {
     this.#copyScroll(element, copy);
     this.#hideScrollbars(element, copy, style);
     return copy;
+  }
+
+  /**
+   * An open popover or a modal dialog is in the top layer, which matches
+   * :popover-open or :modal: the copy is in none, so it gets their attributes
+   * (the page's rules are rewritten to match them too, see css.ts).
+   */
+  #markTopLayer(element: Element, copy: Element): void {
+    const states = topLayerStates(element);
+    if (!states) return;
+    const { popover, modal } = states;
+    if (popover) copy.setAttribute(POPOVER_OPEN_ATTRIBUTE, "");
+    if (modal) copy.setAttribute(MODAL_ATTRIBUTE, "");
+    this.topLayer.push({ live: element, copy: copy as HTMLElement });
   }
 
   /** Notes what a copy is of, and where it is positioned from if it is absolute or fixed. */
@@ -1255,12 +1281,15 @@ const SCROLLBAR_THUMB_ACTIVE_COLOR = "rgb(0 0 0 / 64%)";
 const TRANSPARENT = /^(transparent|rgba\(0, 0, 0, 0\))$/;
 const SCROLLBAR_INSET = 2;
 
+/** The top layer's z-index, and the agent's own boxes': drawn in order, a later one over an earlier one. */
+const TOP_Z_INDEX = 2147483647;
+
 /** Adds a fixed box on top of everything to the root copy (`css` may override its own). */
 function drawBox(
   root: HTMLElement,
   { left, top, width, height }: Box,
   css: string,
-  zIndex = 2147483647,
+  zIndex = TOP_Z_INDEX,
 ): HTMLElement {
   const element = root.ownerDocument.createElement("div");
   element.setAttribute(
@@ -1299,7 +1328,7 @@ const POPUP_HIGHLIGHT = "rgb(30 110 220)";
 /** Draws a selected option of a focused list box over its copy: white on the selection's blue, cut to the box. */
 function drawListBoxRow(root: HTMLElement, row: ListBoxRow): void {
   const { shown, box } = row;
-  const clip = drawBox(root, shown, "overflow:hidden", 2147483646);
+  const clip = drawBox(root, shown, "overflow:hidden");
   const option = root.ownerDocument.createElement("div");
   option.setAttribute(
     "style",
@@ -1417,11 +1446,250 @@ function inlineBackgroundImages(
   return missing ? "none" : inlined;
 }
 
+/**
+ * Whether the browser draws an element: none in a `display: none` box, nor
+ * in one whose content is hidden (an element of its own `display: contents`
+ * is drawn, its children are).
+ */
+function isRendered(element: Element): boolean {
+  const view = element.ownerDocument.defaultView!;
+  if (view.getComputedStyle(element).display === "none") return false;
+  for (let parent = element.parentElement; parent; parent = parent.parentElement) {
+    const style = view.getComputedStyle(parent);
+    if (style.display === "none" || style.contentVisibility === "hidden") return false;
+  }
+  return true;
+}
+
+/** Marks the stand-ins liftToTopLayer moves a top layer element with, and the element. */
+const STAND_IN_ATTRIBUTE = "data-thp-stand-in";
+const LIFTED_ATTRIBUTE = "data-thp-lifted";
+/**
+ * A parent's stand-in makes no box (`display: contents`, in its style), nor
+ * its ::before and ::after, which `display: contents` keeps; its other
+ * children's stand-ins make none either.
+ */
+const STAND_IN_RULES = [
+  `[${STAND_IN_ATTRIBUTE}]::before,[${STAND_IN_ATTRIBUTE}]::after{display:none!important}`,
+  `[${STAND_IN_ATTRIBUTE}]>:not([${STAND_IN_ATTRIBUTE}],[${LIFTED_ATTRIBUTE}]){display:none!important}`,
+];
+/**
+ * Children after the lifted one (or its parent's stand-in) are copied only
+ * this far: rules look back at earlier siblings (`+`, `~`, :nth-child), and
+ * forward only with :nth-last-child, :last-child, :only-child and :has(),
+ * which a few later ones keep right for all but long lists.
+ */
+const LATER_SIBLINGS = 16;
+
+/**
+ * A stand-in for another child of a parent: its attributes, so that rules
+ * match as they did, without its style (which could show it: an inline
+ * `display: … !important` beats STAND_IN_RULES).
+ */
+function siblingStandIn(sibling: Element): Element {
+  const clone = sibling.cloneNode(false) as Element;
+  clone.removeAttribute("style");
+  return clone;
+}
+
+/** An element (a stand-in) with this display, over the page's own (in its style attribute too). */
+function withDisplay<T extends Element>(element: T, display: "none" | "contents"): T {
+  (element as Element as HTMLElement).style.setProperty("display", display, "important");
+  return element;
+}
+
+/**
+ * What a ::backdrop draws, its background, or null if nothing. Not its
+ * backdrop-filter: browsers apply none in the SVG images panels are drawn from.
+ */
+function backdropStyle(
+  style: CSSStyleDeclaration,
+  inlineImage: (url: string) => string | null,
+): string | null {
+  const image = inlineBackgroundImages(style.backgroundImage || "none", inlineImage);
+  const color = style.backgroundColor;
+  if ((!color || TRANSPARENT.test(color)) && image === "none") return null;
+  const declarations = BACKGROUND_PROPERTIES.map((property) => {
+    const value = property === "background-image" ? image : style.getPropertyValue(property);
+    return value ? `${property}:${value}` : "";
+  });
+  if (style.opacity && style.opacity !== "1") declarations.push(`opacity:${style.opacity}`);
+  return declarations.filter(Boolean).join(";");
+}
+
+/** An element's border box size as laid out (before its transform), unrounded, or null. */
+function layoutSize(element: Element, style: CSSStyleDeclaration): Box | null {
+  let width = parseFloat(style.width);
+  let height = parseFloat(style.height);
+  if (Number.isNaN(width) || Number.isNaN(height)) return null;
+  if (style.boxSizing !== "border-box") {
+    const sum = (...properties: string[]) =>
+      properties.reduce(
+        (total, property) => total + (parseFloat(style.getPropertyValue(property)) || 0),
+        0,
+      );
+    width += sum("padding-left", "padding-right", "border-left-width", "border-right-width");
+    height += sum("padding-top", "padding-bottom", "border-top-width", "border-bottom-width");
+  }
+  return { left: 0, top: 0, width, height };
+}
+
+/**
+ * Where an element's box is laid out, before its transform, which the copy
+ * is given as the element has it now (`transform`, set when it has one), so
+ * that a rotated or scaled popover shows as it does. Found from where its
+ * transformed corners show; where the transform cannot be read as a matrix
+ * (a percentage, a 3D rotation axis, no DOMMatrix), where it shows,
+ * untransformed.
+ */
+function layoutBox(
+  element: Element,
+  style: CSSStyleDeclaration,
+): Box & { transform?: Record<string, string> } {
+  const { left, top, width, height } = element.getBoundingClientRect();
+  const shown = { left, top, width, height };
+  const { transform, translate, rotate, scale } = style;
+  const none = (value: string) => !value || value === "none";
+  if (none(transform) && none(translate) && none(rotate) && none(scale)) return shown;
+  const Matrix = element.ownerDocument.defaultView?.DOMMatrix;
+  const size = layoutSize(element, style);
+  if (!Matrix || !size) return shown;
+  // The individual properties apply before the transform property, in this
+  // order; a missing translation is 0px, a missing scale on y is the one on x.
+  // A translation in % (`translate: -50% -50%`, to centre) is of the box's size.
+  const percent = (value: string, of: number) =>
+    value.endsWith("%") ? `${(parseFloat(value) / 100) * of}px` : value;
+  const [x = "0px", y = "0px", tz = "0px"] = translate.split(/\s+/);
+  const tx = percent(x, size.width);
+  const ty = percent(y, size.height);
+  const [sx, sy = sx, sz = "1"] = scale.split(/\s+/);
+  const parts = [
+    none(translate) ? "" : `translate3d(${tx},${ty},${tz})`,
+    none(rotate) ? "" : `rotate(${rotate})`,
+    none(scale) ? "" : `scale3d(${sx},${sy},${sz})`,
+    none(transform) ? "" : transform,
+  ];
+  let matrix: DOMMatrix;
+  try {
+    matrix = new Matrix(parts.filter(Boolean).join(" "));
+  } catch {
+    return shown;
+  }
+  const [originX = 0, originY = 0] = style.transformOrigin.split(/\s+/).map(parseFloat);
+  let cornerLeft = Infinity;
+  let cornerTop = Infinity;
+  for (const [x, y] of [
+    [0, 0],
+    [size.width, 0],
+    [0, size.height],
+    [size.width, size.height],
+  ] as const) {
+    const point = matrix.transformPoint({ x: x - originX, y: y - originY });
+    cornerLeft = Math.min(cornerLeft, point.x + originX);
+    cornerTop = Math.min(cornerTop, point.y + originY);
+  }
+  return {
+    left: left - cornerLeft,
+    top: top - cornerTop,
+    width: size.width,
+    height: size.height,
+    transform: {
+      transform,
+      translate,
+      rotate,
+      scale,
+      "transform-origin": style.transformOrigin,
+    },
+  };
+}
+
+/**
+ * Browsers draw the top layer over the whole page, each element where it is
+ * on screen whatever its parents (a transform, a filter or a clip in them
+ * would otherwise place or cut it). The copy is moved to the end of the root,
+ * after the rest of the page, placed where the page has it, over its
+ * ::backdrop.
+ *
+ * The page's rules that reach it through its parents and their siblings
+ * (`.header .menu a`, `button[aria-expanded=true] + [popover]`) match it as
+ * they did, and it inherits as it did: it is moved with stand-ins for its
+ * parents and for their other children, which make no box (STAND_IN_RULES).
+ * The stand-in for <body> is a second <body>, after the first: rules such as
+ * `body:first-of-type` miss it (its computed style would not do, as what
+ * getComputedStyle resolves, such as line-height in px or currentColor as a
+ * color, would be inherited as such).
+ */
+function liftToTopLayer(
+  document: Document,
+  root: HTMLElement,
+  { live, copy }: { live: Element; copy: HTMLElement },
+  inlineImage: (url: string) => string | null,
+): void {
+  const view = document.defaultView!;
+  const style = view.getComputedStyle(live);
+  const backdrop = backdropStyle(view.getComputedStyle(live, "::backdrop"), inlineImage);
+  if (backdrop) {
+    const cover = root.ownerDocument.createElement("div");
+    cover.setAttribute(
+      "style",
+      `position:fixed;inset:0;margin:0;z-index:${TOP_Z_INDEX};${backdrop}`,
+    );
+    root.appendChild(cover);
+  }
+  // A hidden stand-in takes its place (as the page has it); its parents' stand-ins are made from there.
+  const placeholder = withDisplay(copy.cloneNode(false) as Element, "none");
+  const box = layoutBox(live, style);
+  const place: Record<string, string> = {
+    display: style.display,
+    position: "fixed",
+    inset: "auto",
+    left: `${box.left}px`,
+    top: `${box.top}px`,
+    width: `${box.width}px`,
+    height: `${box.height}px`,
+    "min-width": "0",
+    "min-height": "0",
+    "max-width": "none",
+    "max-height": "none",
+    margin: "0",
+    "box-sizing": "border-box",
+    // Placed already: not again by the page's anchor positioning.
+    "position-area": "none",
+    "z-index": `${TOP_Z_INDEX}`,
+  };
+  // Transformed as the element is now (not as an animation in the copy has
+  // it), or, where its transform could not be undone, placed where it shows.
+  Object.assign(
+    place,
+    box.transform ?? { transform: "none", translate: "none", rotate: "none", scale: "none" },
+  );
+  for (const [name, value] of Object.entries(place))
+    copy.style.setProperty(name, value, "important");
+  copy.setAttribute(LIFTED_ATTRIBUTE, "");
+
+  copy.replaceWith(placeholder);
+  let lifted: Element = copy;
+  let original: Element = placeholder;
+  while (original.parentElement && original.parentElement !== root) {
+    const parent = original.parentElement;
+    const shell = parent.cloneNode(false) as HTMLElement;
+    withDisplay(shell, "contents").setAttribute(STAND_IN_ATTRIBUTE, "");
+    const children = Array.from(parent.children);
+    const at = children.indexOf(original);
+    for (const child of children.slice(0, at + 1 + LATER_SIBLINGS))
+      shell.appendChild(child === original ? lifted : siblingStandIn(child));
+    lifted = shell;
+    original = parent;
+  }
+  root.appendChild(lifted);
+}
+
 /** Serializes the page as XHTML (an <html> element with the XHTML namespace). */
 export function snapshotDocument(document: Document, options: SnapshotOptions): string {
   const snapshotter = new Snapshotter(document, options);
   const root = snapshotter.copy(document.documentElement) as HTMLElement;
   snapshotter.pinPositioned();
+  if (snapshotter.topLayer.length > 0) snapshotter.generatedRules.push(...STAND_IN_RULES);
   if (snapshotter.generatedRules.length > 0) {
     const rules = root.ownerDocument.createElement("style");
     rules.textContent = `@layer ${SCROLLED_LAYER}{${snapshotter.generatedRules.join("\n")}}`;
@@ -1444,18 +1712,53 @@ export function snapshotDocument(document: Document, options: SnapshotOptions): 
     : pageColor
       ? `background:${pageColor};mix-blend-mode:multiply`
       : `background:${SELECTION_COLOR}`;
-  for (const box of options.selection ?? []) drawBox(root, box, css);
-  // Composed text is underlined, as IMEs do.
-  if (options.composition) {
-    const { boxes, color } = options.composition;
-    for (const box of boxes) {
-      const thickness = Math.max(1, Math.round(box.height / 14));
-      const top = box.top + box.height - thickness;
-      drawBox(root, { ...box, top, height: thickness }, `background:${color}`);
+  // What the agent draws over the page goes over the page, or over the top
+  // layer element it is in: drawn after it, at the same z-index.
+  // In the order they were opened (those not seen opening first, in the
+  // page's order); none the browser does not draw (one in a display: none box).
+  const openedAt = options.openedAt ?? (() => 0);
+  const layers = snapshotter.topLayer
+    .filter(({ live }) => isRendered(live))
+    .map((entry, index) => ({ entry, index, at: openedAt(entry.live) }))
+    .sort((a, b) => a.at - b.at || a.index - b.index)
+    .map(({ entry }) => entry);
+  // The innermost top layer element a node is in (a submenu's, not its menu's).
+  const layerOf = (node: Node | null | undefined): number => {
+    let found = -1;
+    if (!node) return found;
+    layers.forEach(({ live }, index) => {
+      if (live.contains(node) && (found < 0 || layers[found]!.live.contains(live))) found = index;
+    });
+    return found;
+  };
+  // A field's selection is in the field's layer; the page's, each box in its text's.
+  const selectionLayers = (options.selection ?? []).map((box) =>
+    layerOf("text" in box ? box.text : options.selectionIn),
+  );
+  const compositionLayer = layerOf(options.composition?.field);
+  const listBoxLayer = layerOf(options.listBox);
+  const scrollbarLayers = snapshotter.scrollbars.map((bar) => layerOf(bar.element));
+  for (let layer = -1; layer < layers.length; layer++) {
+    if (layer >= 0) liftToTopLayer(document, root, layers[layer]!, options.inlineImage);
+    options.selection?.forEach((box, index) => {
+      if (selectionLayers[index] === layer) drawBox(root, box, css);
+    });
+    // Composed text is underlined, as IMEs do.
+    if (options.composition && compositionLayer === layer) {
+      const { boxes, color } = options.composition;
+      for (const box of boxes) {
+        const thickness = Math.max(1, Math.round(box.height / 14));
+        const top = box.top + box.height - thickness;
+        drawBox(root, { ...box, top, height: thickness }, `background:${color}`);
+      }
     }
+    // A list box's selected rows, under its scrollbar.
+    if (listBoxLayer === layer)
+      for (const row of options.listBoxSelection ?? []) drawListBoxRow(root, row);
+    const bars = snapshotter.scrollbars.filter((_, index) => scrollbarLayers[index] === layer);
+    drawScrollbars(root, bars, options.scrollbar);
   }
-  drawScrollbars(root, snapshotter.scrollbars, options.scrollbar);
-  for (const row of options.listBoxSelection ?? []) drawListBoxRow(root, row);
+  // The agent's own <select> list goes over everything.
   if (options.selectPopup) drawSelectPopup(root, options.selectPopup);
   return new XMLSerializer().serializeToString(root);
 }

@@ -25,6 +25,7 @@ import {
   selectedRange,
   selectionBoxes,
   selectionColorAt,
+  type SelectionBox,
   visibleBoxOf,
 } from "../input/selection";
 import type { Box, Caret, Frame, FrameWindow, PanelInput } from "../../types";
@@ -33,6 +34,7 @@ import { ImageInliner } from "./images";
 import { LiveInteractionCss } from "./live-css";
 import { MAX_EDITABLES, MAX_TEXT_LENGTH } from "../../protocol";
 import { RenderPacer } from "./pacer";
+import { OpenOrder } from "../input/top-layer";
 import { buildFrameSvg, isSampledLive, snapshotDocument, type ListBoxRow } from "./snapshot";
 
 /** Events after which the page may look different. */
@@ -50,6 +52,8 @@ const INVALIDATING_EVENTS = [
   "animationend",
   "animationiteration",
   "resize",
+  // A popover opened or closed (which changes no attribute), or a <dialog> or <details>.
+  "toggle",
   // The page's selection (dragging, an editable's caret, or the page's own code).
   "selectionchange",
   // A video shows another frame (while it plays, frames keep coming, see render()).
@@ -112,7 +116,8 @@ export class PageCapture {
    */
   #layoutVersion = 0;
   #textVersion = 0;
-  #selectionBoxesCache: { key: SelectionKey; boxes: Box[] } | null = null;
+  #selectionBoxesCache: { key: SelectionKey; boxes: SelectionBox[] } | null = null;
+  readonly #openOrder: OpenOrder;
   #selectionTextCache: { key: SelectionKey; text: string } | null = null;
   #started = false;
   #disposed = false;
@@ -155,6 +160,7 @@ export class PageCapture {
         this.#changed();
       },
     );
+    this.#openOrder = new OpenOrder(this.#window);
     this.#mutations = new this.#window.MutationObserver((records) => {
       // The agent's own interaction marks: changing them is input, which says
       // itself whether the page may look different (see optimizeHover).
@@ -163,6 +169,8 @@ export class PageCapture {
           record.type !== "attributes" || !INTERACTION_ATTRIBUTES.has(record.attributeName!),
       );
       if (changes.length === 0) return;
+      for (const { attributeName, target } of changes)
+        this.#openOrder.attributeChanged(target, attributeName);
       if (changes.some((record) => record.type !== "attributes")) this.#textVersion++;
       this.#changed();
     });
@@ -259,6 +267,7 @@ export class PageCapture {
       this.#window.removeEventListener(type, this.#changed, true);
     this.#document.removeEventListener("load", this.#stylesheetsChanged, true);
     this.#window.removeEventListener("transitionrun", this.#transitionRan, true);
+    this.#openOrder.dispose();
   }
 
   /** Runs a measurement that adds elements to the page, without it counting as a change. */
@@ -387,6 +396,7 @@ export class PageCapture {
     const xhtml = this.#measure(() =>
       snapshotDocument(this.#document, {
         selection,
+        selectionIn: isTextField(focused) ? focused : null,
         selectionColor,
         // The page's selection, when the keys do not go to it (the host took them, or the page made it).
         selectionInactive:
@@ -398,6 +408,8 @@ export class PageCapture {
         scrollbar: this.#input.scrollbarState,
         selectPopup: this.#input.popupView,
         listBoxSelection: isListBox(focused) ? this.#listBoxRows(focused) : [],
+        listBox: isListBox(focused) ? focused : null,
+        openedAt: (element) => this.#openOrder.at(element),
         inlineImage: (url) => this.#images.get(url),
       }),
     );
@@ -409,7 +421,7 @@ export class PageCapture {
   }
 
   /** The boxes of the page's selection, measured again only when it or the page changed. */
-  #selectionBoxes(range: Range): Box[] {
+  #selectionBoxes(range: Range): SelectionBox[] {
     const key = selectionKey(range, this.#layoutVersion);
     const cached = this.#selectionBoxesCache;
     if (cached && sameKey(cached.key, key)) return cached.boxes;

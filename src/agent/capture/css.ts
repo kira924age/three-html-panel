@@ -23,6 +23,9 @@ export const FOCUS_ATTRIBUTE = "data-thp-focus";
 export const FOCUS_WITHIN_ATTRIBUTE = "data-thp-focus-within";
 /** Focus the browser would show (from keys, or in a text field), not every focus. */
 export const FOCUS_VISIBLE_ATTRIBUTE = "data-thp-focus-visible";
+/** An open popover, and a modal dialog: in the top layer, which the copy is not in (snapshot.ts marks them). */
+export const POPOVER_OPEN_ATTRIBUTE = "data-thp-popover-open";
+export const MODAL_ATTRIBUTE = "data-thp-modal";
 
 const INTERACTION_ATTRIBUTE_OF: Record<string, string> = {
   hover: HOVER_ATTRIBUTE,
@@ -30,6 +33,8 @@ const INTERACTION_ATTRIBUTE_OF: Record<string, string> = {
   "focus-visible": FOCUS_VISIBLE_ATTRIBUTE,
   "focus-within": FOCUS_WITHIN_ATTRIBUTE,
   focus: FOCUS_ATTRIBUTE,
+  "popover-open": POPOVER_OPEN_ATTRIBUTE,
+  modal: MODAL_ATTRIBUTE,
 };
 
 export const INTERACTION_ATTRIBUTES: ReadonlySet<string> = new Set(
@@ -38,7 +43,8 @@ export const INTERACTION_ATTRIBUTES: ReadonlySet<string> = new Set(
 
 // A pseudo-class followed by something other than a name character, so that
 // :focus does not also match :focus-visible.
-const INTERACTION_PSEUDO_CLASS = /:(hover|active|focus-visible|focus-within|focus)(?![-\w])/g;
+const INTERACTION_PSEUDO_CLASS =
+  /:(hover|active|focus-visible|focus-within|focus|popover-open|modal)(?![-\w])/g;
 const ROOT_PSEUDO_CLASS = /:root(?![-\w])/g;
 
 /**
@@ -115,7 +121,7 @@ function replaceInteractionPseudoClasses(
 }
 
 const LIVE_REWRITE =
-  /:is\(\s*(:(?:hover|active|focus-visible|focus-within|focus))\s*,\s*\[data-thp-[\w-]+\]\s*\)/g;
+  /:is\(\s*(:(?:hover|active|focus-visible|focus-within|focus|popover-open|modal))\s*,\s*\[data-thp-[\w-]+\]\s*\)/g;
 
 /** The selector as the page wrote it: what liveSelector added taken out. */
 export function unwrapLiveSelector(selector: string): string {

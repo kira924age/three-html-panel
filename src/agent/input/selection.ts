@@ -10,6 +10,7 @@
 
 import type { Box, FrameWindow } from "../../types";
 import { wordAt } from "./editing";
+import { topLayerStates } from "./top-layer";
 
 /** A position in the page's text: a node and an offset in it, as in a Range. */
 export interface Point {
@@ -162,6 +163,8 @@ function holdsFixed(style: CSSStyleDeclaration): boolean {
  * whose overflow does not clip it; null for the viewport.
  */
 function clippingParentOf(element: Element, style: CSSStyleDeclaration): Element | null {
+  // Nothing clips the top layer but the viewport.
+  if (topLayerStates(element)) return null;
   const window = windowOf(element);
   const { position } = style;
   let ancestor = element.parentElement;
@@ -262,11 +265,16 @@ export function intersect(a: Box, b: Box): Box {
  * Measured per text node: a range's own rectangles would also cover every
  * element it contains whole.
  */
-export function selectionBoxes(window: FrameWindow, range: Range): Box[] {
+/** A box of the page's selection, and the text it is of (drawn over that text's top layer element, if any). */
+export interface SelectionBox extends Box {
+  text: Text;
+}
+
+export function selectionBoxes(window: FrameWindow, range: Range): SelectionBox[] {
   const document = window.document;
   const viewport = viewportOf(document);
   const clips = new Map<Element, Box>();
-  const boxes: Box[] = [];
+  const boxes: SelectionBox[] = [];
   const root = range.commonAncestorContainer;
   const texts: Text[] = [];
   if (root.nodeType === Node.TEXT_NODE) texts.push(root as Text);
@@ -286,7 +294,7 @@ export function selectionBoxes(window: FrameWindow, range: Range): Box[] {
     const clip = clipInside(parent, viewport, clips);
     for (const rect of Array.from(part.getClientRects())) {
       const box = intersect(clip, rect);
-      if (box.width > 0 && box.height > 0) boxes.push(box);
+      if (box.width > 0 && box.height > 0) boxes.push({ ...box, text });
       if (boxes.length === MAX_SELECTION_BOXES) return boxes;
     }
   }

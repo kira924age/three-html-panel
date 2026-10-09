@@ -1043,3 +1043,327 @@ describe("scrolled content", () => {
     expect(snapshot().querySelector("body")!.style.getPropertyValue("overflow")).toBe("");
   });
 });
+
+describe("the top layer", () => {
+  /**
+   * The snapshot's root, with these elements in the top layer (jsdom has none)
+   * and these ::backdrop colors or styles (jsdom gives the element's own for ::backdrop).
+   */
+  function snapshotWithTopLayer(
+    open: Record<string, string>,
+    options: Partial<Parameters<typeof snapshotDocument>[1]> = {},
+    backdrops: Record<string, string> = {},
+  ): HTMLElement {
+    const getComputedStyle = window.getComputedStyle.bind(window);
+    // A ::backdrop's style: a color, or declarations.
+    const backdrop = (value = "rgba(0, 0, 0, 0)") => {
+      const style = document.createElement("div").style;
+      if (value.includes(":")) style.cssText = value;
+      else style.backgroundColor = value;
+      return style;
+    };
+    vi.spyOn(window, "getComputedStyle").mockImplementation((element, pseudo) =>
+      pseudo === "::backdrop" ? backdrop(backdrops[element.id]) : getComputedStyle(element, pseudo),
+    );
+    for (const [id, pseudoClass] of Object.entries(open)) {
+      const element = document.getElementById(id)!;
+      const matches = element.matches.bind(element);
+      vi.spyOn(element, "matches").mockImplementation(
+        (selector: string) => selector === pseudoClass || matches(selector),
+      );
+      // jsdom's own style for a popover, or a dialog, not open.
+      if (!element.style.display) element.style.display = "block";
+    }
+    const xhtml = snapshotDocument(document, { inlineImage: () => null, ...options });
+    return new DOMParser().parseFromString(xhtml, "application/xhtml+xml").documentElement;
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it("draws an open popover over the page where the page has it, out of its parents", () => {
+    document.body.innerHTML = `<header class="bar" style="backdrop-filter: blur(4px)">
+        <button>Theme</button><div id="menu" popover style="display: flex">Light</div>
+        <div id="closed" popover>Dark</div>
+      </header><main>Page</main>`;
+    document.getElementById("menu")!.getBoundingClientRect = () => new DOMRect(500, 40, 152, 120);
+    const root = snapshotWithTopLayer({ menu: ":popover-open" });
+    const menu = root.lastElementChild!.querySelector<HTMLElement>("#menu")!;
+    // Out of the header, over the page: with stand-ins for its parents, which
+    // make no box, so that the page's rules (.bar #menu, button + #menu) match
+    // it and it inherits as it did.
+    const header = menu.parentElement!;
+    expect(header.className).toBe("bar");
+    expect(header.style.getPropertyValue("display")).toBe("contents");
+    expect(header.style.getPropertyPriority("display")).toBe("important");
+    expect(header.parentElement!.localName).toBe("body");
+    expect(header.parentElement!.style.getPropertyValue("display")).toBe("contents");
+    expect(root.lastElementChild).toBe(header.parentElement);
+    const button = menu.previousElementSibling as HTMLElement;
+    expect(button.localName).toBe("button");
+    // Hidden by the stand-ins' rules (STAND_IN_RULES).
+    expect(button.hasAttribute("style")).toBe(false);
+    expect(header.nextElementSibling!.localName).toBe("main");
+    expect(header.nextElementSibling!.hasAttribute("style")).toBe(false);
+    // Where it was, a hidden stand-in (the header's children are counted as they were).
+    const body = root.querySelector("body")!;
+    const place = body.querySelector<HTMLElement>("header > button + #menu")!;
+    expect(place.style.getPropertyValue("display")).toBe("none");
+    expect(place.childNodes).toHaveLength(0);
+    expect(menu.hasAttribute("data-thp-popover-open")).toBe(true);
+    for (const [name, value] of <[string, string][]>[
+      ["position", "fixed"],
+      ["left", "500px"],
+      ["top", "40px"],
+      ["width", "152px"],
+      ["height", "120px"],
+      ["display", "flex"],
+    ]) {
+      expect(menu.style.getPropertyValue(name)).toBe(value);
+      expect(menu.style.getPropertyPriority(name)).toBe("important");
+    }
+    // A closed popover stays where it is, hidden by the page's rules.
+    const closed = body.querySelector("#closed")!;
+    expect(closed.parentElement!.localName).toBe("header");
+    expect(closed.hasAttribute("data-thp-popover-open")).toBe(false);
+  });
+
+  it("draws a modal dialog over its ::backdrop, over the page", () => {
+    document.body.innerHTML = `<main><dialog id="ask" open>Sure?</dialog></main>`;
+    const dialog = document.getElementById("ask")!;
+    dialog.getBoundingClientRect = () => new DOMRect(100, 80, 300, 160);
+    const root = snapshotWithTopLayer({ ask: ":modal" }, {}, { ask: "rgba(0, 0, 0, 0.5)" });
+    const copy = root.lastElementChild!.querySelector<HTMLElement>("#ask")!;
+    expect(copy.hasAttribute("data-thp-modal")).toBe(true);
+    const backdrop = root.lastElementChild!.previousElementSibling as HTMLElement;
+    expect(backdrop.style.backgroundColor).toBe("rgba(0, 0, 0, 0.5)");
+    expect(backdrop.style.position).toBe("fixed");
+    expect(copy.style.top).toBe("80px");
+  });
+
+  it("draws the page's selection under a popover, and the selection and scrollbars in it over it", () => {
+    document.body.innerHTML = `<p id="text">Page</p><div id="menu" popover><p id="inside">Menu</p></div>`;
+    const menu = document.getElementById("menu")!;
+    menu.getBoundingClientRect = () => new DOMRect(0, 0, 100, 100);
+    const boxes = (root: HTMLElement) =>
+      Array.from(root.children).filter((child) => child.localName === "div");
+    const at = (id: string) => ({
+      left: 10,
+      top: 10,
+      width: 30,
+      height: 10,
+      text: document.getElementById(id)!.firstChild as Text,
+    });
+    const under = snapshotWithTopLayer({ menu: ":popover-open" }, { selection: [at("text")] });
+    expect(boxes(under)).toHaveLength(1);
+    expect(boxes(under)[0]!.nextElementSibling!.localName).toBe("body");
+    expect(under.lastElementChild!.querySelector("#menu")).not.toBeNull();
+    vi.restoreAllMocks();
+    const over = snapshotWithTopLayer({ menu: ":popover-open" }, { selection: [at("inside")] });
+    expect(over.lastElementChild!.localName).toBe("div");
+    expect(over.lastElementChild!.previousElementSibling!.querySelector("#menu")).not.toBeNull();
+  });
+
+  /** The root's children after the lifted element's chain (the agent's boxes drawn over it). */
+  const after = (root: HTMLElement, id: string) => {
+    const chain = Array.from(root.children).find(
+      (child) => child.localName === "body" && child.querySelector(`#${id}[data-thp-lifted]`),
+    )!;
+    const children = Array.from(root.children);
+    return children.slice(children.indexOf(chain) + 1);
+  };
+
+  it("hides the stand-ins' ::before and ::after, keeps the earlier siblings and a few later ones", () => {
+    const items = (from: number, count: number) =>
+      Array.from(
+        { length: count },
+        (_, index) => `<li class="item" style="display: block !important">${from + index}</li>`,
+      ).join("");
+    document.body.innerHTML = `<ul class="list">${items(0, 30)}<li><div id="menu" popover>Menu</div></li>${items(31, 40)}</ul>`;
+    const root = snapshotWithTopLayer({ menu: ":popover-open" });
+    expect(root.querySelector("style")!.textContent).toContain(
+      "[data-thp-stand-in]::before,[data-thp-stand-in]::after{display:none!important}",
+    );
+    const list = root.lastElementChild!.querySelector<HTMLElement>("ul")!;
+    expect(list.hasAttribute("data-thp-stand-in")).toBe(true);
+    const children = Array.from(list.children);
+    // All 30 earlier ones (for `~` and :nth-child), the menu's item, 16 later ones.
+    expect(children).toHaveLength(30 + 1 + 16);
+    expect(children[30]!.querySelector("#menu")).not.toBeNull();
+    expect(children[0]!.className).toBe("item");
+    // Without their style, whose !important would show them over the rule that hides them.
+    expect(children[0]!.hasAttribute("style")).toBe(false);
+    expect(children[46]!.className).toBe("item");
+  });
+
+  it("lifts a popover opened in an open popover over it, through its stand-in", () => {
+    document.body.innerHTML = `<nav class="bar"><div id="menu" popover><div id="sub" popover>Sub</div></div></nav>`;
+    document.getElementById("menu")!.getBoundingClientRect = () => new DOMRect(0, 0, 100, 100);
+    document.getElementById("sub")!.getBoundingClientRect = () => new DOMRect(100, 0, 80, 60);
+    const root = snapshotWithTopLayer({ menu: ":popover-open", sub: ":popover-open" });
+    const chains = Array.from(root.children).filter((child) =>
+      child.hasAttribute("data-thp-stand-in"),
+    );
+    expect(chains).toHaveLength(2);
+    const [menuChain, subChain] = chains;
+    // The menu, with a hidden stand-in for the submenu where it was.
+    const menu = menuChain!.querySelector<HTMLElement>("#menu[data-thp-lifted]")!;
+    expect(menu.querySelector<HTMLElement>("#sub")!.style.getPropertyValue("display")).toBe("none");
+    // The submenu after it, in stand-ins for the nav and the menu (which makes no box there).
+    const sub = subChain!.querySelector<HTMLElement>("#sub[data-thp-lifted]")!;
+    const menuStandIn = sub.parentElement!;
+    expect(menuStandIn.id).toBe("menu");
+    expect(menuStandIn.hasAttribute("data-thp-stand-in")).toBe(true);
+    expect(menuStandIn.style.getPropertyValue("display")).toBe("contents");
+    expect(menuStandIn.parentElement!.className).toBe("bar");
+    expect(sub.style.left).toBe("100px");
+  });
+
+  it("draws a popover's ::backdrop too", () => {
+    document.body.innerHTML = `<div id="menu" popover>Menu</div>`;
+    const root = snapshotWithTopLayer(
+      { menu: ":popover-open" },
+      {},
+      { menu: "rgba(0, 0, 0, 0.3)" },
+    );
+    const cover = root.lastElementChild!.previousElementSibling as HTMLElement;
+    expect(cover.style.backgroundColor).toBe("rgba(0, 0, 0, 0.3)");
+  });
+
+  it("draws each box of a selection running into a popover under it or over it, by the text it is of", () => {
+    document.body.innerHTML = `<p id="text">Page</p><div id="menu" popover><p id="inside">Menu</p></div>`;
+    document.getElementById("menu")!.getBoundingClientRect = () => new DOMRect(0, 0, 100, 100);
+    const text = (id: string) => document.getElementById(id)!.firstChild as Text;
+    // Page text the popover covers, and popover text spilling out of it.
+    const page = { left: 10, top: 10, width: 30, height: 10, text: text("text") };
+    const spilled = { left: 10, top: 120, width: 30, height: 10, text: text("inside") };
+    const root = snapshotWithTopLayer({ menu: ":popover-open" }, { selection: [page, spilled] });
+    const drawn = after(root, "menu") as HTMLElement[];
+    expect(drawn.map((box) => box.style.top)).toEqual(["120px"]);
+  });
+
+  it("draws an IME's underline, a list box's rows and the scrollbars in a popover over it", () => {
+    document.body.innerHTML = `<div id="menu" popover><input id="field" /><select id="list" size="3"><option>a</option></select><div id="scroller" style="overflow-x: hidden; overflow-y: auto">Long</div></div>`;
+    document.getElementById("menu")!.getBoundingClientRect = () => new DOMRect(0, 0, 300, 300);
+    const scroller = document.getElementById("scroller")!;
+    scroller.getBoundingClientRect = () => new DOMRect(10, 100, 100, 100);
+    Object.defineProperty(scroller, "clientHeight", { value: 100 });
+    Object.defineProperty(scroller, "clientWidth", { value: 100 });
+    Object.defineProperty(scroller, "scrollHeight", { value: 400 });
+    Object.defineProperty(scroller, "scrollWidth", { value: 100 });
+    const box = new DOMRect(10, 10, 50, 20);
+    const root = snapshotWithTopLayer(
+      { menu: ":popover-open" },
+      {
+        composition: {
+          field: document.getElementById("field")!,
+          value: "x",
+          boxes: [box],
+          color: "red",
+        },
+        listBox: document.getElementById("list"),
+        listBoxSelection: [
+          { shown: box, box, label: "a", font: "13px sans-serif", paddingLeft: 4 },
+        ],
+      },
+    );
+    const drawn = after(root, "menu") as HTMLElement[];
+    expect(drawn.some((element) => element.style.backgroundColor === "red")).toBe(true);
+    expect(drawn.some((element) => element.textContent === "a")).toBe(true);
+    // The scroller's track or thumb, at its right edge.
+    expect(drawn.some((element) => parseFloat(element.style.left) >= 100)).toBe(true);
+  });
+
+  it("stacks the top layer in the order it was opened, not the page's", () => {
+    document.body.innerHTML = `<div id="toast" popover>Saved</div><dialog id="ask">Sure?</dialog>`;
+    const opened: Record<string, number> = { ask: 1, toast: 2 };
+    const root = snapshotWithTopLayer(
+      { toast: ":popover-open", ask: ":modal" },
+      { openedAt: (element) => opened[element.id] ?? 0 },
+    );
+    const lifted = Array.from(root.querySelectorAll("[data-thp-lifted]")).map(
+      (element) => element.id,
+    );
+    expect(lifted).toEqual(["ask", "toast"]);
+  });
+
+  it("draws in the innermost one what is in a popover opened in another, whatever the order", () => {
+    document.body.innerHTML = `<div id="menu" popover><div id="sub" popover><p id="item">Item</p></div></div>`;
+    const opened: Record<string, number> = { sub: 1, menu: 2 };
+    const text = document.getElementById("item")!.firstChild as Text;
+    const root = snapshotWithTopLayer(
+      { menu: ":popover-open", sub: ":popover-open" },
+      {
+        openedAt: (element) => opened[element.id] ?? 0,
+        selection: [{ left: 1, top: 2, width: 3, height: 4, text }],
+      },
+    );
+    const children = Array.from(root.children);
+    const chainOf = (id: string) =>
+      children.findIndex((child) => child.querySelector(`#${id}[data-thp-lifted]`));
+    const box = children.findIndex((child) => (child as HTMLElement).style?.top === "2px");
+    expect(box).toBe(chainOf("sub") + 1);
+    expect(chainOf("menu")).toBeGreaterThan(box);
+  });
+
+  it("leaves one the browser does not draw (in a display: none box) where it is", () => {
+    document.body.innerHTML = `<section style="display: none"><div id="menu" popover>Menu</div></section>`;
+    const root = snapshotWithTopLayer({ menu: ":popover-open" });
+    expect(root.querySelector("#menu")!.parentElement!.localName).toBe("section");
+    expect(root.querySelector("[data-thp-lifted]")).toBeNull();
+  });
+
+  it("lifts one of its own display: contents (the browser draws its children over the page)", () => {
+    document.body.innerHTML = `<section style="overflow: hidden"><div id="menu" popover style="display: contents"><p>Card</p></div></section>`;
+    const root = snapshotWithTopLayer({ menu: ":popover-open" });
+    expect(root.querySelector("[data-thp-lifted]")!.id).toBe("menu");
+  });
+
+  it("draws a ::backdrop's image as well as its color", () => {
+    document.body.innerHTML = `<dialog id="ask">Sure?</dialog>`;
+    const root = snapshotWithTopLayer(
+      { ask: ":modal" },
+      {},
+      { ask: "background-image: linear-gradient(red, blue)" },
+    );
+    const cover = root.lastElementChild!.previousElementSibling as HTMLElement;
+    expect(cover.style.backgroundImage).toBe("linear-gradient(red, blue)");
+  });
+
+  /** Stands in for DOMMatrix (jsdom has none): leaves points where they are, and keeps what it was made from. */
+  function stubMatrix(): string[] {
+    const made: string[] = [];
+    vi.stubGlobal(
+      "DOMMatrix",
+      class {
+        constructor(transform: string) {
+          made.push(transform);
+        }
+        transformPoint(point: { x: number; y: number }) {
+          return point;
+        }
+      },
+    );
+    return made;
+  }
+
+  it("gives a transformed one its unrounded size and its transform as it is now", () => {
+    stubMatrix();
+    document.body.innerHTML = `<div id="menu" popover style="width: 151.4px; height: 20px; padding: 4px; border: 0; transform: translateX(0px)">Menu</div>`;
+    const root = snapshotWithTopLayer({ menu: ":popover-open" });
+    const menu = root.querySelector<HTMLElement>("[data-thp-lifted]")!;
+    expect(menu.style.width).toBe("159.4px");
+    expect(menu.style.height).toBe("28px");
+    expect(menu.style.transform).toBe("translateX(0px)");
+    expect(menu.style.getPropertyPriority("transform")).toBe("important");
+  });
+
+  it("reads a translation in % as of the box's size (DOMMatrix takes none)", () => {
+    const made = stubMatrix();
+    document.body.innerHTML = `<dialog id="ask" style="width: 200px; height: 100px; padding: 0; border: 0; box-sizing: border-box; translate: -50% -25%; scale: 0.5">Sure?</dialog>`;
+    snapshotWithTopLayer({ ask: ":modal" });
+    expect(made).toEqual(["translate3d(-100px,-25px,0px) scale3d(0.5,0.5,1)"]);
+  });
+});
