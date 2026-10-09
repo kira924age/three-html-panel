@@ -143,6 +143,21 @@ describe("LiveInteractionCss", () => {
     expect(rule.selectorText).toBe(".row:hover .tools");
   });
 
+  it("keeps the page's own selector when it writes back what it read, or adds to it", () => {
+    setUp(".row:hover .tools { display: flex }");
+    const rule = document.styleSheets[0]!.cssRules[0] as CSSStyleRule;
+    // A round trip, as a CSS tool might do: read, then written back.
+    const read = rule.selectorText;
+    rule.selectorText = read;
+    rule.selectorText = `${rule.selectorText}, .card:hover .menu`;
+    expect(rule.selectorText).toBe(
+      ".row:is(:hover,[data-thp-hover]) .tools, .card:is(:hover,[data-thp-hover]) .menu",
+    );
+    live!.dispose();
+    live = null;
+    expect(rule.selectorText).toBe(".row:hover .tools, .card:hover .menu");
+  });
+
   it("forgets a rule the page deletes, without looking at all the rules again", () => {
     setUp(".tools { display: none } .row:hover .tools { display: flex }");
     const sheet = document.styleSheets[0]!;

@@ -203,13 +203,23 @@ describe("interaction states in the live page", () => {
     expect(seen).toEqual(["focus: grid", "click: false"]);
   });
 
-  it("shows focus as browsers do: not for a pressed button, but after keys", () => {
+  it("shows focus as browsers do: not for a pressed button, but after keys", async () => {
     capture.start();
     move();
     press();
     const button = document.querySelector("button")!;
     expect(document.activeElement).toBe(button);
     expect(button.hasAttribute("data-thp-focus-visible")).toBe(false);
+    // A shortcut (copy) or a modifier alone does not make it show.
+    for (const [key, metaKey] of [
+      ["c", true],
+      ["Shift", false],
+    ] as const) {
+      capture.handle({ type: "key", key, shiftKey: false, ctrlKey: false, altKey: false, metaKey });
+      // A capture brings the marks up to date.
+      await settle();
+      expect(button.hasAttribute("data-thp-focus-visible")).toBe(false);
+    }
     capture.handle({ type: "blur" });
     capture.handle({
       type: "key",

@@ -96,6 +96,9 @@ const APPLE_PLATFORM = /mac|iphone|ipad|ipod/i;
 const FOCUSABLE_SELECTOR =
   'input, textarea, select, button, a[href], [tabindex], [contenteditable=""], [contenteditable="true"], [contenteditable="plaintext-only"]';
 
+/** Keys that only modify others: pressed alone, they do not make focus show. */
+const MODIFIER_KEYS = new Set(["Shift", "Control", "Meta", "Alt", "AltGraph", "CapsLock", "Fn"]);
+
 /** A focused element that is a contenteditable element's root (its editing host). */
 const isEditingHost = (element: Element | null): element is HTMLElement =>
   element !== null && editingHostOf(element) === element;
@@ -380,7 +383,15 @@ export class InputSynthesizer {
 
   handle(input: PanelInput): void {
     // What focus that follows is shown as (:focus-visible): after keys, not after a press.
-    if (input.type === "key") this.keyboardModality = true;
+    // Not after a shortcut (Ctrl, Cmd or Alt held) or a modifier alone, as in browsers.
+    if (
+      input.type === "key" &&
+      !input.ctrlKey &&
+      !input.metaKey &&
+      !input.altKey &&
+      !MODIFIER_KEYS.has(input.key)
+    )
+      this.keyboardModality = true;
     else if (input.type === "pointer" && input.kind === "down") this.keyboardModality = false;
     const quietMove =
       this.optimizeHover &&

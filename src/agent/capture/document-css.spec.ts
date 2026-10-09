@@ -25,4 +25,10 @@ describe("DocumentCss", () => {
     expect(css).toContain("&:is(:hover,[data-thp-hover])");
     expect(css).toContain('"use :hover"');
   });
+
+  it("draws the default focus ring of a field only where focus shows", () => {
+    const css = new DocumentCss(document, () => null).get();
+    expect(css).toContain("select[data-thp-focus-visible]");
+    expect(css).not.toContain("select[data-thp-focus]");
+  });
 });

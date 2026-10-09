@@ -36,6 +36,7 @@ import {
   ruleCount,
   sheetSignature,
   signatureParts,
+  unwrapLiveSelector,
 } from "./css";
 
 /** What the page changed through the CSSOM (see watchStylesheets). */
@@ -322,18 +323,23 @@ export class LiveInteractionCss {
         this.sheetChanged(sheet);
         break;
       }
-      case "selector":
-        if (!change.rule.parentStyleSheet || !this.pageSheetOf(change.rule)) return;
+      case "selector": {
+        const { rule } = change;
+        if (!rule.parentStyleSheet || !this.pageSheetOf(rule)) return;
         // The page's own selector now: rewritten as any other.
-        this.originals.delete(change.rule);
-        this.rejected.delete(change.rule);
+        this.originals.delete(rule);
+        this.rejected.delete(rule);
         this.syncing = true;
         try {
-          this.rewriteRule(change.rule);
+          this.rewriteRule(rule);
         } finally {
           this.syncing = false;
         }
+        // Written back as it read it (rewritten): put back without the rewrite on dispose.
+        if (!this.originals.has(rule) && rule.selectorText.includes("[data-thp-"))
+          this.originals.set(rule, unwrapLiveSelector(rule.selectorText));
         break;
+      }
       case "sheet":
         if (!this.pageSheetOf(change.sheet)) return;
         this.reset();
@@ -449,11 +455,12 @@ export class LiveInteractionCss {
     if (selector === null) return;
     rule.selectorText = selector;
     // An invalid selector is ignored, the rule left as it was.
-    if (!rule.selectorText.includes("[data-thp-")) {
+    if (rule.selectorText === original) {
       this.rejected.add(rule);
       return;
     }
-    if (!this.originals.has(rule)) this.originals.set(rule, original);
+    // As the page wrote it, without what was rewritten of it before (it may have read it back and added to it).
+    if (!this.originals.has(rule)) this.originals.set(rule, unwrapLiveSelector(original));
   }
 
   /**

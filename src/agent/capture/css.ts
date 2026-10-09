@@ -62,26 +62,42 @@ function followsPseudoElement(selector: string, end: number): boolean {
   return false;
 }
 
-/** Replaces the interaction pseudo-classes, but those that follow a pseudo-element. */
+/** Whether the pseudo-class at `start` to `end` is the one in a rewrite already: `:is(:hover,[data-thp-hover])`. */
+const isWrapped = (selector: string, start: number, end: number) =>
+  /:is\(\s*$/.test(selector.slice(Math.max(0, start - 8), start)) &&
+  /^\s*,\s*\[data-thp-/.test(selector.slice(end, end + 16));
+
+/**
+ * Replaces the interaction pseudo-classes, but those that follow a
+ * pseudo-element, and those rewritten already (a selector the page read back
+ * and added to, say).
+ */
 function replaceInteractionPseudoClasses(
   selector: string,
   replace: (match: string, attribute: string) => string,
 ): string {
   return selector.replace(INTERACTION_PSEUDO_CLASS, (match, name: string, offset: number) =>
-    followsPseudoElement(selector, offset)
+    followsPseudoElement(selector, offset) || isWrapped(selector, offset, offset + match.length)
       ? match
       : replace(match, INTERACTION_ATTRIBUTE_OF[name]!),
   );
+}
+
+const LIVE_REWRITE =
+  /:is\(\s*(:(?:hover|active|focus-visible|focus-within|focus))\s*,\s*\[data-thp-[\w-]+\]\s*\)/g;
+
+/** The selector as the page wrote it: what liveSelector added taken out. */
+export function unwrapLiveSelector(selector: string): string {
+  return selector.replace(LIVE_REWRITE, "$1");
 }
 
 /**
  * The selector for the live page: each interaction pseudo-class also matches
  * its attribute, `:hover` becoming `:is(:hover,[data-thp-hover])`. The
  * specificity stays the same, and so does the rule's place in the cascade.
- * Null if it has none, or was rewritten already.
+ * Null if there is nothing (more) to rewrite.
  */
 export function liveSelector(selector: string): string | null {
-  if (selector.includes("[data-thp-")) return null;
   const rewritten = replaceInteractionPseudoClasses(
     selector,
     (match, attribute) => `:is(${match},[${attribute}])`,
@@ -100,9 +116,10 @@ export function rewriteSelector(selector: string): string {
 
 // Browsers draw a focus ring for text fields from their own user agent
 // stylesheet, which is not in document.styleSheets. This stands in for it with
-// zero specificity, so any rule the page writes about the outline wins.
+// zero specificity, so any rule the page writes about the outline wins. Only
+// where the focus shows (:focus-visible): not a <select> pressed with a mouse.
 const DEFAULT_FOCUS_RING_CSS =
-  `:where(input[${FOCUS_ATTRIBUTE}], textarea[${FOCUS_ATTRIBUTE}], select[${FOCUS_ATTRIBUTE}])` +
+  `:where(input[${FOCUS_VISIBLE_ATTRIBUTE}], textarea[${FOCUS_VISIBLE_ATTRIBUTE}], select[${FOCUS_VISIBLE_ATTRIBUTE}])` +
   `{outline:2px solid #3b82f6;outline-offset:1px}`;
 
 export const FREEZE_ANIMATIONS_CSS =
@@ -229,7 +246,8 @@ export function stylesheetsSignature(sheets: CSSStyleSheet[]): string {
  * invalidate() for that.
  */
 export class DocumentCss {
-  private signature = "";
+  /** Null until collected (a page without stylesheets has the signature ""). */
+  private signature: string | null = null;
   private css = "";
   /**
    * Cross-origin stylesheets (a web font service, say) hide their rules from
@@ -248,7 +266,7 @@ export class DocumentCss {
   }
 
   invalidate(): void {
-    this.signature = "";
+    this.signature = null;
   }
 
   get(): string {

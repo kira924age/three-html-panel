@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
-import { inlineCssUrls, liveSelector, rewriteSelector, stylesheetsSignature } from "./css";
+import {
+  inlineCssUrls,
+  liveSelector,
+  rewriteSelector,
+  stylesheetsSignature,
+  unwrapLiveSelector,
+} from "./css";
 
 describe("rewriteSelector", () => {
   it("lets interaction pseudo-classes match their attributes, as for the live page", () => {
@@ -53,6 +59,21 @@ describe("liveSelector", () => {
     expect(liveSelector("x-menu::part(item):hover")).toBeNull();
     // Not a pseudo-element: inside an attribute's value, or an argument.
     expect(liveSelector('[title="a::b"]:hover')).toBe('[title="a::b"]:is(:hover,[data-thp-hover])');
+  });
+
+  it("rewrites what was added to a selector rewritten already, and only that", () => {
+    expect(liveSelector(".row:is(:hover, [data-thp-hover]) .tools, .card:hover .menu")).toBe(
+      ".row:is(:hover, [data-thp-hover]) .tools, .card:is(:hover,[data-thp-hover]) .menu",
+    );
+  });
+
+  it("takes its rewrite out again, for the selector as the page wrote it", () => {
+    const page = ".row:hover .tools, input:focus-visible, a:not(:active)";
+    expect(unwrapLiveSelector(liveSelector(page)!)).toBe(page);
+    // As browsers serialize it back, with a space.
+    expect(unwrapLiveSelector(".row:is(:hover, [data-thp-hover]) .tools")).toBe(
+      ".row:hover .tools",
+    );
   });
 
   it("is null for selectors without them, or rewritten already", () => {
