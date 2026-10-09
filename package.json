@@ -47,6 +47,7 @@
   },
   "scripts": {
     "dev": "vp dev",
+    "dev:all": "pnpm --parallel -r --include-workspace-root dev",
     "build": "vp build",
     "preview": "vp preview",
     "typecheck": "tsc --noEmit",

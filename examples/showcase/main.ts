@@ -41,57 +41,97 @@ sun.position.set(2, 4, 3);
 scene.add(new AmbientLight(0xffffff, 1.2), sun);
 scene.add(new GridHelper(20, 20, 0x3a4150, 0x2a303b));
 
+// The panels stand in a ring around the viewer, facing in: look around by
+// dragging outside them (in VR, by turning). The wheel outside the panels steps
+// back a little, to see more of the ring.
+const EYE_HEIGHT = 1.45;
+const RING_RADIUS = 2.7;
 const camera = new PerspectiveCamera(55, innerWidth / innerHeight, 0.05, 100);
-camera.position.set(-0.35, 1.4, 3.6);
+camera.position.set(0, EYE_HEIGHT, 0.6);
 const controls = new OrbitControls(camera, renderer.domElement);
-controls.target.set(-0.35, 1.2, 0);
+controls.target.set(0, EYE_HEIGHT, 0);
 controls.enableDamping = true;
+controls.enablePan = false;
+controls.minDistance = 0.3;
+controls.maxDistance = 2.4;
 controls.update();
+
+/** Places a panel on the ring, `degrees` to the right of straight ahead (-z), facing the centre. */
+function onRing(panel: HtmlPanel, degrees: number, height = EYE_HEIGHT): HtmlPanel {
+  const angle = (degrees * Math.PI) / 180;
+  panel.position.set(RING_RADIUS * Math.sin(angle), height, -RING_RADIUS * Math.cos(angle));
+  panel.rotation.y = -angle;
+  return panel;
+}
 
 // The panel pages are served from another origin (VITE_PANEL_ORIGIN, see
 // vite.config.ts); without one, next to the scene.
 const panelBase: string = import.meta.env.VITE_PANEL_ORIGIN || location.href;
 const pageUrl = (path: string) => new URL(path, panelBase);
+// The example sites that are packages of their own, each on its own origin
+// (examples/sites/vite.site.ts; `pnpm dev:all` starts them with the scene).
+const siteOrigins = import.meta.env.VITE_SITE_ORIGINS as Record<string, string>;
+const siteUrl = (name: string) => new URL("/", siteOrigins[name]);
 
-// All pages run sandboxed (their server sends the same sandbox, see
-// vite.panels.config.ts): none can reach the scene's cookies, storage or
-// document, nor take its keyboard.
-const notes = new HtmlPanel({
-  url: pageUrl("examples/sites/notes/"),
-  width: 960,
-  height: 640,
-  size: 1.6,
-  sandbox: true,
-});
-notes.position.set(-0.75, 1.45, 0);
-notes.rotation.y = 0.3;
+// All pages run sandboxed (their servers send the same sandbox, see
+// vite.panels.config.ts and examples/sites/vite.site.ts): none can reach the
+// scene's cookies, storage or document, nor take its keyboard.
+const notes = onRing(
+  new HtmlPanel({
+    url: pageUrl("examples/sites/notes/"),
+    width: 960,
+    height: 640,
+    size: 1.6,
+    sandbox: true,
+  }),
+  0,
+);
 
-const sceneControls = new HtmlPanel({
-  url: pageUrl("examples/sites/controls/"),
-  sandbox: true,
-  width: 480,
-  height: 640,
-  size: 1.0,
-  onMessage: (data) => {
-    const control = parseSceneControl(data);
-    if (control) applyControl(control);
-  },
-});
-sceneControls.position.set(1.15, 1.4, 0.1);
-sceneControls.rotation.y = -0.5;
+const sceneControls = onRing(
+  new HtmlPanel({
+    url: pageUrl("examples/sites/controls/"),
+    sandbox: true,
+    width: 480,
+    height: 640,
+    size: 1.0,
+    onMessage: (data) => {
+      const control = parseSceneControl(data);
+      if (control) applyControl(control);
+    },
+  }),
+  30,
+);
 
 // A page with text to select, drop-down lists, rich text editing and a video.
-const reader = new HtmlPanel({
-  url: pageUrl("examples/sites/reader/"),
-  width: 720,
-  height: 720,
-  size: 1.1,
-  sandbox: true,
-});
-reader.position.set(-2.25, 1.45, 0.45);
-reader.rotation.y = 0.65;
+const reader = onRing(
+  new HtmlPanel({
+    url: pageUrl("examples/sites/reader/"),
+    width: 720,
+    height: 720,
+    size: 1.1,
+    sandbox: true,
+  }),
+  -32,
+);
 
-const panels = [notes, sceneControls, reader];
+// The sites built with frameworks (and one with none), around the rest of the ring.
+const site = (name: string, degrees: number) =>
+  onRing(
+    new HtmlPanel({ url: siteUrl(name), width: 1024, height: 720, size: 1.7, sandbox: true }),
+    degrees,
+  );
+const sites = [
+  // Web platform features, no framework.
+  site("web-standards", -66),
+  // A Hacker News reader (Vue + Vuetify).
+  site("hn-reader", -106),
+  // A chat app with rich text (React + Mantine).
+  site("chat", 62),
+  // A photo gallery and editor (Svelte).
+  site("gallery", 102),
+];
+
+const panels = [notes, sceneControls, reader, ...sites];
 scene.add(...panels);
 new PanelPointer(camera, renderer.domElement, () => panels);
 
@@ -120,7 +160,9 @@ const object = new Mesh<BufferGeometry, MeshStandardMaterial>(
   geometries.knot,
   new MeshStandardMaterial({ color: "#f59e0b", roughness: 0.35 }),
 );
-object.position.set(0.3, 0.55, 0.55);
+// In front of the controls panel and below it, between it and the viewer.
+const objectAngle = (30 * Math.PI) / 180;
+object.position.set(1.4 * Math.sin(objectAngle), 0.85, -1.4 * Math.cos(objectAngle));
 scene.add(object);
 let spin = true;
 
@@ -159,10 +201,11 @@ renderer.setAnimationLoop(() => {
   if (spin) object.rotation.y += 0.01;
   controls.update();
   renderer.render(scene, camera);
-  // Keep the caption under the object.
+  // Keep the caption under the object (hidden while the object is behind the viewer).
   captionAnchor
     .copy(object.position)
     .setY(object.position.y - 0.3)
     .project(camera);
+  caption.hidden = captionAnchor.z > 1;
   caption.style.transform = `translate(${((captionAnchor.x + 1) / 2) * innerWidth}px, ${((1 - captionAnchor.y) / 2) * innerHeight}px) translate(-50%, 0)`;
 });

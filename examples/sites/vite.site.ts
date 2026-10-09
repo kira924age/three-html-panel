@@ -8,7 +8,7 @@
 // variable the scene uses (see originsFor and .env.example).
 
 import { resolve } from "node:path";
-import { defineConfig, type PluginOption, type UserConfig } from "vite";
+import { defineConfig, loadEnv, type PluginOption, type UserConfig } from "vite";
 import { PANEL_SANDBOX_CSP, originsFor } from "../../vite.panels.config.ts";
 
 /** The repository's root, where the library's source is. */
@@ -23,6 +23,29 @@ export const SITE_PORTS = {
 } as const;
 
 export type SiteName = keyof typeof SITE_PORTS;
+
+export const SITE_NAMES = Object.keys(SITE_PORTS) as SiteName[];
+
+/** The variable that sets where a site is deployed, e.g. VITE_SITE_HN_READER_ORIGIN. */
+export const siteOriginVariable = (name: SiteName) =>
+  `VITE_SITE_${name.toUpperCase().replace(/-/g, "_")}_ORIGIN`;
+
+/**
+ * Where each site is served, for the scene to show it: its variable (from the
+ * environment or an untracked .env file, see .env.example), or its own port on
+ * localhost (`vp dev`, or `vp preview` in production mode).
+ */
+export function siteOrigins(mode: string): Record<SiteName, string> {
+  const env = loadEnv(mode, ROOT, "VITE_SITE_");
+  const preview = mode === "production";
+  return Object.fromEntries(
+    SITE_NAMES.map((name) => [
+      name,
+      env[siteOriginVariable(name)] ||
+        `http://localhost:${SITE_PORTS[name] - (preview ? 1000 : 0)}`,
+    ]),
+  ) as Record<SiteName, string>;
+}
 
 export interface SiteOptions {
   name: SiteName;
