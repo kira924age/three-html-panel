@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Layout &amp; type · Web Platform Field Guide</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&display=swap"
+    />
+    <link rel="stylesheet" href="./src/base.css" />
+    <link rel="stylesheet" href="./src/layout.css" />
+    <script type="module" src="./src/layout.js"></script>
+  </head>
+  <body>
+    <div class="reading-progress" aria-hidden="true"></div>
+    <header class="site-header">
+      <a class="brand" href="./index.html" data-page>Field Guide</a>
+      <nav class="site-nav" aria-label="Pages">
+        <a href="./index.html" data-page>Home</a>
+        <a href="./media.html" data-page>Media</a>
+        <a href="./forms.html" data-page>Forms</a>
+        <a href="./layout.html" data-page>Layout &amp; type</a>
+        <a href="./interactive.html" data-page>Interactive</a>
+      </nav>
+      <div class="theme-switch" data-theme-switch></div>
+    </header>
+
+    <div class="layout">
+      <nav class="toc" aria-label="Sections">
+        <p class="toc-title">On this page</p>
+        <ol></ol>
+      </nav>
+
+      <main>
+        <section id="grid">
+          <h1>Layout &amp; type</h1>
+          <p class="lede">
+            How boxes are placed, and how text is set: in any direction, in any script, in any
+            colour space.
+          </p>
+          <h2>Grid and subgrid</h2>
+          <p>
+            The cards share their parent's rows through <code>subgrid</code>: titles, texts and
+            footers line up across cards, whatever their length.
+          </p>
+          <div class="subgrid-cards">
+            <article>
+              <h3>Grid</h3>
+              <p>Rows and columns at once.</p>
+              <footer>Since 2017</footer>
+            </article>
+            <article>
+              <h3>Subgrid, a longer title that wraps</h3>
+              <p>Children take part in their grandparent's tracks, so siblings align.</p>
+              <footer>Since 2023</footer>
+            </article>
+            <article>
+              <h3>Flexbox</h3>
+              <p>
+                One dimension, distributing space along a line, wrapping when it must, and centring
+                at last.
+              </p>
+              <footer>Since 2012</footer>
+            </article>
+          </div>
+          <div class="areas" aria-label="A page laid out with named grid areas">
+            <div class="area head">header</div>
+            <div class="area side">aside</div>
+            <div class="area body">main</div>
+            <div class="area foot">footer</div>
+          </div>
+        </section>
+
+        <section id="container">
+          <h2>Container queries and :has()</h2>
+          <p>The cards query their container's width, not the window's. Make it narrower:</p>
+          <div class="button-row" role="group" aria-label="Container width">
+            <button type="button" class="ghost" data-width="100" aria-pressed="true">100%</button>
+            <button type="button" class="ghost" data-width="70">70%</button>
+            <button type="button" class="ghost" data-width="45">45%</button>
+          </div>
+          <div class="card-grid" id="card-grid">
+            <article class="card">
+              <div class="thumb" style="--hue: 210"></div>
+              <div>
+                <h3>Grid</h3>
+                <p>Two dimensions, named areas, and gaps.</p>
+              </div>
+              <label class="select-card"><input type="checkbox" /> Select</label>
+            </article>
+            <article class="card">
+              <div class="thumb" style="--hue: 150"></div>
+              <div>
+                <h3>Container queries</h3>
+                <p>Components that adapt to where they are.</p>
+              </div>
+              <label class="select-card"><input type="checkbox" checked /> Select</label>
+            </article>
+            <article class="card">
+              <div class="thumb" style="--hue: 30"></div>
+              <div>
+                <h3>:has()</h3>
+                <p>A selected card is outlined, by a parent selector.</p>
+              </div>
+              <label class="select-card"><input type="checkbox" /> Select</label>
+            </article>
+          </div>
+        </section>
+
+        <section id="logical">
+          <h2>Logical properties</h2>
+          <p>
+            The quote is styled with <code>margin-inline-start</code>,
+            <code>border-inline-start</code> and <code>padding-inline</code>: switched to a
+            right-to-left direction, it mirrors itself.
+          </p>
+          <div class="button-row">
+            <button type="button" class="ghost" data-action="direction" aria-pressed="false">
+              Right to left
+            </button>
+          </div>
+          <div class="logical" id="logical-box" dir="ltr">
+            <p class="logical-quote">
+              Style the start and the end, not the left and the right, and the layout follows the
+              language.
+            </p>
+            <p class="logical-quote" lang="ar" dir="auto">التخطيط يتبع اتجاه اللغة.</p>
+          </div>
+        </section>
+
+        <section id="vertical">
+          <h2>Vertical Japanese</h2>
+          <p>
+            <code>writing-mode: vertical-rl</code>, with ruby for readings and upright numbers
+            (<code>text-combine-upright</code>).
+          </p>
+          <div class="tategaki" lang="ja">
+            <h3>縦書きの見本</h3>
+            <p>
+              日本語は<ruby>縦<rt>たて</rt></ruby
+              >にも<ruby>横<rt>よこ</rt></ruby
+              >にも書けます。ウェブでも、 <ruby>書字方向<rt>しょじほうこう</rt></ruby
+              >を変えるだけで、右から左へ行が進む縦組みになります。
+            </p>
+            <p>
+              令和<span class="tcy">8</span>年<span class="tcy">10</span>月<span class="tcy">9</span
+              >日、 <ruby>富士山<rt>ふじさん</rt></ruby
+              >の高さは<span class="tcy">3776</span>メートルです。
+            </p>
+          </div>
+        </section>
+
+        <section id="type">
+          <h2>Typography</h2>
+          <div class="type-grid">
+            <figure>
+              <h3 class="no-balance">A heading that wraps onto a second line, unbalanced</h3>
+              <h3 class="balanced">A heading that wraps onto a second line, balanced</h3>
+              <figcaption><code>text-wrap: balance</code></figcaption>
+            </figure>
+            <figure>
+              <p class="clamped">
+                A long paragraph clamped to three lines: it goes on to say more than fits, about how
+                browsers lay out text, measure lines, and add an ellipsis where the last line is
+                cut, which this sentence demonstrates by being far too long for the space it has.
+              </p>
+              <figcaption><code>line-clamp: 3</code></figcaption>
+            </figure>
+            <figure>
+              <p class="numbers"><span>1,111.11</span><span>8,888.88</span></p>
+              <p class="numbers tabular"><span>1,111.11</span><span>8,888.88</span></p>
+              <figcaption><code>font-variant-numeric: tabular-nums</code></figcaption>
+            </figure>
+            <figure>
+              <p class="drop">
+                Initial letters lift the start of a paragraph, as books have done for centuries; the
+                browser sizes and sinks them to fit the lines.
+              </p>
+              <figcaption><code>initial-letter</code></figcaption>
+            </figure>
+          </div>
+        </section>
+
+        <section id="colour">
+          <h2>Colour</h2>
+          <p>
+            OKLCH keeps lightness even across hues; <code>color-mix()</code> blends in a chosen
+            space; <code>light-dark()</code> picks per colour scheme.
+          </p>
+          <div class="swatches" id="oklch-swatches" aria-label="OKLCH hues"></div>
+          <div class="swatches mixes">
+            <span style="--mix: in srgb">sRGB</span>
+            <span style="--mix: in oklch">OKLCH</span>
+            <span style="--mix: in hsl">HSL</span>
+          </div>
+          <div class="gradients">
+            <span class="conic"></span>
+            <span class="stripes"></span>
+            <span class="adaptive">light-dark()</span>
+          </div>
+        </section>
+
+        <section id="motion">
+          <h2>Motion</h2>
+          <div class="snap-strip" tabindex="0" aria-label="Swatches">
+            <div class="swatch" style="--hue: 20">Red</div>
+            <div class="swatch" style="--hue: 70">Amber</div>
+            <div class="swatch" style="--hue: 140">Green</div>
+            <div class="swatch" style="--hue: 200">Cyan</div>
+            <div class="swatch" style="--hue: 260">Blue</div>
+            <div class="swatch" style="--hue: 300">Violet</div>
+            <div class="swatch" style="--hue: 350">Pink</div>
+          </div>
+          <div class="motion-row">
+            <div class="pulse" aria-hidden="true"></div>
+            <button type="button" class="lift">Hover me</button>
+            <span class="marquee"
+              ><span
+                >Scroll-snapped strip above · keyframes here · the bar at the top follows the
+                scroll</span
+              ></span
+            >
+          </div>
+        </section>
+
+        <section id="limits">
+          <h2>In a panel</h2>
+          <ul class="limits">
+            <li>The bar at the top of the page follows the scroll (a scroll-driven animation).</li>
+            <li>Infinite animations keep the panel capturing frames while they run.</li>
+          </ul>
+        </section>
+      </main>
+    </div>
+    <footer class="site-footer">Layout &amp; type · Web Platform Field Guide</footer>
+  </body>
+</html>

@@ -42,8 +42,8 @@ scene.add(new AmbientLight(0xffffff, 1.2), sun);
 scene.add(new GridHelper(20, 20, 0x3a4150, 0x2a303b));
 
 // The panels stand in a ring around the viewer, facing in: look around by
-// dragging outside them (in VR, by turning). The wheel outside the panels steps
-// back a little, to see more of the ring.
+// dragging outside them (in VR, by turning); the wheel and a right-button drag
+// outside them zoom and pan, freely.
 const EYE_HEIGHT = 1.45;
 const RING_RADIUS = 2.7;
 const camera = new PerspectiveCamera(55, innerWidth / innerHeight, 0.05, 100);
@@ -51,9 +51,6 @@ camera.position.set(0, EYE_HEIGHT, 0.6);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.target.set(0, EYE_HEIGHT, 0);
 controls.enableDamping = true;
-controls.enablePan = false;
-controls.minDistance = 0.3;
-controls.maxDistance = 2.4;
 controls.update();
 
 /** Places a panel on the ring, `degrees` to the right of straight ahead (-z), facing the centre. */
@@ -76,63 +73,110 @@ const siteUrl = (name: string) => new URL("/", siteOrigins[name]);
 // All pages run sandboxed (their servers send the same sandbox, see
 // vite.panels.config.ts and examples/sites/vite.site.ts): none can reach the
 // scene's cookies, storage or document, nor take its keyboard.
-const notes = onRing(
-  new HtmlPanel({
-    url: pageUrl("examples/sites/notes/"),
-    width: 960,
-    height: 640,
-    size: 1.6,
-    sandbox: true,
-  }),
-  0,
-);
+/**
+ * A link the user follows in a panel: to another page of the same site, it opens
+ * in the panel (the page loads the agent too, and connects again); elsewhere,
+ * in a new tab, as HtmlPanel does by default.
+ */
+function openLink(url: URL, panel: HtmlPanel): void {
+  if (url.origin === panel.origin) panel.iframe.src = url.href;
+  else window.open(url.href, "_blank", "noopener,noreferrer");
+}
 
-const sceneControls = onRing(
-  new HtmlPanel({
-    url: pageUrl("examples/sites/controls/"),
-    sandbox: true,
-    width: 480,
-    height: 640,
-    size: 1.0,
-    onMessage: (data) => {
-      const control = parseSceneControl(data);
-      if (control) applyControl(control);
-    },
-  }),
-  30,
-);
+interface PanelSpec {
+  name: string;
+  /** Where on the ring, to the right of straight ahead. */
+  degrees: number;
+  create: () => HtmlPanel;
+}
 
-// A page with text to select, drop-down lists, rich text editing and a video.
-const reader = onRing(
+// The sites built with frameworks (and one with none).
+const sitePanel = (name: string) =>
   new HtmlPanel({
-    url: pageUrl("examples/sites/reader/"),
-    width: 720,
+    url: siteUrl(name),
+    width: 1024,
     height: 720,
-    size: 1.1,
+    size: 1.7,
     sandbox: true,
-  }),
-  -32,
-);
+    onLink: openLink,
+  });
 
-// The sites built with frameworks (and one with none), around the rest of the ring.
-const site = (name: string, degrees: number) =>
-  onRing(
-    new HtmlPanel({ url: siteUrl(name), width: 1024, height: 720, size: 1.7, sandbox: true }),
-    degrees,
-  );
-const sites = [
+const specs: PanelSpec[] = [
+  {
+    name: "notes",
+    degrees: 0,
+    create: () =>
+      new HtmlPanel({
+        url: pageUrl("examples/sites/notes/"),
+        width: 960,
+        height: 640,
+        size: 1.6,
+        sandbox: true,
+        onLink: openLink,
+      }),
+  },
+  {
+    name: "controls",
+    degrees: 30,
+    create: () =>
+      new HtmlPanel({
+        url: pageUrl("examples/sites/controls/"),
+        sandbox: true,
+        onLink: openLink,
+        width: 480,
+        height: 640,
+        size: 1.0,
+        onMessage: (data) => {
+          const control = parseSceneControl(data);
+          if (control) applyControl(control);
+        },
+      }),
+  },
+  // A page with text to select, drop-down lists, rich text editing and a video.
+  {
+    name: "reader",
+    degrees: -32,
+    create: () =>
+      new HtmlPanel({
+        url: pageUrl("examples/sites/reader/"),
+        width: 720,
+        height: 720,
+        size: 1.1,
+        sandbox: true,
+        onLink: openLink,
+      }),
+  },
   // Web platform features, no framework.
-  site("web-standards", -66),
+  { name: "web-standards", degrees: -66, create: () => sitePanel("web-standards") },
   // A Hacker News reader (Vue + Vuetify).
-  site("hn-reader", -106),
+  { name: "hn-reader", degrees: -106, create: () => sitePanel("hn-reader") },
   // A chat app with rich text (React + Mantine).
-  site("chat", 62),
+  { name: "chat", degrees: 62, create: () => sitePanel("chat") },
   // A photo gallery and editor (Svelte).
-  site("gallery", 102),
+  { name: "gallery", degrees: 102, create: () => sitePanel("gallery") },
 ];
 
-const panels = [notes, sceneControls, reader, ...sites];
+// ?site=<name> shows that page alone, straight ahead (e.g. ?site=web-standards).
+const only = new URLSearchParams(location.search).get("site");
+const chosen = specs.filter((spec) => spec.name === only);
+if (only && chosen.length === 0) {
+  console.warn(`[showcase] no page named "${only}": ${specs.map((spec) => spec.name).join(", ")}`);
+}
+const shown = chosen.length > 0 ? chosen : specs;
+const panels = shown.map((spec) => onRing(spec.create(), chosen.length > 0 ? 0 : spec.degrees));
 scene.add(...panels);
+if (chosen.length > 0) {
+  // One page: the view turns around it and zooms toward it.
+  const [panel] = panels;
+  controls.target.copy(panel!.position);
+  camera.position.set(0, EYE_HEIGHT, panel!.position.z + 2.2);
+  controls.update();
+  const hud = document.querySelector("#hud strong")?.nextSibling;
+  if (hud) {
+    hud.textContent = ` — ${only}: a web page from another origin, running in an iframe and drawn as a texture.`;
+  }
+}
+const sceneControls = panels[shown.findIndex((spec) => spec.name === "controls")] ?? null;
 new PanelPointer(camera, renderer.domElement, () => panels);
 
 // In VR, each controller points at the panels with a ray; the trigger presses.
@@ -163,7 +207,8 @@ const object = new Mesh<BufferGeometry, MeshStandardMaterial>(
 // In front of the controls panel and below it, between it and the viewer.
 const objectAngle = (30 * Math.PI) / 180;
 object.position.set(1.4 * Math.sin(objectAngle), 0.85, -1.4 * Math.cos(objectAngle));
-scene.add(object);
+// Only with the controls panel, which drives it.
+if (sceneControls) scene.add(object);
 let spin = true;
 
 const caption = document.querySelector<HTMLElement>("#caption")!;
@@ -184,7 +229,7 @@ renderer.domElement.addEventListener("click", (event) => {
     -((event.clientY - rect.top) / rect.height) * 2 + 1,
   );
   raycaster.setFromCamera(ndc, camera);
-  if (raycaster.intersectObject(object).length > 0) {
+  if (sceneControls && raycaster.intersectObject(object).length > 0) {
     sceneControls.postMessage(SCENE_CLICK);
   }
 });

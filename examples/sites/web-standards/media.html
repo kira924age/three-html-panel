@@ -1,0 +1,364 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Media · Web Platform Field Guide</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&display=swap"
+    />
+    <link rel="stylesheet" href="./src/base.css" />
+    <link rel="stylesheet" href="./src/media.css" />
+    <script type="module" src="./src/media.js"></script>
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="./index.html" data-page>Field Guide</a>
+      <nav class="site-nav" aria-label="Pages">
+        <a href="./index.html" data-page>Home</a>
+        <a href="./media.html" data-page>Media</a>
+        <a href="./forms.html" data-page>Forms</a>
+        <a href="./layout.html" data-page>Layout &amp; type</a>
+        <a href="./interactive.html" data-page>Interactive</a>
+      </nav>
+      <div class="theme-switch" data-theme-switch></div>
+    </header>
+
+    <div class="layout">
+      <nav class="toc" aria-label="Sections">
+        <p class="toc-title">On this page</p>
+        <ol></ol>
+      </nav>
+
+      <main>
+        <section id="images">
+          <h1>Media</h1>
+          <p class="lede">
+            Every image and the video on this page were generated (a gradient landscape, the
+            Mandelbrot set, a seeded plasma), in several formats and sizes: the browser picks what
+            it supports and what fits.
+          </p>
+          <h2>Responsive images</h2>
+          <p>
+            Each <code>&lt;picture&gt;</code> offers AVIF, then WebP, then JPEG, each at three
+            widths with <code>srcset</code> and <code>sizes</code>. The images below the fold load
+            lazily.
+          </p>
+          <div class="gallery">
+            <figure>
+              <picture>
+                <source
+                  type="image/avif"
+                  srcset="
+                    ./media/dusk-480.avif   480w,
+                    ./media/dusk-960.avif   960w,
+                    ./media/dusk-1600.avif 1600w
+                  "
+                  sizes="(min-width: 60rem) 16rem, 90vw"
+                />
+                <source
+                  type="image/webp"
+                  srcset="
+                    ./media/dusk-480.webp   480w,
+                    ./media/dusk-960.webp   960w,
+                    ./media/dusk-1600.webp 1600w
+                  "
+                  sizes="(min-width: 60rem) 16rem, 90vw"
+                />
+                <img
+                  src="./media/dusk-960.jpg"
+                  srcset="
+                    ./media/dusk-480.jpg   480w,
+                    ./media/dusk-960.jpg   960w,
+                    ./media/dusk-1600.jpg 1600w
+                  "
+                  sizes="(min-width: 60rem) 16rem, 90vw"
+                  width="1600"
+                  height="1000"
+                  alt="Layered ridges under a dusk sky with a low sun"
+                  decoding="async"
+                />
+              </picture>
+              <figcaption>Dusk <span class="chosen"></span></figcaption>
+            </figure>
+            <figure>
+              <picture>
+                <source
+                  type="image/avif"
+                  srcset="
+                    ./media/fractal-480.avif   480w,
+                    ./media/fractal-960.avif   960w,
+                    ./media/fractal-1600.avif 1600w
+                  "
+                  sizes="(min-width: 60rem) 16rem, 90vw"
+                />
+                <source
+                  type="image/webp"
+                  srcset="
+                    ./media/fractal-480.webp   480w,
+                    ./media/fractal-960.webp   960w,
+                    ./media/fractal-1600.webp 1600w
+                  "
+                  sizes="(min-width: 60rem) 16rem, 90vw"
+                />
+                <img
+                  src="./media/fractal-960.jpg"
+                  srcset="
+                    ./media/fractal-480.jpg   480w,
+                    ./media/fractal-960.jpg   960w,
+                    ./media/fractal-1600.jpg 1600w
+                  "
+                  sizes="(min-width: 60rem) 16rem, 90vw"
+                  width="1600"
+                  height="1000"
+                  alt="The Mandelbrot set"
+                  decoding="async"
+                />
+              </picture>
+              <figcaption>Fractal <span class="chosen"></span></figcaption>
+            </figure>
+            <figure>
+              <picture>
+                <source
+                  type="image/avif"
+                  srcset="
+                    ./media/plasma-480.avif   480w,
+                    ./media/plasma-960.avif   960w,
+                    ./media/plasma-1600.avif 1600w
+                  "
+                  sizes="(min-width: 60rem) 16rem, 90vw"
+                />
+                <source
+                  type="image/webp"
+                  srcset="
+                    ./media/plasma-480.webp   480w,
+                    ./media/plasma-960.webp   960w,
+                    ./media/plasma-1600.webp 1600w
+                  "
+                  sizes="(min-width: 60rem) 16rem, 90vw"
+                />
+                <img
+                  src="./media/plasma-960.jpg"
+                  srcset="
+                    ./media/plasma-480.jpg   480w,
+                    ./media/plasma-960.jpg   960w,
+                    ./media/plasma-1600.jpg 1600w
+                  "
+                  sizes="(min-width: 60rem) 16rem, 90vw"
+                  width="1600"
+                  height="1000"
+                  alt="A blue and violet cloudy texture"
+                  loading="lazy"
+                  decoding="async"
+                />
+              </picture>
+              <figcaption>Plasma <span class="chosen"></span></figcaption>
+            </figure>
+          </div>
+        </section>
+
+        <section id="fit">
+          <h2>Fitting and shaping</h2>
+          <p>
+            <code>object-fit</code> and <code>aspect-ratio</code> fit one image into different
+            boxes:
+          </p>
+          <div class="fit-row">
+            <figure>
+              <img src="./media/dusk-480.jpg" alt="" class="fit cover" />
+              <figcaption>cover</figcaption>
+            </figure>
+            <figure>
+              <img src="./media/dusk-480.jpg" alt="" class="fit contain" />
+              <figcaption>contain</figcaption>
+            </figure>
+            <figure>
+              <img src="./media/dusk-480.jpg" alt="" class="fit fill" />
+              <figcaption>fill</figcaption>
+            </figure>
+            <figure>
+              <img src="./media/dusk-480.jpg" alt="" class="fit cover top" />
+              <figcaption>cover, top</figcaption>
+            </figure>
+          </div>
+          <p>
+            <code>clip-path</code>, <code>mask-image</code> and <code>mix-blend-mode</code> shape
+            and blend:
+          </p>
+          <div class="shape-row">
+            <img src="./media/fractal-480.jpg" alt="" class="shape circle" />
+            <img src="./media/fractal-480.jpg" alt="" class="shape hexagon" />
+            <img src="./media/fractal-480.jpg" alt="" class="shape faded" />
+            <div class="blend"><img src="./media/plasma-480.jpg" alt="" /><span>Blend</span></div>
+          </div>
+          <p>CSS filters, chosen with the buttons:</p>
+          <div class="filter-demo">
+            <img src="./media/dusk-960.jpg" alt="" id="filtered" />
+            <div class="button-row" role="group" aria-label="Filter">
+              <button type="button" class="ghost" data-filter="none" aria-pressed="true">
+                None
+              </button>
+              <button type="button" class="ghost" data-filter="grayscale(1)">Grayscale</button>
+              <button type="button" class="ghost" data-filter="sepia(0.9)">Sepia</button>
+              <button type="button" class="ghost" data-filter="hue-rotate(140deg) saturate(1.4)">
+                Hue
+              </button>
+              <button type="button" class="ghost" data-filter="blur(4px)">Blur</button>
+              <button type="button" class="ghost" data-filter="contrast(1.6) brightness(0.9)">
+                Contrast
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <section id="svg">
+          <h2>SVG</h2>
+          <div class="svg-row">
+            <figure>
+              <img src="./media/emblem.svg" alt="An emblem" width="120" height="120" />
+              <figcaption>An SVG file in <code>&lt;img&gt;</code></figcaption>
+            </figure>
+            <figure>
+              <svg
+                viewBox="0 0 160 120"
+                width="160"
+                height="120"
+                role="img"
+                aria-label="Orbiting dots"
+              >
+                <defs>
+                  <radialGradient id="sun" cx="0.5" cy="0.5" r="0.5">
+                    <stop offset="0" stop-color="#fde68a" />
+                    <stop offset="1" stop-color="#f59e0b" />
+                  </radialGradient>
+                </defs>
+                <circle cx="80" cy="60" r="18" fill="url(#sun)" />
+                <ellipse
+                  cx="80"
+                  cy="60"
+                  rx="58"
+                  ry="22"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-opacity="0.25"
+                />
+                <circle r="7" fill="#2f6fde" class="orbit" />
+              </svg>
+              <figcaption>Inline SVG, animated with CSS</figcaption>
+            </figure>
+            <figure class="chart">
+              <svg viewBox="0 0 320 160" role="img" aria-labelledby="chart-title">
+                <title id="chart-title">Pages built with each approach</title>
+                <g class="bars"></g>
+              </svg>
+              <figcaption>A chart drawn from data; bars lighten on hover</figcaption>
+            </figure>
+          </div>
+        </section>
+
+        <section id="canvas">
+          <h2>Canvas</h2>
+          <p>
+            Draw on the canvas with the pointer; the wave behind your strokes is redrawn every
+            frame.
+          </p>
+          <canvas id="sketch" width="720" height="240" aria-label="A drawing surface"></canvas>
+          <div class="button-row">
+            <button type="button" class="ghost" data-action="clear">Clear</button>
+            <span class="hint" id="stroke-count">0 strokes</span>
+          </div>
+        </section>
+
+        <section id="video">
+          <h2>Video</h2>
+          <p>
+            A zoom into the Mandelbrot set, as WebM (VP9) or MP4 (H.264), with a poster and captions
+            from a WebVTT track. The controls are the page's own: the browser's are drawn outside
+            the page's DOM.
+          </p>
+          <div class="player">
+            <video
+              id="zoom-video"
+              poster="./media/zoom-poster.jpg"
+              muted
+              loop
+              playsinline
+              preload="metadata"
+              crossorigin="anonymous"
+            >
+              <source src="./media/zoom.webm" type="video/webm" />
+              <source src="./media/zoom.mp4" type="video/mp4" />
+              <track kind="captions" src="./media/zoom.vtt" srclang="en" label="English" default />
+            </video>
+            <p class="caption-line" id="caption-line" aria-live="polite"></p>
+            <div class="controls" role="group" aria-label="Video controls">
+              <button type="button" data-video="play" aria-label="Play">▶ Play</button>
+              <button type="button" class="ghost" data-video="back" aria-label="Back 2 seconds">
+                −2 s
+              </button>
+              <button
+                type="button"
+                class="ghost"
+                data-video="forward"
+                aria-label="Forward 2 seconds"
+              >
+                +2 s
+              </button>
+              <input
+                type="range"
+                id="seek"
+                min="0"
+                max="8"
+                step="0.1"
+                value="0"
+                aria-label="Position"
+              />
+              <output id="time">0.0 / 8.0 s</output>
+              <button type="button" class="ghost" data-video="captions" aria-pressed="true">
+                CC
+              </button>
+              <button type="button" class="ghost" data-video="rate">1×</button>
+            </div>
+          </div>
+        </section>
+
+        <section id="audio">
+          <h2>Audio</h2>
+          <p>A rising chord, as Opus or MP3, with the page's own play button.</p>
+          <audio id="chord-audio" preload="metadata">
+            <source src="./media/chord.opus" type="audio/ogg; codecs=opus" />
+            <source src="./media/chord.mp3" type="audio/mpeg" />
+          </audio>
+          <div class="button-row">
+            <button type="button" data-action="audio">▶ Play the chord</button>
+            <span class="hint" id="audio-status" role="status"></span>
+          </div>
+        </section>
+
+        <section id="limits">
+          <h2>In a panel</h2>
+          <ul class="limits">
+            <li>
+              The browser's own video controls and caption rendering are drawn outside the page:
+              this page draws its own.
+            </li>
+            <li>
+              A synthetic press is not a user gesture, so the browser does not let the page start
+              sound: the audio says why it did not play.
+            </li>
+            <li>
+              A playing video is copied frame by frame, as images: it plays, but at the panel's
+              pace.
+            </li>
+          </ul>
+        </section>
+      </main>
+    </div>
+    <footer class="site-footer">
+      Images and video generated with ffmpeg and ImageMagick (scripts/make-media.sh)
+    </footer>
+  </body>
+</html>

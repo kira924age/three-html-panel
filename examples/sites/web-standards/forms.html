@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Forms · Web Platform Field Guide</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&display=swap"
+    />
+    <link rel="stylesheet" href="./src/base.css" />
+    <link rel="stylesheet" href="./src/forms.css" />
+    <script type="module" src="./src/forms.js"></script>
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="./index.html" data-page>Field Guide</a>
+      <nav class="site-nav" aria-label="Pages">
+        <a href="./index.html" data-page>Home</a>
+        <a href="./media.html" data-page>Media</a>
+        <a href="./forms.html" data-page>Forms</a>
+        <a href="./layout.html" data-page>Layout &amp; type</a>
+        <a href="./interactive.html" data-page>Interactive</a>
+      </nav>
+      <div class="theme-switch" data-theme-switch></div>
+    </header>
+
+    <div class="layout">
+      <nav class="toc" aria-label="Sections">
+        <p class="toc-title">On this page</p>
+        <ol></ol>
+      </nav>
+
+      <main>
+        <section id="search">
+          <h1>Forms</h1>
+          <p class="lede">
+            Fields, choices and validation, with the browser's own constraint checks shown in the
+            page.
+          </p>
+          <h2>Search</h2>
+          <search>
+            <form role="search" id="element-search">
+              <label for="query">Find an element</label>
+              <input
+                id="query"
+                type="search"
+                name="q"
+                placeholder="e.g. dialog, meter, picture"
+                autocomplete="off"
+              />
+            </form>
+          </search>
+          <ul class="element-list" id="element-list"></ul>
+          <p class="hint" id="search-count" role="status"></p>
+        </section>
+
+        <section id="fields">
+          <h2>Fields and choices</h2>
+          <form id="signup" novalidate>
+            <fieldset>
+              <legend>Account</legend>
+              <div class="field">
+                <label for="name">Name</label>
+                <input id="name" name="name" required minlength="2" autocomplete="name" />
+                <span class="error">At least two characters.</span>
+              </div>
+              <div class="field">
+                <label for="email">Email</label>
+                <input id="email" name="email" type="email" required autocomplete="email" />
+                <span class="error">An email address, like ada@example.com.</span>
+              </div>
+              <div class="field">
+                <label for="phone">Phone <span class="optional">(optional)</span></label>
+                <input
+                  id="phone"
+                  name="phone"
+                  type="tel"
+                  inputmode="tel"
+                  pattern="[0-9 +()-]{6,}"
+                />
+                <span class="error">Digits, spaces, +, ( ) and - only.</span>
+              </div>
+              <div class="field">
+                <label for="language">Favourite language</label>
+                <input id="language" name="language" list="languages" placeholder="Start typing…" />
+                <datalist id="languages">
+                  <option value="HTML"></option>
+                  <option value="CSS"></option>
+                  <option value="JavaScript"></option>
+                  <option value="TypeScript"></option>
+                </datalist>
+              </div>
+            </fieldset>
+
+            <fieldset>
+              <legend>Preferences</legend>
+              <div class="field">
+                <label for="plan">Plan</label>
+                <select id="plan" name="plan">
+                  <optgroup label="Personal">
+                    <option>Free</option>
+                    <option selected>Pro</option>
+                  </optgroup>
+                  <optgroup label="Business">
+                    <option>Team</option>
+                    <option>Enterprise</option>
+                  </optgroup>
+                </select>
+              </div>
+              <div class="field">
+                <label for="seats">Seats: <output id="seats-out" for="seats">5</output></label>
+                <input id="seats" name="seats" type="range" min="1" max="50" value="5" />
+              </div>
+              <div class="field">
+                <label for="budget">Budget</label>
+                <input id="budget" name="budget" type="number" min="0" step="10" value="120" />
+              </div>
+              <div class="field">
+                <label for="code">Invite code</label>
+                <input
+                  id="code"
+                  name="code"
+                  inputmode="numeric"
+                  pattern="[0-9]{6}"
+                  maxlength="6"
+                  placeholder="6 digits"
+                />
+                <span class="error">Six digits.</span>
+              </div>
+              <div class="choices" role="group" aria-label="Topics">
+                <label class="choice"
+                  ><input type="checkbox" name="topics" value="layout" checked /> Layout</label
+                >
+                <label class="choice"
+                  ><input type="checkbox" name="topics" value="forms" /> Forms</label
+                >
+                <label class="choice"
+                  ><input type="checkbox" name="topics" value="motion" /> Motion</label
+                >
+              </div>
+              <div class="choices" role="radiogroup" aria-label="Newsletter">
+                <label class="choice"
+                  ><input type="radio" name="news" value="weekly" checked /> Weekly</label
+                >
+                <label class="choice"
+                  ><input type="radio" name="news" value="monthly" /> Monthly</label
+                >
+                <label class="choice"><input type="radio" name="news" value="never" /> Never</label>
+              </div>
+              <div class="field wide">
+                <label for="bio">About you</label>
+                <textarea
+                  id="bio"
+                  name="bio"
+                  rows="3"
+                  maxlength="200"
+                  placeholder="A sentence or two"
+                ></textarea>
+                <span class="hint"><span id="bio-count">0</span>/200</span>
+              </div>
+            </fieldset>
+
+            <label class="choice consent">
+              <input type="checkbox" name="consent" required /> I have read the terms
+            </label>
+            <div class="button-row">
+              <button type="submit">Sign up</button>
+              <button type="reset" class="ghost">Reset</button>
+            </div>
+            <div class="form-summary" id="form-summary" role="status" tabindex="-1"></div>
+          </form>
+        </section>
+
+        <section id="validation">
+          <h2>Constraint validation</h2>
+          <p>
+            Each field's <code>validity</code>, live, and a rule of the page's own through
+            <code>setCustomValidity()</code>: the two passwords must match.
+          </p>
+          <form id="passwords" novalidate>
+            <div class="field-row">
+              <div class="field">
+                <label for="password">Password</label>
+                <input
+                  id="password"
+                  type="password"
+                  minlength="8"
+                  required
+                  autocomplete="new-password"
+                />
+              </div>
+              <div class="field">
+                <label for="password-again">Again</label>
+                <input id="password-again" type="password" required autocomplete="new-password" />
+              </div>
+            </div>
+            <table class="validity" aria-label="Validity of the fields">
+              <thead>
+                <tr>
+                  <th>Field</th>
+                  <th>valid</th>
+                  <th>valueMissing</th>
+                  <th>tooShort</th>
+                  <th>customError</th>
+                  <th>message</th>
+                </tr>
+              </thead>
+              <tbody id="validity-rows"></tbody>
+            </table>
+          </form>
+        </section>
+
+        <section id="disabled">
+          <h2>A disabled group</h2>
+          <p>One switch disables a whole <code>&lt;fieldset&gt;</code> and every field in it.</p>
+          <label class="choice"
+            ><input type="checkbox" id="shipping-same" checked /> Ship to the billing address</label
+          >
+          <fieldset id="shipping" disabled>
+            <legend>Shipping address</legend>
+            <div class="field">
+              <label for="street">Street</label
+              ><input id="street" autocomplete="shipping street-address" />
+            </div>
+            <div class="field">
+              <label for="city">City</label
+              ><input id="city" autocomplete="shipping address-level2" />
+            </div>
+            <div class="field">
+              <label for="country">Country</label>
+              <select id="country" autocomplete="shipping country">
+                <option>Japan</option>
+                <option>France</option>
+                <option>Brazil</option>
+              </select>
+            </div>
+          </fieldset>
+        </section>
+
+        <section id="pickers">
+          <h2>Native pickers</h2>
+          <p class="hint">
+            The browser opens these outside the page, so they do not show in a panel: the fields
+            themselves do.
+          </p>
+          <div class="field-row">
+            <label>Date <input type="date" name="date" value="2026-10-09" /></label>
+            <label>Time <input type="time" name="time" value="09:30" /></label>
+            <label>Colour <input type="color" name="colour" value="#3b82f6" /></label>
+            <label>File <input type="file" name="file" /></label>
+          </div>
+        </section>
+
+        <section id="progress">
+          <h2>Progress and meters</h2>
+          <div class="progress-grid">
+            <label>Download <progress id="download" max="100" value="0"></progress></label>
+            <label>Waiting <progress></progress></label>
+            <label
+              >Disk
+              <meter min="0" max="100" low="60" high="85" optimum="20" value="42">42%</meter></label
+            >
+            <label
+              >Battery
+              <meter min="0" max="100" low="20" high="80" optimum="100" value="15">
+                15%
+              </meter></label
+            >
+          </div>
+          <div class="button-row">
+            <button type="button" data-action="download">Start</button>
+            <span class="spinner" aria-label="Loading"></span>
+          </div>
+        </section>
+
+        <section id="limits">
+          <h2>In a panel</h2>
+          <ul class="limits">
+            <li>
+              The native pickers (date, time, colour, file) and the browser's validation bubbles
+              open outside the page: this page shows the validity itself.
+            </li>
+            <li>
+              The datalist's suggestions are a native popup too: the field still takes typing.
+            </li>
+          </ul>
+        </section>
+      </main>
+    </div>
+    <footer class="site-footer">Nothing on this page is sent anywhere.</footer>
+  </body>
+</html>

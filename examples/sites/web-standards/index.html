@@ -4,6 +4,10 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Web Platform Field Guide</title>
+    <meta
+      name="description"
+      content="A tour of what plain HTML, CSS and a little JavaScript can do."
+    />
     <!-- A web font from another origin: its CSS and font files are fetched with CORS. -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -11,49 +15,90 @@
       rel="stylesheet"
       href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&display=swap"
     />
-    <link rel="stylesheet" href="./src/style.css" />
-    <script type="module" src="./src/main.js"></script>
+    <link rel="stylesheet" href="./src/base.css" />
+    <link rel="stylesheet" href="./src/home.css" />
+    <script type="module" src="./src/home.js"></script>
   </head>
   <body>
-    <div class="reading-progress" aria-hidden="true"></div>
     <header class="site-header">
-      <a class="brand" href="#top">Field Guide</a>
-      <span class="tagline">HTML and CSS, no framework</span>
-      <button type="button" class="ghost" popovertarget="menu" aria-haspopup="menu">More</button>
-      <div id="menu" popover role="menu" class="menu">
-        <a role="menuitem" href="#forms">Jump to forms</a>
-        <a role="menuitem" href="#tables">Jump to tables</a>
-        <button role="menuitem" type="button" data-action="open-dialog">Open the dialog</button>
-      </div>
-      <button type="button" class="theme-toggle" aria-pressed="false" data-action="theme">
-        <span class="when-light">Dark</span><span class="when-dark">Light</span> theme
-      </button>
+      <a class="brand" href="./index.html" data-page>Field Guide</a>
+      <nav class="site-nav" aria-label="Pages">
+        <a href="./index.html" data-page>Home</a>
+        <a href="./media.html" data-page>Media</a>
+        <a href="./forms.html" data-page>Forms</a>
+        <a href="./layout.html" data-page>Layout &amp; type</a>
+        <a href="./interactive.html" data-page>Interactive</a>
+      </nav>
+      <div class="theme-switch" data-theme-switch></div>
     </header>
 
-    <div class="layout" id="top">
+    <div class="layout">
       <nav class="toc" aria-label="Sections">
         <p class="toc-title">On this page</p>
-        <ol>
-          <li><a href="#text">Text</a></li>
-          <li><a href="#tables">Tables</a></li>
-          <li><a href="#disclosure">Disclosure</a></li>
-          <li><a href="#overlays">Dialog and popover</a></li>
-          <li><a href="#forms">Forms</a></li>
-          <li><a href="#progress">Progress</a></li>
-          <li><a href="#layout">Layout</a></li>
-          <li><a href="#media">Media and motion</a></li>
-        </ol>
+        <ol></ol>
       </nav>
 
       <main>
-        <section id="text">
+        <section id="welcome">
           <h1>Web Platform Field Guide</h1>
           <p class="lede">
-            Everything on this page is plain HTML and CSS, with a little JavaScript. It is a
-            checklist of what a page can show: <strong>strong</strong>, <em>emphasis</em>,
-            <mark>marked text</mark>, <code>inline code</code>, <kbd>Ctrl</kbd>+<kbd>C</kbd>,
-            <abbr title="Cascading Style Sheets">CSS</abbr>, H<sub>2</sub>O, E = mc<sup>2</sup>,
-            <del>removed</del> and <ins>inserted</ins> text, and
+            A tour of what plain HTML and CSS can do, with a little JavaScript: five pages, each a
+            document of its own, with no framework and no build-time templating. Pick a page, or
+            read on for the text elements every page relies on.
+          </p>
+          <ul class="page-cards">
+            <li>
+              <a class="page-card" href="./media.html" data-page>
+                <picture>
+                  <source type="image/avif" srcset="./media/dusk-480.avif" />
+                  <source type="image/webp" srcset="./media/dusk-480.webp" />
+                  <img src="./media/dusk-480.jpg" alt="" width="480" height="300" />
+                </picture>
+                <span class="page-card-title">Media</span>
+                <span class="page-card-text"
+                  >Responsive images, SVG, canvas, video with captions, audio</span
+                >
+              </a>
+            </li>
+            <li>
+              <a class="page-card" href="./forms.html" data-page>
+                <span class="page-card-art" style="--hue: 210" aria-hidden="true">✎</span>
+                <span class="page-card-title">Forms</span>
+                <span class="page-card-text"
+                  >Fields, choices, validation, search, progress and meters</span
+                >
+              </a>
+            </li>
+            <li>
+              <a class="page-card" href="./layout.html" data-page>
+                <span class="page-card-art" style="--hue: 150" aria-hidden="true">▦</span>
+                <span class="page-card-title">Layout &amp; type</span>
+                <span class="page-card-text"
+                  >Grid and subgrid, container queries, vertical Japanese, ruby, colour</span
+                >
+              </a>
+            </li>
+            <li>
+              <a class="page-card" href="./interactive.html" data-page>
+                <span class="page-card-art" style="--hue: 30" aria-hidden="true">◎</span>
+                <span class="page-card-title">Interactive</span>
+                <span class="page-card-text"
+                  >Tables, disclosure, dialog, popover, tabs, web components, Intl</span
+                >
+              </a>
+            </li>
+          </ul>
+        </section>
+
+        <section id="text">
+          <h2>Text</h2>
+          <p>
+            Inline elements: <strong>strong</strong>, <em>emphasis</em>, <mark>marked text</mark>,
+            <code>inline code</code>, <kbd>Ctrl</kbd>+<kbd>C</kbd>, <samp>sample output</samp>,
+            <abbr title="Cascading Style Sheets">CSS</abbr>, <dfn>a definition</dfn>,
+            H<sub>2</sub>O, E = mc<sup>2</sup>, <del>removed</del> and <ins>inserted</ins> text,
+            <small>small print</small>, <q>a short quotation</q>,
+            <time datetime="2026-10-09">9 October 2026</time>, and
             <a href="https://developer.mozilla.org/" target="_blank" rel="noopener">a link to MDN</a
             >.
           </p>
@@ -111,280 +156,30 @@
 }</code></pre>
           </figure>
           <p class="hint" id="copy-status" role="status"></p>
+          <hr />
+          <address>
+            Written for the
+            <a href="https://github.com/kira924age/three-html-panel" target="_blank" rel="noopener"
+              >three-html-panel</a
+            >
+            examples.
+          </address>
         </section>
 
-        <section id="tables">
-          <h2>Tables</h2>
-          <p>Click a column's header to sort. The header sticks while the table scrolls.</p>
-          <div class="table-scroll" tabindex="0">
-            <table id="elements-table">
-              <caption>
-                Elements and when browsers shipped them
-              </caption>
-              <thead>
-                <tr>
-                  <th scope="col" data-sort="text"><button type="button">Element</button></th>
-                  <th scope="col" data-sort="text"><button type="button">Category</button></th>
-                  <th scope="col" data-sort="number"><button type="button">Year</button></th>
-                  <th scope="col" data-sort="number"><button type="button">Support</button></th>
-                </tr>
-              </thead>
-              <tbody></tbody>
-              <tfoot>
-                <tr>
-                  <td colspan="3">Average support</td>
-                  <td id="support-average"></td>
-                </tr>
-              </tfoot>
-            </table>
-          </div>
-        </section>
-
-        <section id="disclosure">
-          <h2>Disclosure</h2>
-          <p>Details elements with the same <code>name</code> open one at a time.</p>
-          <details name="faq" open>
-            <summary>What is a disclosure widget?</summary>
-            <p>A summary that shows or hides the content after it. No script needed.</p>
-          </details>
-          <details name="faq">
-            <summary>Can it be animated?</summary>
-            <p>Its marker turns with a transition here; the content appears at once.</p>
-          </details>
-          <details name="faq">
-            <summary>Does it work without JavaScript?</summary>
-            <p>Yes. This whole section has no script.</p>
-          </details>
-        </section>
-
-        <section id="overlays">
-          <h2>Dialog and popover</h2>
+        <section id="in-a-panel">
+          <h2>Shown in a panel</h2>
           <p>
-            A modal <code>&lt;dialog&gt;</code> and a <code>popover</code> are drawn in the top
-            layer, above everything else.
+            These pages also run inside a 3D scene, as panels drawn by three-html-panel. A few
+            things the browser draws outside the page do not show there; each page lists its own.
           </p>
-          <div class="button-row">
-            <button type="button" data-action="open-dialog">Open the dialog</button>
-            <button type="button" class="ghost" popovertarget="tip">Show a popover</button>
-          </div>
-          <div id="tip" popover class="tip">
-            <strong>Popover</strong>
-            <p>Light dismiss: press outside it, or press Escape.</p>
-          </div>
-          <dialog id="dialog" aria-labelledby="dialog-title">
-            <form method="dialog">
-              <h3 id="dialog-title">Rename the guide</h3>
-              <label>Title <input name="title" value="Web Platform Field Guide" required /></label>
-              <menu class="button-row">
-                <button value="cancel" formnovalidate class="ghost">Cancel</button>
-                <button value="save">Save</button>
-              </menu>
-            </form>
-          </dialog>
-          <p class="hint" id="dialog-result" role="status"></p>
-        </section>
-
-        <section id="forms">
-          <h2>Forms</h2>
-          <form id="signup" novalidate>
-            <fieldset>
-              <legend>Account</legend>
-              <div class="field">
-                <label for="name">Name</label>
-                <input id="name" name="name" required minlength="2" autocomplete="name" />
-                <span class="error">At least two characters.</span>
-              </div>
-              <div class="field">
-                <label for="email">Email</label>
-                <input id="email" name="email" type="email" required autocomplete="email" />
-                <span class="error">An email address, like ada@example.com.</span>
-              </div>
-              <div class="field">
-                <label for="phone">Phone <span class="optional">(optional)</span></label>
-                <input id="phone" name="phone" type="tel" pattern="[0-9 +()-]{6,}" />
-                <span class="error">Digits, spaces, +, ( ) and - only.</span>
-              </div>
-              <div class="field">
-                <label for="language">Favourite language</label>
-                <input id="language" name="language" list="languages" placeholder="Start typing…" />
-                <datalist id="languages">
-                  <option value="HTML"></option>
-                  <option value="CSS"></option>
-                  <option value="JavaScript"></option>
-                  <option value="TypeScript"></option>
-                </datalist>
-              </div>
-            </fieldset>
-
-            <fieldset>
-              <legend>Preferences</legend>
-              <div class="field">
-                <label for="plan">Plan</label>
-                <select id="plan" name="plan">
-                  <optgroup label="Personal">
-                    <option>Free</option>
-                    <option selected>Pro</option>
-                  </optgroup>
-                  <optgroup label="Business">
-                    <option>Team</option>
-                    <option>Enterprise</option>
-                  </optgroup>
-                </select>
-              </div>
-              <div class="field">
-                <label for="seats">Seats: <output id="seats-out" for="seats">5</output></label>
-                <input id="seats" name="seats" type="range" min="1" max="50" value="5" />
-              </div>
-              <div class="field">
-                <label for="budget">Budget</label>
-                <input id="budget" name="budget" type="number" min="0" step="10" value="120" />
-              </div>
-              <div class="choices" role="group" aria-label="Topics">
-                <label class="choice"
-                  ><input type="checkbox" name="topics" value="layout" checked /> Layout</label
-                >
-                <label class="choice"
-                  ><input type="checkbox" name="topics" value="forms" /> Forms</label
-                >
-                <label class="choice"
-                  ><input type="checkbox" name="topics" value="motion" /> Motion</label
-                >
-              </div>
-              <div class="choices" role="radiogroup" aria-label="Newsletter">
-                <label class="choice"
-                  ><input type="radio" name="news" value="weekly" checked /> Weekly</label
-                >
-                <label class="choice"
-                  ><input type="radio" name="news" value="monthly" /> Monthly</label
-                >
-                <label class="choice"><input type="radio" name="news" value="never" /> Never</label>
-              </div>
-              <div class="field">
-                <label for="bio">About you</label>
-                <textarea
-                  id="bio"
-                  name="bio"
-                  rows="3"
-                  maxlength="200"
-                  placeholder="A sentence or two"
-                ></textarea>
-                <span class="hint"><span id="bio-count">0</span>/200</span>
-              </div>
-            </fieldset>
-
-            <fieldset>
-              <legend>Native pickers</legend>
-              <p class="hint">
-                The browser opens these outside the page, so they do not show in a panel: the fields
-                themselves do.
-              </p>
-              <div class="field-row">
-                <label>Date <input type="date" name="date" value="2026-10-08" /></label>
-                <label>Colour <input type="color" name="colour" value="#3b82f6" /></label>
-                <label>File <input type="file" name="file" /></label>
-              </div>
-            </fieldset>
-
-            <label class="choice consent">
-              <input type="checkbox" name="consent" required /> I have read the terms
-            </label>
-            <div class="button-row">
-              <button type="submit">Sign up</button>
-              <button type="reset" class="ghost">Reset</button>
-            </div>
-            <div class="form-summary" id="form-summary" role="status" tabindex="-1"></div>
-          </form>
-        </section>
-
-        <section id="progress">
-          <h2>Progress</h2>
-          <div class="progress-grid">
-            <label>Download <progress id="download" max="100" value="0"></progress></label>
-            <label>Waiting <progress></progress></label>
-            <label
-              >Disk
-              <meter min="0" max="100" low="60" high="85" optimum="20" value="42">42%</meter></label
-            >
-            <label
-              >Battery
-              <meter min="0" max="100" low="20" high="80" optimum="100" value="15">
-                15%
-              </meter></label
-            >
-          </div>
-          <div class="button-row">
-            <button type="button" data-action="download">Start</button>
-            <span class="spinner" aria-label="Loading"></span>
-          </div>
-        </section>
-
-        <section id="layout">
-          <h2>Layout</h2>
-          <p>
-            The cards query their container's width, not the window's. Make the container narrower:
+          <p class="limits">
+            <strong>In a panel:</strong> links to the other pages open in the panel when the scene
+            allows it; other links open in a new tab. The theme you choose goes along with the
+            links, since a sandboxed page has no storage.
           </p>
-          <label class="inline"
-            >Container width
-            <input type="range" id="container-width" min="40" max="100" value="100" />
-            <output id="container-width-out">100%</output>
-          </label>
-          <div class="card-grid" id="card-grid">
-            <article class="card">
-              <div class="thumb" style="--hue: 210"></div>
-              <div>
-                <h3>Grid</h3>
-                <p>Two dimensions, named areas, and gaps.</p>
-              </div>
-              <label class="select-card"><input type="checkbox" /> Select</label>
-            </article>
-            <article class="card">
-              <div class="thumb" style="--hue: 150"></div>
-              <div>
-                <h3>Container queries</h3>
-                <p>Components that adapt to where they are.</p>
-              </div>
-              <label class="select-card"><input type="checkbox" checked /> Select</label>
-            </article>
-            <article class="card">
-              <div class="thumb" style="--hue: 30"></div>
-              <div>
-                <h3>:has()</h3>
-                <p>A selected card is outlined, by a parent selector.</p>
-              </div>
-              <label class="select-card"><input type="checkbox" /> Select</label>
-            </article>
-          </div>
-        </section>
-
-        <section id="media">
-          <h2>Media and motion</h2>
-          <figure class="chart">
-            <svg viewBox="0 0 320 160" role="img" aria-labelledby="chart-title">
-              <title id="chart-title">Pages built with each approach</title>
-              <g class="bars"></g>
-            </svg>
-            <figcaption>An inline SVG chart; bars lighten on hover.</figcaption>
-          </figure>
-          <div class="snap-strip" tabindex="0" aria-label="Swatches">
-            <div class="swatch" style="--hue: 0">Red</div>
-            <div class="swatch" style="--hue: 40">Amber</div>
-            <div class="swatch" style="--hue: 120">Green</div>
-            <div class="swatch" style="--hue: 190">Cyan</div>
-            <div class="swatch" style="--hue: 230">Blue</div>
-            <div class="swatch" style="--hue: 280">Violet</div>
-            <div class="swatch" style="--hue: 330">Pink</div>
-          </div>
-          <div class="motion-row">
-            <div class="pulse" aria-hidden="true"></div>
-            <button type="button" class="lift">Hover me</button>
-            <span class="marquee"
-              ><span
-                >Scroll-snapped strip above · keyframes here · transitions on the button</span
-              ></span
-            >
-          </div>
         </section>
       </main>
     </div>
+    <footer class="site-footer">Plain HTML, CSS and JavaScript · no framework</footer>
   </body>
 </html>
