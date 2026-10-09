@@ -177,27 +177,21 @@ export class DocumentCss {
     const sheet = this.readable(source);
     if (!sheet) return;
     const all = Array.from(sheet.cssRules);
-    // @layer statements before its @import rules declare layers before the
-    // imported ones: they come before the imported sheets, in a sheet of their own.
+    // Its @import rules, and the @layer statements among them (which declare
+    // layers in turn with the imported ones), come first: each becomes a sheet
+    // of its own, before this one, in their order.
     const { CSSImportRule, CSSLayerStatementRule } = this.window;
-    const imports = all.findLastIndex((rule) => rule instanceof CSSImportRule);
-    const statements = all
-      .slice(0, imports + 1)
-      .filter((rule) => CSSLayerStatementRule && rule instanceof CSSLayerStatementRule);
-    if (statements.length > 0)
-      sheets.push(
-        inLayers(
-          statements.map((rule) => rule.cssText),
-          layers,
-        ),
-      );
+    let leading = 0;
+    all.forEach((rule, index) => {
+      if (rule instanceof CSSImportRule) leading = index + 1;
+    });
     const rules: string[] = [];
-    this.serializeRules(
-      all.filter((rule) => !statements.includes(rule)),
-      rules,
-      sheets,
-      layers,
-    );
+    for (const rule of all.slice(0, leading)) {
+      if (CSSLayerStatementRule && rule instanceof CSSLayerStatementRule)
+        sheets.push(inLayers([rule.cssText], layers));
+      else this.serializeRules([rule], rules, sheets, layers);
+    }
+    this.serializeRules(all.slice(leading), rules, sheets, layers);
     if (source.href) {
       // A namespace's url() is a name, not a file.
       for (let i = 0; i < rules.length; i++)
@@ -219,15 +213,20 @@ export class DocumentCss {
       CSSImportRule,
       CSSKeyframesRule,
       CSSGroupingRule,
+      CSSPageRule,
       CSS,
     } = this.window;
     for (const rule of Array.from(rules)) {
       if (rule instanceof CSSStyleRule) {
-        // Nested rules (CSS nesting) are serialized with the parent; rewrite the whole text then.
+        if (rule.cssRules.length === 0) {
+          out.push(`${rewriteSelector(rule.selectorText)}{${rule.style.cssText}}`);
+          continue;
+        }
+        // Nested rules (CSS nesting) are copied as the top level's, inside it.
+        const inner: string[] = [];
+        this.serializeRules(rule.cssRules, inner, sheets, layers);
         out.push(
-          rule.cssRules.length > 0
-            ? rewriteSelector(rule.cssText)
-            : `${rewriteSelector(rule.selectorText)}{${rule.style.cssText}}`,
+          `${rewriteSelector(rule.selectorText)} {${rule.style.cssText}\n${inner.join("\n")}\n}`,
         );
       } else if (rule instanceof CSSMediaRule) {
         if (this.window.matchMedia(rule.conditionText).matches)
@@ -252,7 +251,7 @@ export class DocumentCss {
         CSSGroupingRule &&
         rule instanceof CSSGroupingRule &&
         // @page has declarations of its own (and no effect on screen).
-        !(rule instanceof this.window.CSSPageRule)
+        !(CSSPageRule && rule instanceof CSSPageRule)
       ) {
         // Other blocks of rules (@layer, @container, @scope…): their rules as
         // the top level's (interaction states, @media checked here), in them.

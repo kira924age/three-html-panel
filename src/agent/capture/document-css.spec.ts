@@ -62,6 +62,18 @@ describe("blocks of rules", () => {
   });
 });
 
+describe("nested rules", () => {
+  it("copy the rules in a style rule as the top level's", () => {
+    vi.stubGlobal("matchMedia", (query: string) => ({ matches: query.includes("min-width") }));
+    document.head.innerHTML =
+      "<style>.card { color: black; &:hover { color: red } @media (min-width: 800px) { color: blue; } " +
+      "@media print { color: green; } }</style>";
+    expect(new DocumentCss(document, () => null).get()[1]).toBe(
+      ".card {color: black;\n&[data-thp-hover]{color: red;}\ncolor: blue;\n}",
+    );
+  });
+});
+
 describe("@import rules", () => {
   it("put the imported sheet in the layer it is imported into, @namespace rules outside it", () => {
     vi.stubGlobal("matchMedia", () => ({ matches: true }));
@@ -91,6 +103,34 @@ describe("@import rules", () => {
       "@layer components, base;",
       "@layer base {\na{color: blue;}\n}",
       "a{color: red;}",
+    ]);
+  });
+
+  it("keep @layer statements between imports in their order", () => {
+    vi.stubGlobal("matchMedia", () => ({ matches: true }));
+    document.head.innerHTML =
+      "<style>a { color: blue }</style><style>c { color: green }</style><style>@layer b; d { color: red }</style>";
+    const [first, second, importing] = Array.from(document.styleSheets);
+    const [statement, ...rest] = Array.from(importing!.cssRules);
+    const importOf = (sheet: CSSStyleSheet, layerName: string) =>
+      Object.create(window.CSSImportRule.prototype, {
+        styleSheet: { value: sheet },
+        media: { value: { mediaText: "" } },
+        layerName: { value: layerName },
+        supportsText: { value: null },
+      }) as CSSImportRule;
+    // @import (layer a); @layer b; @import (layer c); d { … }
+    const sheet = {
+      href: null,
+      disabled: false,
+      cssRules: [importOf(first!, "a"), statement, importOf(second!, "c"), ...rest],
+    } as unknown as CSSStyleSheet;
+    vi.spyOn(document, "styleSheets", "get").mockReturnValue([sheet] as unknown as StyleSheetList);
+    expect(new DocumentCss(document, () => null).get().slice(1, 5)).toEqual([
+      "@layer a {\na{color: blue;}\n}",
+      "@layer b;",
+      "@layer c {\nc{color: green;}\n}",
+      "d{color: red;}",
     ]);
   });
 
