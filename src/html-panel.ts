@@ -708,6 +708,8 @@ export class HtmlPanel
 
   blurFromHost(): void {
     // The host decides: editing ends now, whatever the page reports later.
+    // The user acted elsewhere since pressing the panel: the page may not take the keys back.
+    this.userActionUntil = -Infinity;
     this.editing = false;
     this.typing = false;
     this.updateCaret(null);
@@ -716,8 +718,10 @@ export class HtmlPanel
 
   /** Takes focus away from whatever has it in the page (e.g. the user pressed elsewhere). */
   blur(): void {
-    // Pressing elsewhere: no press on this panel is held.
+    // Pressing elsewhere: no press on this panel is held, and the page may not
+    // take the keys back from what the user pressed meanwhile.
     this.pressing = false;
+    this.userActionUntil = -Infinity;
     if (!this.editing) return;
     this.keyboard.release(this);
     this.editing = false;

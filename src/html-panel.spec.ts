@@ -287,6 +287,68 @@ describe("the panel's iframe", () => {
       port.close();
     });
 
+    it("does not take the keys back from a host field the user focused right after pressing the panel", async () => {
+      const keyboard = new PanelKeyboard();
+      const panel = open(true, keyboard);
+      const port = connect(panel);
+      const received: unknown[] = [];
+      port.onmessage = (event) => received.push(event.data);
+      vi.spyOn(document, "hasFocus").mockReturnValue(true);
+      const hostField = document.body.appendChild(document.createElement("input"));
+      try {
+        panel.pointer("down", new Vector2(0.5, 0.5));
+        panel.pointer("up", new Vector2(0.5, 0.5));
+        port.postMessage(editing);
+        await delivered();
+        expect(keyboard.isTarget(panel)).toBe(true);
+
+        // Within the second after the press, the user moves on to a field of the host.
+        hostField.focus();
+        await delivered();
+        expect(keyboard.isTarget(panel)).toBe(false);
+        received.length = 0;
+        port.postMessage(editing);
+        await delivered();
+        expect(document.activeElement).toBe(hostField);
+        expect(keyboard.isTarget(panel)).toBe(false);
+        expect(received).toContainEqual({ type: "blur" });
+      } finally {
+        hostField.remove();
+        port.close();
+      }
+    });
+
+    it("does not take the keys back from another panel the user pressed right after it", async () => {
+      const keyboard = new PanelKeyboard();
+      const first = open(true, keyboard);
+      const second = open(true, keyboard);
+      const firstPort = connect(first);
+      const secondPort = connect(second);
+      const received: unknown[] = [];
+      firstPort.onmessage = (event) => received.push(event.data);
+
+      first.pointer("down", new Vector2(0.5, 0.5));
+      first.pointer("up", new Vector2(0.5, 0.5));
+      firstPort.postMessage(editing);
+      await delivered();
+      expect(keyboard.isTarget(first)).toBe(true);
+
+      // Pressing the second panel blurs the first, as PanelPointer does.
+      first.blur();
+      second.pointer("down", new Vector2(0.5, 0.5));
+      secondPort.postMessage(editing);
+      await delivered();
+      expect(keyboard.isTarget(second)).toBe(true);
+
+      received.length = 0;
+      firstPort.postMessage(editing);
+      await delivered();
+      expect(keyboard.isTarget(second)).toBe(true);
+      expect(received).toContainEqual({ type: "blur" });
+      firstPort.close();
+      secondPort.close();
+    });
+
     it("tells whether text typed now goes into the page (for an on-screen keyboard)", async () => {
       const panel = open(false);
       const port = connect(panel);
