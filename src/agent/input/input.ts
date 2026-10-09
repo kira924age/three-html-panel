@@ -127,6 +127,17 @@ const MODIFIER_KEYS = new Set(["Shift", "Control", "Meta", "Alt", "AltGraph", "C
 const isEditingHost = (element: Element | null): element is HTMLElement =>
   element !== null && editingHostOf(element) === element;
 
+/**
+ * Scrolls as the user's own wheel, drag or scrollbar does: at once. A page's
+ * `scroll-behavior: smooth` applies to scrolls by script, not to the user's,
+ * and a smooth scroll would also crawl in the panel's iframe, whose rendering
+ * the browser holds back: each wheel step would start again from where the
+ * last one had not yet moved, and most of the scroll would be lost.
+ */
+function scrollByUser(element: Element, left: number, top: number): void {
+  element.scrollBy({ left, top, behavior: "instant" });
+}
+
 function ancestors(element: Element | null): Element[] {
   const chain: Element[] = [];
   for (let node = element; node; node = node.parentElement) chain.push(node);
@@ -1384,7 +1395,7 @@ export class InputSynthesizer {
       this.documentDrag = null;
       pan.target.dispatchEvent(this.pointerEvent("pointercancel", this.pointerInit(x, y, 0)));
     }
-    pan.scroller.scrollBy(pan.axes.x ? pan.last.x - x : 0, pan.axes.y ? pan.last.y - y : 0);
+    scrollByUser(pan.scroller, pan.axes.x ? pan.last.x - x : 0, pan.axes.y ? pan.last.y - y : 0);
     pan.last = { x, y };
     return true;
   }
@@ -1425,8 +1436,8 @@ export class InputSynthesizer {
     const direction = position < thumbStart ? -1 : 1;
     const page =
       (bar.axis === "y" ? bar.element.clientHeight : bar.element.clientWidth) * PAGE_SCROLL_RATIO;
-    if (bar.axis === "y") bar.element.scrollBy(0, direction * page);
-    else bar.element.scrollBy(direction * page, 0);
+    if (bar.axis === "y") scrollByUser(bar.element, 0, direction * page);
+    else scrollByUser(bar.element, direction * page, 0);
     return true;
   }
 
@@ -1441,8 +1452,10 @@ export class InputSynthesizer {
     if (travel <= 0) return;
     const moved = (bar.axis === "y" ? y : x) - from;
     const offset = scroll + (moved * maxScroll(bar)) / travel;
-    if (bar.axis === "y") bar.element.scrollTop = offset;
-    else bar.element.scrollLeft = offset;
+    bar.element.scrollTo({
+      [bar.axis === "y" ? "top" : "left"]: offset,
+      behavior: "instant",
+    });
   }
 
   private canScroll(element: Element, deltaX: number, deltaY: number): boolean {
@@ -1485,11 +1498,12 @@ export class InputSynthesizer {
     if (!target.dispatchEvent(event)) return;
     for (const element of ancestors(target)) {
       if (this.canScroll(element, deltaX, deltaY)) {
-        element.scrollBy(deltaX, deltaY);
+        scrollByUser(element, deltaX, deltaY);
         return;
       }
     }
-    this.document.scrollingElement?.scrollBy(deltaX, deltaY);
+    if (this.document.scrollingElement)
+      scrollByUser(this.document.scrollingElement, deltaX, deltaY);
   }
 
   // --- Keyboard --------------------------------------------------------------
