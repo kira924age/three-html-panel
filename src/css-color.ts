@@ -2,24 +2,22 @@
 // into sRGB and an alpha, for three.js.
 //
 // A computed color keeps the syntax the page wrote it in: rgb() for sRGB
-// colors (hex, names, hsl() and hwb() included), but color(), lab(), lch(),
-// oklab() and oklch() for the others, and color-mix() resolved to one of those.
-// THREE.Color only reads sRGB syntaxes, and none of them with an alpha. This
-// is done in code rather than by drawing into a canvas: it gives the same
+// colors (hex, names, hsl() and hwb() all compute to it), but color(), lab(),
+// lch(), oklab() and oklch() for the others, and color-mix() resolved to one of
+// those. THREE.Color only reads sRGB syntaxes, and none of them with an alpha.
+// This is done in code rather than by drawing into a canvas: it gives the same
 // result in every browser (and in tests), and canvas readback can be noised
 // by anti-fingerprinting.
 //
 // The conversions follow CSS Color 4 (https://www.w3.org/TR/css-color-4/#color-conversion-code).
 // Colors outside sRGB are clipped to it, not gamut mapped.
 
-import { Color } from "three";
-
 /** An sRGB color (gamma encoded, each channel 0–1) and an alpha (0–1). */
 export interface SrgbColor {
-  r: number;
-  g: number;
-  b: number;
-  alpha: number;
+  readonly r: number;
+  readonly g: number;
+  readonly b: number;
+  readonly alpha: number;
 }
 
 type Vec3 = [number, number, number];
@@ -119,22 +117,19 @@ function labToSrgb([l, a, b]: Vec3): Vec3 {
   return xyzD50ToSrgb([x * D50_WHITE[0], y * D50_WHITE[1], z * D50_WHITE[2]]);
 }
 
+const LMS_TO_LINEAR_SRGB: Mat3 = [
+  [4.0767416621, -3.3077115913, 0.2309699292],
+  [-1.2684380046, 2.6097574011, -0.3413193965],
+  [-0.0041960863, -0.7034186147, 1.707614701],
+];
+
 function oklabToSrgb([l, a, b]: Vec3): Vec3 {
   const lms: Vec3 = [
     (l + 0.3963377774 * a + 0.2158037573 * b) ** 3,
     (l - 0.1055613458 * a - 0.0638541728 * b) ** 3,
     (l - 0.0894841775 * a - 1.291485548 * b) ** 3,
   ];
-  return encodeSrgb(
-    multiply(
-      [
-        [4.0767416621, -3.3077115913, 0.2309699292],
-        [-1.2684380046, 2.6097574011, -0.3413193965],
-        [-0.0041960863, -0.7034186147, 1.707614701],
-      ],
-      lms,
-    ),
-  );
+  return encodeSrgb(multiply(LMS_TO_LINEAR_SRGB, lms));
 }
 
 /** Polar (lightness, chroma, hue in degrees) to rectangular (lightness, a, b). */
@@ -142,23 +137,6 @@ const fromPolar = ([l, c, h]: Vec3): Vec3 => {
   const radians = (h * Math.PI) / 180;
   return [l, c * Math.cos(radians), c * Math.sin(radians)];
 };
-
-function hslToSrgb([h, s, l]: Vec3): Vec3 {
-  s /= 100;
-  l /= 100;
-  const f = (n: number) => {
-    const k = (n + h / 30) % 12;
-    return l - s * Math.min(l, 1 - l) * Math.max(-1, Math.min(k - 3, 9 - k, 1));
-  };
-  return [f(0), f(8), f(4)];
-}
-
-function hwbToSrgb([h, w, b]: Vec3): Vec3 {
-  w /= 100;
-  b /= 100;
-  if (w + b >= 1) return [w / (w + b), w / (w + b), w / (w + b)];
-  return hslToSrgb([h, 100, 50]).map((c) => c * (1 - w - b) + w) as Vec3;
-}
 
 const ANGLE_UNITS: Record<string, number> = {
   "": 1,
@@ -169,97 +147,102 @@ const ANGLE_UNITS: Record<string, number> = {
 };
 const NUMBER = /^([+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?)(%|deg|grad|rad|turn)?$/;
 
-/** A component: a number, a percentage of `percent`, an angle in degrees for a hue, or `none` (0). */
-function component(token: string, percent: number | undefined): number | null {
+/**
+ * A component: a number, a percentage of `percent`, or `none` (0). Without
+ * `percent`, a hue: a number or an angle, in degrees.
+ */
+function component(token: string, percent?: number): number | null {
   if (token === "none") return 0;
   const match = NUMBER.exec(token);
   if (!match) return null;
   const value = Number(match[1]);
   const unit = match[2] ?? "";
   if (percent === undefined) {
-    const degrees = unit === "%" ? Number.NaN : value * ANGLE_UNITS[unit]!;
-    return Number.isNaN(degrees) ? null : ((degrees % 360) + 360) % 360;
+    if (unit === "%") return null;
+    const degrees = value * ANGLE_UNITS[unit]!;
+    return Number.isFinite(degrees) ? ((degrees % 360) + 360) % 360 : null;
   }
-  if (unit === "%") return (value / 100) * percent;
-  return unit === "" ? value : null;
+  if (unit !== "" && unit !== "%") return null;
+  const result = unit === "%" ? (value / 100) * percent : value;
+  return Number.isFinite(result) ? result : null;
 }
 
-/**
- * The percentage reference of each component (undefined: a hue) and the
- * conversion to sRGB, by function. hsl() and hwb() take plain numbers too
- * (`hsl(120 50 50)`), so their percentages are of 100.
- */
-const FUNCTIONS: Record<string, { percent: (number | undefined)[]; toSrgb: (v: Vec3) => Vec3 }> = {
-  rgb: { percent: [255, 255, 255], toSrgb: (v) => v.map((c) => c / 255) as Vec3 },
-  hsl: { percent: [undefined, 100, 100], toSrgb: hslToSrgb },
-  hwb: { percent: [undefined, 100, 100], toSrgb: hwbToSrgb },
+interface ColorFunction {
+  /** The percentage reference of each component (undefined: a hue). */
+  percent: (number | undefined)[];
+  toSrgb: (v: Vec3) => Vec3;
+}
+
+const RGB: ColorFunction = {
+  percent: [255, 255, 255],
+  toSrgb: (v) => v.map((c) => c / 255) as Vec3,
+};
+const FUNCTIONS: Record<string, ColorFunction> = {
+  rgb: RGB,
+  rgba: RGB,
   lab: { percent: [100, 125, 125], toSrgb: labToSrgb },
   lch: { percent: [100, 150, undefined], toSrgb: (v) => labToSrgb(fromPolar(v)) },
   oklab: { percent: [1, 0.4, 0.4], toSrgb: oklabToSrgb },
   oklch: { percent: [1, 0.4, undefined], toSrgb: (v) => oklabToSrgb(fromPolar(v)) },
 };
-FUNCTIONS.rgba = FUNCTIONS.rgb!;
-FUNCTIONS.hsla = FUNCTIONS.hsl!;
 
 /** A table's own entry: the string comes from the page, and could be `constructor`. */
 const own = <T>(table: Record<string, T>, key: string): T | undefined =>
   Object.hasOwn(table, key) ? table[key] : undefined;
 
 const FUNCTION = /^([a-z-]+)\((.*)\)$/;
-const HEX = /^#([\da-f]{3,4}|[\da-f]{6}|[\da-f]{8})$/;
 
-/** Parses a CSS color into sRGB (clipped to its gamut) and an alpha, or null if it cannot. */
-export function parseCssColor(css: string): SrgbColor | null {
-  const text = css.trim().toLowerCase();
-  if (text === "transparent") return { r: 0, g: 0, b: 0, alpha: 0 };
-  const hex = HEX.exec(text)?.[1];
-  if (hex) {
-    const digits = (hex.length <= 4 ? hex.replace(/./g, "$&$&") : hex).match(/../g)!;
-    const [r, g, b, a = 1] = digits.map((d) => parseInt(d, 16) / 255);
-    return { r: r!, g: g!, b: b!, alpha: a };
-  }
-  const named = own(Color.NAMES as Record<string, number>, text);
-  if (named !== undefined)
-    return {
-      r: (named >> 16) / 255,
-      g: ((named >> 8) & 255) / 255,
-      b: (named & 255) / 255,
-      alpha: 1,
-    };
-
-  const call = FUNCTION.exec(text);
-  if (!call) return null;
-  const [, name, body] = call as unknown as [string, string, string];
-  let tokens: string[];
-  let alphaToken: string | undefined;
-  if (body.includes(",")) {
-    // The legacy syntax: rgba(1, 2, 3, 0.5).
-    if (name === "color") return null;
-    tokens = body.split(",").map((t) => t.trim());
-    if (tokens.length === 4) alphaToken = tokens.pop();
-  } else {
+/**
+ * The components and the alpha of a color function's body, or null if it is
+ * not in its syntax. Only rgb() and rgba() have the legacy, comma separated
+ * one, with no `none`, and numbers or percentages but not both.
+ */
+function split(name: string, body: string): { tokens: string[]; alpha?: string } | null {
+  if (!body.includes(",")) {
     const [main, alpha, extra] = body.split("/");
     if (extra !== undefined) return null;
-    tokens = main!.trim().split(/\s+/);
-    alphaToken = alpha?.trim();
+    return { tokens: main!.trim().split(/\s+/), alpha: alpha?.trim() };
   }
+  if (own(FUNCTIONS, name) !== RGB) return null;
+  const tokens = body.split(",").map((t) => t.trim());
+  const alpha = tokens.length === 4 ? tokens.pop() : undefined;
+  if (tokens.includes("none") || alpha === "none") return null;
+  const percents = tokens.filter((t) => t.endsWith("%")).length;
+  if (percents !== 0 && percents !== tokens.length) return null;
+  return { tokens, alpha };
+}
 
-  let toSrgb: (v: Vec3) => Vec3;
-  let percent: (number | undefined)[];
-  if (name === "color") {
-    const space = own(COLOR_SPACES, tokens.shift() ?? "");
-    if (!space) return null;
-    [toSrgb, percent] = [space, [1, 1, 1]];
-  } else {
-    const fn = own(FUNCTIONS, name);
-    if (!fn) return null;
-    ({ toSrgb, percent } = fn);
-  }
-  if (tokens.length !== 3) return null;
-  const values = tokens.map((t, i) => component(t, percent[i]));
-  const alpha = alphaToken === undefined ? 1 : component(alphaToken, 1);
+/** color()'s space, as a function whose components are percentages of 1. */
+function colorSpace(space: string): ColorFunction | undefined {
+  const toSrgb = own(COLOR_SPACES, space);
+  return toSrgb && { percent: [1, 1, 1], toSrgb };
+}
+
+function parse(css: string): SrgbColor | null {
+  const text = css.trim().toLowerCase();
+  if (text === "transparent") return { r: 0, g: 0, b: 0, alpha: 0 };
+  const [, name = "", body = ""] = FUNCTION.exec(text) ?? [];
+  const parts = split(name, body);
+  if (!parts) return null;
+  const { tokens } = parts;
+  const fn = name === "color" ? colorSpace(tokens.shift() ?? "") : own(FUNCTIONS, name);
+  if (!fn || tokens.length !== 3) return null;
+  const values = tokens.map((t, i) => component(t, fn.percent[i]));
+  const alpha = parts.alpha === undefined ? 1 : component(parts.alpha, 1);
   if (values.includes(null) || alpha === null) return null;
-  const [r, g, b] = toSrgb(values as Vec3).map(clamp01) as Vec3;
-  if (![r, g, b, alpha].every(Number.isFinite)) return null;
+  const [r, g, b] = fn.toSrgb(values as Vec3).map(clamp01) as Vec3;
+  // Huge components overflow in the conversion (Infinity - Infinity).
+  if (![r, g, b].every(Number.isFinite)) return null;
   return { r, g, b, alpha: clamp01(alpha) };
+}
+
+let last: { css: string; color: SrgbColor | null } | undefined;
+
+/**
+ * Parses a CSS color into sRGB (clipped to its gamut) and an alpha, or null if
+ * it cannot. The caret's color seldom changes, so the last one is kept.
+ */
+export function parseCssColor(css: string): SrgbColor | null {
+  if (last?.css !== css) last = { css, color: parse(css) };
+  return last.color;
 }
