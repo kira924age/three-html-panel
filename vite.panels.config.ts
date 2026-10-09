@@ -4,7 +4,8 @@
 // server or proxy in front of an existing site could; a build has the tag
 // already (vite.config.ts uses the same plugin).
 
-import { posix } from "node:path";
+import { existsSync, readdirSync } from "node:fs";
+import { join, posix } from "node:path";
 import { defineConfig, loadEnv, type InlineConfig, type Plugin } from "vite";
 
 /** The same sandbox as the demo's iframes (PANEL_SANDBOX in src/html-panel.ts). */
@@ -33,8 +34,25 @@ export function originsFor(mode: string): { host: string; panel: string } {
 }
 /** Where the panel pages are, from the repository's root (and in URLs of the panel server). */
 export const SITES_DIR = "examples/sites";
-/** The pages under SITES_DIR this server serves (and adds the agent to); the others are packages of their own. */
+/** The pages under SITES_DIR the demo's scene shows, built (and deployed) with it. */
 export const PANEL_PAGES = ["notes", "controls", "reader"];
+
+/**
+ * Every page this server serves under SITES_DIR (and adds the agent to): the
+ * scene's and those only the end-to-end tests use. The directories with a
+ * package.json are sites of their own, served by their own servers.
+ */
+function servedPages(): string[] {
+  const sites = join(import.meta.dirname, SITES_DIR);
+  return readdirSync(sites, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .filter(
+      (name) =>
+        existsSync(join(sites, name, "index.html")) &&
+        !existsSync(join(sites, name, "package.json")),
+    );
+}
 /** Where a build puts the agent, so that pages can load it without bundling it. */
 export const AGENT_BUILD_FILE = "agent.js";
 
@@ -98,7 +116,7 @@ function panelConfig(mode: string) {
   return {
     root: import.meta.dirname,
     // Only the pages this server serves (see the scene's optimizeDeps in vite.config.ts).
-    optimizeDeps: { entries: PANEL_PAGES.map((name) => `${SITES_DIR}/${name}/index.html`) },
+    optimizeDeps: { entries: servedPages().map((name) => `${SITES_DIR}/${name}/index.html`) },
     clearScreen: false,
     server,
     preview: server,
