@@ -27,7 +27,8 @@ type Mat3 = [Vec3, Vec3, Vec3];
 const multiply = (m: Mat3, [x, y, z]: Vec3): Vec3 =>
   m.map((row) => row[0] * x + row[1] * y + row[2] * z) as Vec3;
 
-const clamp01 = (value: number) => Math.min(1, Math.max(0, value));
+const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+const clamp01 = (value: number) => clamp(value, 0, 1);
 
 /** sRGB's transfer function (display-p3 uses it too), applied to each channel of linear light. */
 const encodeSrgb = (rgb: Vec3): Vec3 =>
@@ -194,8 +195,10 @@ interface ColorFunction {
   percent: (number | undefined)[];
   toSrgb: (v: Vec3) => Vec3;
   /**
-   * What each component is clamped to, as CSS does when it parses the color
-   * (lightness, chroma, saturation). Browsers compute them clamped already.
+   * What each component is clamped to before the conversion, as browsers do
+   * when they parse the color: lightness, chroma and hsl()'s saturation (not
+   * above 100%, as only Firefox does). The colors come computed, so this
+   * only matters for what a page sends on its own.
    */
   ranges?: Range[];
   /** It has the legacy, comma separated syntax too: `rgba(1, 2, 3, 0.5)`. */
@@ -208,20 +211,17 @@ const RGB: ColorFunction = {
   legacy: true,
 };
 /**
- * The color functions but color(). hsl() and hwb() only come in the modern
- * syntax (the legacy one computes to rgb()), and take numbers for their
- * percentages too: `hsl(none 100 50)`.
+ * The color functions but color(). hsl() and hwb() only come from WebKit, with
+ * a `none` component, in the modern syntax (the others compute them to rgb()),
+ * and take numbers for their percentages too: `hsl(none 100 50)`.
  */
 const FUNCTIONS: Record<string, ColorFunction> = {
   rgb: RGB,
   rgba: RGB,
   hsl: { percent: [undefined, 100, 100], toSrgb: hslToSrgb, ranges: [ANY, NOT_NEGATIVE, ANY] },
-  // Whiteness and blackness clamped as in Chromium and Firefox (not in WebKit).
-  hwb: {
-    percent: [undefined, 100, 100],
-    toSrgb: hwbToSrgb,
-    ranges: [ANY, NOT_NEGATIVE, NOT_NEGATIVE],
-  },
+  // Whiteness and blackness not clamped, as WebKit draws them: hwb(30 -20 10)
+  // is rgb(230, 89, 0) there (Chromium and Firefox clamp them at 0).
+  hwb: { percent: [undefined, 100, 100], toSrgb: hwbToSrgb },
   lab: { percent: [100, 125, 125], toSrgb: labToSrgb, ranges: [[0, 100], ANY, ANY] },
   lch: {
     percent: [100, 150, undefined],
@@ -273,15 +273,15 @@ export function parseCssColor(css: string): SrgbColor | null {
   const text = css.trim().toLowerCase();
   if (text === "transparent") return { r: 0, g: 0, b: 0, alpha: 0 };
   const [, name = "", body = ""] = FUNCTION.exec(text) ?? [];
-  const parts = split(body, own(FUNCTIONS, name)?.legacy ?? false);
+  const named = own(FUNCTIONS, name);
+  const parts = split(body, named?.legacy ?? false);
   if (!parts) return null;
   const { tokens } = parts;
-  const fn = name === "color" ? colorSpace(tokens.shift() ?? "") : own(FUNCTIONS, name);
+  const fn = name === "color" ? colorSpace(tokens.shift() ?? "") : named;
   if (!fn || tokens.length !== 3) return null;
   const values = tokens.map((t, i) => {
     const value = component(t, fn.percent[i]);
-    const [min, max] = fn.ranges?.[i] ?? ANY;
-    return value === null ? null : Math.min(max, Math.max(min, value));
+    return value === null ? null : clamp(value, ...(fn.ranges?.[i] ?? ANY));
   });
   const alpha = parts.alpha === undefined ? 1 : component(parts.alpha, 1);
   if (values.includes(null) || alpha === null) return null;
