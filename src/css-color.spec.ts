@@ -52,6 +52,16 @@ describe("parseCssColor", () => {
     expect(bytes("color(srgb 2 -1 0.5 / 3)")).toEqual([255, 0, 128, 1]);
   });
 
+  it("reads hsl() and hwb() with none, as WebKit keeps them", () => {
+    expect(bytes("hsl(none 100 50)")).toEqual([255, 0, 0, 1]);
+    expect(bytes("hsl(120 none 50)")).toEqual([128, 128, 128, 1]);
+    expect(bytes("hsl(120 100 25 / none)")).toEqual([0, 128, 0, 0]);
+    expect(bytes("hsl(-240deg 100% 25%)")).toEqual([0, 128, 0, 1]);
+    expect(bytes("hwb(none 20 10)")).toEqual([230, 51, 51, 1]);
+    expect(bytes("hwb(30 20 10 / 0.5)")).toEqual([230, 140, 51, 0.5]);
+    expect(bytes("hwb(0 60 60)")).toEqual([128, 128, 128, 1]);
+  });
+
   it("reads transparent as a zero alpha", () => {
     expect(parseCssColor("transparent")?.alpha).toBe(0);
     expect(parseCssColor("oklch(0.5 0.1 200 / 0)")?.alpha).toBe(0);
@@ -64,7 +74,9 @@ describe("parseCssColor", () => {
       "notacolor",
       "#ff0000",
       "red",
-      "hsl(120 100% 25%)",
+      "hsl(120, 100%, 25%)",
+      "hwb(none, 20%, 10%)",
+      "rgb(1. 2 3)",
       "rgb()",
       "rgb(1 2)",
       "rgb(1 2 3 4)",
@@ -95,13 +107,5 @@ describe("parseCssColor", () => {
       "color(__proto__ 1 2 3)",
     ])
       expect(parseCssColor(bad), bad).toBeNull();
-  });
-
-  it("gives the same color for the same string, parsed once", () => {
-    const color = parseCssColor("oklch(0.7 0.1 150)");
-    expect(parseCssColor("oklch(0.7 0.1 150)")).toBe(color);
-    expect(parseCssColor("oklch(0.7 0.1 151)")).not.toEqual(color);
-    expect(parseCssColor("nope")).toBeNull();
-    expect(parseCssColor("nope")).toBeNull();
   });
 });
