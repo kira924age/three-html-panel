@@ -1,5 +1,5 @@
 {
-  "name": "three-html-panel",
+  "name": "@urth/three-html-panel",
   "version": "0.1.0",
   "description": "Show existing web pages, scripts included and from any origin, as interactive panels in a three.js scene",
   "keywords": [
@@ -12,14 +12,14 @@
     "vr",
     "webxr"
   ],
-  "homepage": "https://github.com/kira924age/three-html-panel#readme",
+  "homepage": "https://github.com/urth-inc/three-html-panel#readme",
   "bugs": {
-    "url": "https://github.com/kira924age/three-html-panel/issues"
+    "url": "https://github.com/urth-inc/three-html-panel/issues"
   },
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/kira924age/three-html-panel.git"
+    "url": "git+https://github.com/urth-inc/three-html-panel.git"
   },
   "files": [
     "lib"
@@ -44,6 +44,9 @@
     },
     "./agent-script.js": "./lib/agent-script.js",
     "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "dev": "vp dev",

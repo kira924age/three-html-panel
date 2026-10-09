@@ -1,0 +1,44 @@
+name: Release
+
+# Publishes the npm package when a version tag (v0.1.0, ...) is pushed. npm
+# trusts this workflow (Trusted Publishing, set on the package's settings on
+# npmjs.com), so no token is stored here; the package gets provenance.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+  # For npm's Trusted Publishing (OIDC) and provenance.
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: voidzero-dev/setup-vp@v1.21.1
+        with:
+          node-version: "24"
+          cache: true
+      - name: The tag is package.json's version
+        run: |
+          version="v$(node -p 'require("./package.json").version')"
+          if [ "$GITHUB_REF_NAME" != "$version" ]; then
+            echo "The tag $GITHUB_REF_NAME is not package.json's version ($version)" >&2
+            exit 1
+          fi
+      # The first version is published by hand (npm can only trust this
+      # workflow once the package exists): its tag publishes nothing again.
+      - name: Not published yet
+        id: unpublished
+        run: |
+          if npm view "@urth/three-html-panel@${GITHUB_REF_NAME#v}" version >/dev/null 2>&1; then
+            echo "@urth/three-html-panel@${GITHUB_REF_NAME#v} is on npm already"
+          else
+            echo "yes=true" >> "$GITHUB_OUTPUT"
+          fi
+      # prepublishOnly runs vp check, the unit tests and vp pack first.
+      - if: steps.unpublished.outputs.yes == 'true'
+        run: npm publish --provenance

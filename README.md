@@ -21,7 +21,7 @@ The page runs in an `<iframe>` and loads a small script, the **agent**. The agen
 ## Install
 
 ```bash
-npm install three-html-panel three
+npm install @urth/three-html-panel three
 ```
 
 three r158 or later (with `@types/three` 0.158 or later for TypeScript).
@@ -29,7 +29,7 @@ three r158 or later (with `@types/three` 0.158 or later for TypeScript).
 ## Usage
 
 ```ts
-import { HtmlPanel, PanelPointer } from "three-html-panel";
+import { HtmlPanel, PanelPointer } from "@urth/three-html-panel";
 
 const panel = new HtmlPanel({
   url: "https://panels.example/notes/",
@@ -63,12 +63,12 @@ For VR, add a `PanelXRPointer` (call its `update()` every frame) and give it a `
 
 ### Adding the agent to a page
 
-The agent must run before the page's own scripts, and names the host's origin. With a tag, first in `<head>` (from a CDN, or from your server out of `node_modules/three-html-panel/lib/`):
+The agent must run before the page's own scripts, and names the host's origin. With a tag, first in `<head>` (from a CDN, or from your server out of `node_modules/@urth/three-html-panel/lib/`):
 
 ```html
 <script
   type="module"
-  src="https://cdn.jsdelivr.net/npm/three-html-panel@0.1/lib/agent-script.js"
+  src="https://cdn.jsdelivr.net/npm/@urth/three-html-panel@0.1/lib/agent-script.js"
   data-host-origin="https://host.example"
 ></script>
 ```
@@ -76,7 +76,7 @@ The agent must run before the page's own scripts, and names the host's origin. W
 Or first in the page's own bundle:
 
 ```ts
-import { startAgent } from "three-html-panel/agent";
+import { startAgent } from "@urth/three-html-panel/agent";
 startAgent({ hostOrigin: "https://host.example" });
 ```
 
@@ -86,7 +86,7 @@ For pages you cannot edit, a server or proxy can insert the tag; `injectPanelAge
 
 ```ts
 // In the page
-import { onHostMessage, sendToHost } from "three-html-panel/page";
+import { onHostMessage, sendToHost } from "@urth/three-html-panel/page";
 sendToHost({ color: "#3b82f6" });
 onHostMessage((data) => console.log(data));
 
