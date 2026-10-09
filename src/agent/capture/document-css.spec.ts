@@ -20,6 +20,58 @@ describe("DocumentCss", () => {
   });
 });
 
+/**
+ * Makes `importing` @import `imported` first (jsdom loads no @import): the
+ * document has that one sheet.
+ */
+function importSheet(
+  imported: CSSStyleSheet,
+  importing: CSSStyleSheet,
+  conditions: { layerName?: string | null; supportsText?: string | null } = {},
+): void {
+  const importRule = Object.create(window.CSSImportRule.prototype, {
+    styleSheet: { value: imported },
+    media: { value: { mediaText: "" } },
+    layerName: { value: conditions.layerName ?? null },
+    supportsText: { value: conditions.supportsText ?? null },
+  }) as CSSImportRule;
+  const sheet = {
+    href: null,
+    disabled: false,
+    cssRules: [importRule, ...Array.from(importing.cssRules)],
+  } as unknown as CSSStyleSheet;
+  vi.spyOn(document, "styleSheets", "get").mockReturnValue([sheet] as unknown as StyleSheetList);
+}
+
+describe("@import rules", () => {
+  it("put the imported sheet in the layer it is imported into, @namespace rules outside it", () => {
+    vi.stubGlobal("matchMedia", () => ({ matches: true }));
+    document.head.innerHTML =
+      '<style>@namespace x url("urn:i"); a { color: blue }</style><style>a { color: red }</style>';
+    const [imported, importing] = Array.from(document.styleSheets);
+    importSheet(imported!, importing!, { layerName: "base" });
+    expect(new DocumentCss(document, () => null).get()[1]).toBe(
+      '@namespace x url("urn:i");\n@layer base {\na{color: blue;}\n}',
+    );
+    // An anonymous layer too.
+    importSheet(imported!, importing!, { layerName: "" });
+    expect(new DocumentCss(document, () => null).get()[1]).toBe(
+      '@namespace x url("urn:i");\n@layer {\na{color: blue;}\n}',
+    );
+  });
+
+  it("leave out a sheet imported under supports() the browser does not meet", () => {
+    vi.stubGlobal("matchMedia", () => ({ matches: true }));
+    vi.stubGlobal("CSS", { supports: (condition: string) => condition === "display: grid" });
+    document.head.innerHTML = "<style>a { color: blue }</style><style>a { color: red }</style>";
+    const [imported, importing] = Array.from(document.styleSheets);
+    importSheet(imported!, importing!, { supportsText: "display: frobnicate" });
+    expect(new DocumentCss(document, () => null).get().join("\n")).not.toContain("blue");
+    importSheet(imported!, importing!, { supportsText: "display: grid" });
+    expect(new DocumentCss(document, () => null).get().join("\n")).toContain("blue");
+  });
+});
+
 describe("@namespace rules", () => {
   it("stay first in their own sheet, which the copy keeps apart from the others", () => {
     vi.stubGlobal("matchMedia", () => ({ matches: true }));
@@ -43,17 +95,7 @@ describe("@namespace rules", () => {
     document.head.innerHTML =
       '<style>x|item { color: red }</style><style>@namespace x url("urn:o"); x|item { color: blue }</style>';
     const [imported, importing] = Array.from(document.styleSheets);
-    // jsdom loads no @import: one standing for it, of the sheet it imports.
-    const importRule = Object.create(window.CSSImportRule.prototype, {
-      styleSheet: { value: imported },
-      media: { value: { mediaText: "" } },
-    }) as CSSImportRule;
-    const sheet = {
-      href: null,
-      disabled: false,
-      cssRules: [importRule, ...Array.from(importing!.cssRules)],
-    } as unknown as CSSStyleSheet;
-    vi.spyOn(document, "styleSheets", "get").mockReturnValue([sheet] as unknown as StyleSheetList);
+    importSheet(imported!, importing!);
     const sheets = new DocumentCss(document, () => null).get();
     // The importing sheet's prefix does not count in the imported one.
     expect(sheets.slice(1, 3)).toEqual([

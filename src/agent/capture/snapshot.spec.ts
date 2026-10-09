@@ -452,6 +452,19 @@ describe("selections in the image", () => {
   });
 });
 
+describe("buildFrameSvg", () => {
+  it("puts each sheet in a <style> of its own, in order, after the agent's layer", () => {
+    const svg = buildFrameSvg("<html/>", ["a{}", "b{content:']]>'}"], 10, 20);
+    expect(svg).toBe(
+      `<svg xmlns="http://www.w3.org/2000/svg" width="10" height="20" viewBox="0 0 10 20">` +
+        `<style>@layer thp-scrolled;</style>` +
+        `<style><![CDATA[a{}]]></style>` +
+        `<style><![CDATA[b{content:']]]]><![CDATA[>'}]]></style>` +
+        `<foreignObject x="0" y="0" width="100%" height="100%"><html/></foreignObject></svg>`,
+    );
+  });
+});
+
 describe("the page's background", () => {
   /** The copies of <html> and <body>, from a snapshot with these images loaded. */
   function snapshotRoot(images: Record<string, string> = {}): {

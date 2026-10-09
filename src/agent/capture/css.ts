@@ -153,22 +153,39 @@ export class DocumentCss {
     return this.css;
   }
 
-  /** Adds a sheet's rules to `sheets`, as a sheet (after those it imports). */
-  private serializeSheet(source: CSSStyleSheet, sheets: string[][]): void {
+  /**
+   * Adds a sheet's rules to `sheets`, as a sheet (after those it imports).
+   * `layers` are the cascade layers it was imported into (`@import … layer()`,
+   * "" for an anonymous one), outermost first: its rules go in them, as on the
+   * page.
+   */
+  private serializeSheet(source: CSSStyleSheet, sheets: string[][], layers: string[] = []): void {
     if (source.disabled) return;
     const sheet = this.readable(source);
     if (!sheet) return;
-    const rules: string[] = [];
-    this.serializeRules(sheet.cssRules, rules, sheets);
+    let rules: string[] = [];
+    this.serializeRules(sheet.cssRules, rules, sheets, layers);
     if (source.href) {
       // A namespace's url() is a name, not a file.
       for (let i = 0; i < rules.length; i++)
         if (!isNamespace(rules[i]!)) rules[i] = absolutizeUrls(rules[i]!, source.href);
     }
+    if (layers.length > 0) {
+      // @namespace rules stay first, outside the layer (they cannot be in one).
+      let layered = rules.filter((rule) => !isNamespace(rule)).join("\n");
+      for (const layer of [...layers].reverse())
+        layered = `@layer ${layer ? `${layer} ` : ""}{\n${layered}\n}`;
+      rules = [...rules.filter(isNamespace), layered];
+    }
     sheets.push(rules);
   }
 
-  private serializeRules(rules: CSSRuleList, out: string[], sheets: string[][]): void {
+  private serializeRules(
+    rules: CSSRuleList,
+    out: string[],
+    sheets: string[][],
+    layers: string[],
+  ): void {
     const { CSSStyleRule, CSSMediaRule, CSSSupportsRule, CSSImportRule, CSSKeyframesRule, CSS } =
       this.window;
     for (const rule of Array.from(rules)) {
@@ -181,13 +198,21 @@ export class DocumentCss {
         );
       } else if (rule instanceof CSSMediaRule) {
         if (this.window.matchMedia(rule.conditionText).matches)
-          this.serializeRules(rule.cssRules, out, sheets);
+          this.serializeRules(rule.cssRules, out, sheets, layers);
       } else if (rule instanceof CSSSupportsRule) {
-        if (CSS.supports(rule.conditionText)) this.serializeRules(rule.cssRules, out, sheets);
+        if (CSS.supports(rule.conditionText))
+          this.serializeRules(rule.cssRules, out, sheets, layers);
       } else if (rule instanceof CSSImportRule) {
         const sheet = rule.styleSheet;
-        if (sheet && this.window.matchMedia(rule.media.mediaText || "all").matches)
-          this.serializeSheet(sheet, sheets);
+        // Its conditions: media, and supports() (newer browsers).
+        const supports = (rule as { supportsText?: string | null }).supportsText;
+        const layer = (rule as { layerName?: string | null }).layerName;
+        if (
+          sheet &&
+          this.window.matchMedia(rule.media.mediaText || "all").matches &&
+          (!supports || CSS.supports(supports))
+        )
+          this.serializeSheet(sheet, sheets, layer == null ? layers : [...layers, layer]);
       } else if (rule instanceof CSSKeyframesRule) {
         // Animations are frozen, so keyframes are never used.
       } else {

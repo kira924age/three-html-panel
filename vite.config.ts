@@ -141,7 +141,6 @@ export default defineConfig(({ mode }) => {
           controls: resolve(import.meta.dirname, SITES_DIR, "controls/index.html"),
           reader: resolve(import.meta.dirname, SITES_DIR, "reader/index.html"),
           article: resolve(import.meta.dirname, SITES_DIR, "article/index.html"),
-          boxes: resolve(import.meta.dirname, SITES_DIR, "boxes/index.html"),
           agent: resolve(import.meta.dirname, "src/agent/entry.ts"),
         },
         output: {
