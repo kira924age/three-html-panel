@@ -43,6 +43,8 @@ import {
   announceChange,
   isListBox,
   isUsable,
+  nextMatch,
+  OPTION_STEPS,
   optionAt,
   revealOption,
   selectRange,
@@ -59,15 +61,10 @@ import {
   type Axis,
   type Scrollbar,
 } from "./scrollbars";
-import {
-  SelectPopup,
-  adjacentOption,
-  chooseOption,
-  isDropDown,
-  type PopupView,
-} from "./select-popup";
+import { SelectPopup, chooseOption, isDropDown, labelOf, type PopupView } from "./select-popup";
 import {
   blockAround,
+  caretPoint,
   comparePoints,
   editingHostOf,
   pointAt,
@@ -700,27 +697,11 @@ export class InputSynthesizer {
 
   /** Whether a point is on a character of the page's text (not only inside an element with text). */
   #isOverText(x: number, y: number): boolean {
-    const document = this.#document as Document & {
-      caretPositionFromPoint?: (
-        x: number,
-        y: number,
-      ) => { offsetNode: Node; offset: number } | null;
-      caretRangeFromPoint?: (x: number, y: number) => Range | null;
-    };
-    let node: Node | null = null;
-    let offset = 0;
-    if (document.caretPositionFromPoint) {
-      const position = document.caretPositionFromPoint(x, y);
-      node = position?.offsetNode ?? null;
-      offset = position?.offset ?? 0;
-    } else if (document.caretRangeFromPoint) {
-      const range = document.caretRangeFromPoint(x, y);
-      node = range?.startContainer ?? null;
-      offset = range?.startOffset ?? 0;
-    }
-    if (!node || node.nodeType !== Node.TEXT_NODE) return false;
+    const point = caretPoint(this.#document, x, y);
+    if (!point || point.node.nodeType !== Node.TEXT_NODE) return false;
+    const { node, offset } = point;
     const length = (node as Text).length;
-    const range = document.createRange();
+    const range = this.#document.createRange();
     // The caret position is between two characters; the point is on one of them.
     for (const [from, to] of [
       [offset - 1, offset],
@@ -1119,20 +1100,11 @@ export class InputSynthesizer {
     if (primary && !altKey && key.toLowerCase() === "a" && select.multiple) {
       selectRange(select, 0, select.options.length - 1);
     } else {
-      const steps = {
-        ArrowDown: 1,
-        ArrowUp: -1,
-        PageDown: 10,
-        PageUp: -10,
-        End: Infinity,
-        Home: -Infinity,
-      }[key];
+      const steps = OPTION_STEPS[key];
       if (steps === undefined || altKey || primary) return;
       const from = this.#listCursors.get(select) ?? Math.max(0, select.selectedIndex);
-      const index = stepOption(
-        select,
-        from,
-        Number.isFinite(steps) ? steps : Math.sign(steps) * select.options.length,
+      const index = stepOption(select.options.length, from, steps, (index) =>
+        isUsable(select.options[index]!),
       );
       if (select.multiple && shiftKey)
         selectRange(select, this.#listAnchors.get(select) ?? from, index);
@@ -1272,20 +1244,12 @@ export class InputSynthesizer {
 
   /** The keys while the list is open, which go to it rather than the page. False to handle the key as usual. */
   #popupKey(popup: SelectPopup, input: Extract<PanelInput, { type: "key" }>): boolean {
-    const many = popup.items.length;
+    const steps = OPTION_STEPS[input.key];
+    if (steps !== undefined) {
+      popup.step(steps);
+      return true;
+    }
     switch (input.key) {
-      case "ArrowDown":
-      case "ArrowUp":
-        popup.step(input.key === "ArrowDown" ? 1 : -1);
-        return true;
-      case "PageDown":
-      case "PageUp":
-        popup.step(input.key === "PageDown" ? 10 : -10);
-        return true;
-      case "Home":
-      case "End":
-        popup.step(input.key === "End" ? many : -many);
-        return true;
       case "Enter":
       case " ":
         this.#popup = null;
@@ -1311,38 +1275,24 @@ export class InputSynthesizer {
       this.#popup = new SelectPopup(select);
       return;
     }
-    if (ctrlKey || metaKey || altKey) return;
-    const direction =
-      key === "ArrowDown"
-        ? 1
-        : key === "ArrowUp"
-          ? -1
-          : key === "Home"
-            ? "first"
-            : key === "End"
-              ? "last"
-              : null;
-    if (direction === null) return;
-    const index = adjacentOption(select, direction);
-    if (index !== null) chooseOption(select, index);
+    // The arrows step from the selected option, Home and End from the ends; not the page keys.
+    const steps = OPTION_STEPS[key];
+    if (ctrlKey || metaKey || altKey || steps === undefined || key.startsWith("Page")) return;
+    const options = select.options;
+    const from = Number.isFinite(steps) ? select.selectedIndex : steps > 0 ? -1 : options.length;
+    const index = stepOption(options.length, from, steps, (index) => isUsable(options[index]!));
+    // Nothing to go to (stepOption returns where it started): it stays.
+    if (options[index] && isUsable(options[index])) chooseOption(select, index);
   }
 
   /** Typing on a focused <select> picks the next option that starts with the text. */
   #selectTypeAhead(select: HTMLSelectElement, text: string): void {
-    const options = Array.from(select.options);
-    const prefix = text.toLowerCase();
-    for (let offset = 1; offset <= options.length; offset++) {
-      const index = (select.selectedIndex + offset + options.length) % options.length;
+    const options = select.options;
+    const index = nextMatch(options.length, select.selectedIndex, text, (index) => {
       const option = options[index]!;
-      if (
-        !option.disabled &&
-        !option.hidden &&
-        (option.label || option.text).trim().toLowerCase().startsWith(prefix)
-      ) {
-        chooseOption(select, index);
-        return;
-      }
-    }
+      return option.disabled || option.hidden ? null : labelOf(option);
+    });
+    if (index !== null) chooseOption(select, index);
   }
 
   // --- Drag scrolling ---------------------------------------------------------
@@ -1400,7 +1350,7 @@ export class InputSynthesizer {
   // --- Scrollbars ------------------------------------------------------------
 
   #pressScrollbar(bar: Scrollbar, x: number, y: number): void {
-    const position = bar.axis === "y" ? y : x;
+    const position = { x, y }[bar.axis];
     if (contains(hitBox(bar, bar.thumb), x, y)) {
       const scroll = bar.axis === "y" ? bar.element.scrollTop : bar.element.scrollLeft;
       this.#scrollbarPress = { bar, drag: { from: position, scroll }, position };
@@ -1425,16 +1375,16 @@ export class InputSynthesizer {
 
   /** Scrolls a page toward `position` on the track. False once the thumb is there. */
   #pageToward(bar: Scrollbar, position: number): boolean {
-    const [thumbStart, thumbEnd] =
-      bar.axis === "y"
-        ? [bar.thumb.top, bar.thumb.top + bar.thumb.height]
-        : [bar.thumb.left, bar.thumb.left + bar.thumb.width];
-    if (position >= thumbStart && position < thumbEnd) return false;
-    const direction = position < thumbStart ? -1 : 1;
-    const page =
-      (bar.axis === "y" ? bar.element.clientHeight : bar.element.clientWidth) * PAGE_SCROLL_RATIO;
-    if (bar.axis === "y") scrollByUser(bar.element, 0, direction * page);
-    else scrollByUser(bar.element, direction * page, 0);
+    const { thumb, element } = bar;
+    const vertical = bar.axis === "y";
+    const thumbStart = vertical ? thumb.top : thumb.left;
+    if (position >= thumbStart && position < thumbStart + (vertical ? thumb.height : thumb.width))
+      return false;
+    const delta =
+      (position < thumbStart ? -1 : 1) *
+      (vertical ? element.clientHeight : element.clientWidth) *
+      PAGE_SCROLL_RATIO;
+    scrollByUser(element, vertical ? 0 : delta, vertical ? delta : 0);
     return true;
   }
 
@@ -1442,13 +1392,12 @@ export class InputSynthesizer {
   #dragScrollbar(x: number, y: number): void {
     const press = this.#scrollbarPress!;
     const { bar, drag } = press;
-    press.position = bar.axis === "y" ? y : x;
+    press.position = { x, y }[bar.axis];
     if (!drag) return;
     const { from, scroll } = drag;
     const travel = thumbTravel(bar);
     if (travel <= 0) return;
-    const moved = (bar.axis === "y" ? y : x) - from;
-    const offset = scroll + (moved * maxScroll(bar)) / travel;
+    const offset = scroll + ((press.position - from) * maxScroll(bar)) / travel;
     bar.element.scrollTo({
       [bar.axis === "y" ? "top" : "left"]: offset,
       behavior: "instant",
@@ -1646,15 +1595,7 @@ export class InputSynthesizer {
     command: string,
     data: string | null = null,
   ): boolean {
-    const { InputEvent } = this.#window;
-    const before = new InputEvent("beforeinput", {
-      bubbles: true,
-      cancelable: true,
-      composed: true,
-      inputType,
-      data,
-    });
-    if (!host.dispatchEvent(before)) return false;
+    if (!this.#inputEvent(host, "beforeinput", inputType, data)) return false;
     this.#runningCommand = true;
     let done = false;
     try {
@@ -1671,8 +1612,26 @@ export class InputSynthesizer {
     const text = this.#document.createTextNode(data);
     range.insertNode(text);
     selection.collapse(text, text.length);
-    host.dispatchEvent(new InputEvent("input", { bubbles: true, composed: true, inputType, data }));
+    this.#inputEvent(host, "input", inputType, data);
     return true;
+  }
+
+  /** Dispatches beforeinput, which the page can cancel (then false), or input. */
+  #inputEvent(
+    target: Element,
+    type: "beforeinput" | "input",
+    inputType: string,
+    data: string | null,
+  ): boolean {
+    return target.dispatchEvent(
+      new this.#window.InputEvent(type, {
+        bubbles: true,
+        cancelable: type === "beforeinput",
+        composed: true,
+        inputType,
+        data,
+      }),
+    );
   }
 
   /** The default actions of keys on buttons, links, checkboxes and radio buttons. */
@@ -1780,22 +1739,12 @@ export class InputSynthesizer {
       which === "undo" ? this.#history.undo(field, now) : this.#history.redo(field, now);
     if (!state) return;
     const inputType = which === "undo" ? "historyUndo" : "historyRedo";
-    const { InputEvent } = this.#window;
-    const before = new InputEvent("beforeinput", {
-      bubbles: true,
-      cancelable: true,
-      composed: true,
-      inputType,
-      data: null,
-    });
-    if (!field.dispatchEvent(before)) return;
+    if (!this.#inputEvent(field, "beforeinput", inputType, null)) return;
     field.setRangeText(state.value, 0, field.value.length);
     field.setSelectionRange(state.start, state.end);
     this.#history.edited(field, field.value);
     this.#options.measure(() => revealIndex(field, state.end));
-    field.dispatchEvent(
-      new InputEvent("input", { bubbles: true, composed: true, inputType, data: null }),
-    );
+    this.#inputEvent(field, "input", inputType, null);
   }
 
   /** The host's field cut the selected text to the clipboard: take it out of the page's field too. */
@@ -1882,15 +1831,7 @@ export class InputSynthesizer {
    */
   #editText(field: TextField, text: string, start: number, end: number, inputType: string): void {
     const data = text === "" ? null : text;
-    const { InputEvent } = this.#window;
-    const before = new InputEvent("beforeinput", {
-      bubbles: true,
-      cancelable: true,
-      composed: true,
-      inputType,
-      data,
-    });
-    if (!field.dispatchEvent(before)) return;
+    if (!this.#inputEvent(field, "beforeinput", inputType, data)) return;
     this.#history.record(
       field,
       { value: field.value, start, end: field.selectionEnd ?? end },
@@ -1903,8 +1844,6 @@ export class InputSynthesizer {
     field.setRangeText(text, start, end, "end");
     this.#history.edited(field, field.value);
     this.#options.measure(() => revealIndex(field, field.selectionEnd ?? field.value.length));
-    field.dispatchEvent(
-      new InputEvent("input", { bubbles: true, composed: true, inputType, data }),
-    );
+    this.#inputEvent(field, "input", inputType, data);
   }
 }

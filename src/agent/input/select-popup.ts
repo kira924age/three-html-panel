@@ -8,6 +8,7 @@
 // and fires input and change, as the browser's list does.
 
 import type { Box, FrameWindow } from "../../types";
+import { announceChange, nextMatch, stepOption } from "./list-box";
 import { fontOf, textWidth } from "./selection";
 
 /** Items shown at once; more scroll. */
@@ -134,35 +135,20 @@ export class SelectPopup {
 
   /** Moves the highlight by `steps` choosable items (or to the first or last one past the ends). */
   step(steps: number): void {
-    const direction = Math.sign(steps);
-    if (direction === 0) return;
-    let item = this.highlighted;
-    let left = Math.abs(steps);
-    for (
-      let next = item + direction;
-      next >= 0 && next < this.items.length && left > 0;
-      next += direction
-    ) {
-      if (!this.choosable(next)) continue;
-      item = next;
-      left--;
-    }
-    this.highlighted = item;
-    this.#reveal(item);
+    this.highlighted = stepOption(this.items.length, this.highlighted, steps, (item) =>
+      this.choosable(item),
+    );
+    this.#reveal(this.highlighted);
   }
 
   /** Highlights the first choosable item (after the highlighted one) whose label starts with `text`. */
   typeAhead(text: string): void {
-    const prefix = text.toLowerCase();
-    const count = this.items.length;
-    for (let offset = 1; offset <= count; offset++) {
-      const item = (this.highlighted + offset) % count;
-      if (this.choosable(item) && this.items[item]!.label.trim().toLowerCase().startsWith(prefix)) {
-        this.highlighted = item;
-        this.#reveal(item);
-        return;
-      }
-    }
+    const item = nextMatch(this.items.length, this.highlighted, text, (item) =>
+      this.choosable(item) ? this.items[item]!.label : null,
+    );
+    if (item === null) return;
+    this.highlighted = item;
+    this.#reveal(item);
   }
 
   /** Scrolls the list by `deltaY` CSS px (whole items). */
@@ -220,38 +206,11 @@ function itemsOf(select: HTMLSelectElement): PopupItem[] {
   return items;
 }
 
-const labelOf = (option: HTMLOptionElement) => option.label || option.text;
+export const labelOf = (option: HTMLOptionElement) => option.label || option.text;
 
 /** Sets the select to an option, with input and change, as choosing it in the browser's list does. */
 export function chooseOption(select: HTMLSelectElement, index: number): void {
   if (select.selectedIndex === index) return;
   select.selectedIndex = index;
-  const { Event } = select.ownerDocument.defaultView as FrameWindow;
-  select.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
-  select.dispatchEvent(new Event("change", { bubbles: true }));
-}
-
-/** The next (or previous) option that can be chosen, from the selected one; null past the ends. */
-export function adjacentOption(
-  select: HTMLSelectElement,
-  direction: -1 | 1 | "first" | "last",
-): number | null {
-  const options = Array.from(select.options);
-  const usable = (option: HTMLOptionElement) =>
-    !option.disabled &&
-    !option.hidden &&
-    !(option.parentElement as HTMLOptGroupElement | null)?.disabled;
-  if (direction === "first" || direction === "last") {
-    const ordered = direction === "first" ? options : options.slice().reverse();
-    const option = ordered.find(usable);
-    return option ? options.indexOf(option) : null;
-  }
-  for (
-    let index = select.selectedIndex + direction;
-    index >= 0 && index < options.length;
-    index += direction
-  ) {
-    if (usable(options[index]!)) return index;
-  }
-  return null;
+  announceChange(select);
 }

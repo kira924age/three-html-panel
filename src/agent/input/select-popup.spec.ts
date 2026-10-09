@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vite-plus/test";
 import { InputSynthesizer } from "./input";
-import { SelectPopup, adjacentOption } from "./select-popup";
+import { SelectPopup } from "./select-popup";
 
 // jsdom rejects the `view` the agent passes (Vitest's window is not jsdom's
 // Window); events are made here without it.
@@ -116,18 +116,6 @@ describe("SelectPopup", () => {
   });
 });
 
-describe("adjacentOption", () => {
-  it("skips disabled and hidden options, and stops at the ends", () => {
-    select.selectedIndex = 1;
-    expect(adjacentOption(select, 1)).toBe(3);
-    expect(adjacentOption(select, -1)).toBe(0);
-    select.selectedIndex = 3;
-    expect(adjacentOption(select, 1)).toBeNull();
-    expect(adjacentOption(select, "first")).toBe(0);
-    expect(adjacentOption(select, "last")).toBe(3);
-  });
-});
-
 describe("the list in the panel", () => {
   let input: InputSynthesizer;
   let target: Element;
@@ -239,6 +227,23 @@ describe("the list in the panel", () => {
     key("Escape");
     input.handle({ type: "text", text: " " });
     expect(view()).not.toBeNull();
+  });
+
+  it("skips disabled and hidden options with the keys while closed, and stops at the ends", () => {
+    select.selectedIndex = 1;
+    select.focus();
+    key("ArrowDown");
+    expect(select.selectedIndex).toBe(3);
+    key("ArrowDown");
+    expect(select.selectedIndex).toBe(3);
+    key("ArrowUp");
+    expect(select.selectedIndex).toBe(1);
+    key("Home");
+    expect(select.selectedIndex).toBe(0);
+    key("ArrowUp");
+    expect(select.selectedIndex).toBe(0);
+    key("End");
+    expect(select.selectedIndex).toBe(3);
   });
 
   it("picks an option by typing its first letters", () => {

@@ -74,22 +74,54 @@ export function selectRange(
   }
 }
 
-/** The next option that can be selected from `index`, by `steps` (or to the first or last); `index` if none. */
-export function stepOption(select: HTMLSelectElement, index: number, steps: number): number {
-  const options = Array.from(select.options);
+/** How far the keys move in a list of options: Home and End go as far as there are. */
+export const OPTION_STEPS: Partial<Record<string, number>> = {
+  ArrowDown: 1,
+  ArrowUp: -1,
+  PageDown: 10,
+  PageUp: -10,
+  End: Infinity,
+  Home: -Infinity,
+};
+
+/**
+ * The item `steps` usable items on from `from` (back if negative), or the last
+ * usable one before the end of the list; `from` if there is none.
+ */
+export function stepOption(
+  count: number,
+  from: number,
+  steps: number,
+  usable: (index: number) => boolean,
+): number {
   const direction = Math.sign(steps);
-  let result = index;
+  let result = from;
   let left = Math.abs(steps);
-  for (
-    let next = index + direction;
-    next >= 0 && next < options.length && left > 0;
-    next += direction
-  ) {
-    if (!isUsable(options[next]!)) continue;
+  for (let next = from + direction; next >= 0 && next < count && left > 0; next += direction) {
+    if (!usable(next)) continue;
     result = next;
     left--;
   }
   return result;
+}
+
+/**
+ * The first item after `from`, going around, whose label starts with typed
+ * text, as typing on a list picks; null if none. `labelAt` is null for an item
+ * that cannot be picked.
+ */
+export function nextMatch(
+  count: number,
+  from: number,
+  text: string,
+  labelAt: (index: number) => string | null,
+): number | null {
+  const prefix = text.toLowerCase();
+  for (let offset = 1; offset <= count; offset++) {
+    const index = (from + offset + count) % count;
+    if (labelAt(index)?.trim().toLowerCase().startsWith(prefix)) return index;
+  }
+  return null;
 }
 
 /** Scrolls the list box so that an option shows. */

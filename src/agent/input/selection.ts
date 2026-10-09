@@ -62,22 +62,28 @@ export function isSelectable(element: Element): boolean {
  * where user-select is none.
  */
 export function pointAt(document: Document, x: number, y: number): Point | null {
-  const doc = document as Document & {
-    caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
-    caretRangeFromPoint?: (x: number, y: number) => Range | null;
-  };
-  let point: Point | null = null;
-  if (typeof doc.caretPositionFromPoint === "function") {
-    const position = doc.caretPositionFromPoint(x, y);
-    if (position) point = { node: position.offsetNode, offset: position.offset };
-  } else if (typeof doc.caretRangeFromPoint === "function") {
-    const range = doc.caretRangeFromPoint(x, y);
-    if (range) point = { node: range.startContainer, offset: range.startOffset };
-  }
+  const point = caretPoint(document, x, y);
   if (!point) return null;
   const element = elementOf(point.node);
   if (!element || element.closest("input, textarea, select") || !isSelectable(element)) return null;
   return point;
+}
+
+/** Where the browser would put a caret for a point (CSS px of the viewport), anywhere; null if nowhere. */
+export function caretPoint(document: Document, x: number, y: number): Point | null {
+  const doc = document as Document & {
+    caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
+    caretRangeFromPoint?: (x: number, y: number) => Range | null;
+  };
+  if (typeof doc.caretPositionFromPoint === "function") {
+    const position = doc.caretPositionFromPoint(x, y);
+    return position && { node: position.offsetNode, offset: position.offset };
+  }
+  if (typeof doc.caretRangeFromPoint === "function") {
+    const range = doc.caretRangeFromPoint(x, y);
+    return range && { node: range.startContainer, offset: range.startOffset };
+  }
+  return null;
 }
 
 /** -1 if `a` comes before `b` in the document, 1 after, 0 if they are the same position. */
@@ -109,16 +115,9 @@ function blockOf(element: Element): Element {
 
 /** The block (paragraph, list item...) a text position is in, as two positions spanning its content. */
 export function blockAround(point: Point): [Point, Point] {
-  const window = windowOf(point.node);
-  let block = elementOf(point.node);
-  while (
-    block &&
-    block.parentElement &&
-    /^(inline|contents)/.test(window.getComputedStyle(block).display)
-  ) {
-    block = block.parentElement;
-  }
-  if (!block) return [point, point];
+  const element = elementOf(point.node);
+  if (!element) return [point, point];
+  const block = blockOf(element);
   return [
     { node: block, offset: 0 },
     { node: block, offset: block.childNodes.length },
@@ -196,13 +195,7 @@ function clipInside(element: Element, viewport: Box, cache: Map<Element, Box>): 
     element !== document.body &&
     clipsOverflow(windowOf(element).getComputedStyle(element))
   ) {
-    const rect = element.getBoundingClientRect();
-    clip = intersect(clip, {
-      left: rect.left + element.clientLeft,
-      top: rect.top + element.clientTop,
-      width: element.clientWidth,
-      height: element.clientHeight,
-    });
+    clip = intersect(clip, paddingBox(element));
   }
   cache.set(element, clip);
   return clip;
@@ -215,24 +208,10 @@ function clipInside(element: Element, viewport: Box, cache: Map<Element, Box>): 
  * overflow is visible, shows its content past its box.
  */
 export function visibleBoxOf(element: Element): Box {
-  const document = element.ownerDocument;
-  const viewport = {
-    left: 0,
-    top: 0,
-    width: document.documentElement.clientWidth,
-    height: document.documentElement.clientHeight,
-  };
-  const outer = clipAbove(element, viewport, new Map());
+  const outer = clipAbove(element, viewportOf(element.ownerDocument), new Map());
   const style = windowOf(element).getComputedStyle(element);
   if (!element.matches("input, textarea") && !clipsOverflow(style)) return outer;
-  const rect = element.getBoundingClientRect();
-  const own = {
-    left: rect.left + element.clientLeft,
-    top: rect.top + element.clientTop,
-    width: element.clientWidth,
-    height: element.clientHeight,
-  };
-  return intersect(outer, own);
+  return intersect(outer, paddingBox(element));
 }
 
 /**
@@ -251,6 +230,25 @@ export function clipCaret<T extends { x: number; y: number; height: number }>(
   return { ...caret, y: top, height: bottom - top };
 }
 
+/** An element's padding box (where its content shows), in CSS px of the viewport. */
+export function paddingBox(element: Element): Box {
+  const rect = element.getBoundingClientRect();
+  return {
+    left: rect.left + element.clientLeft,
+    top: rect.top + element.clientTop,
+    width: element.clientWidth,
+    height: element.clientHeight,
+  };
+}
+
+/** The viewport, without its scrollbars. */
+const viewportOf = (document: Document): Box => ({
+  left: 0,
+  top: 0,
+  width: document.documentElement.clientWidth,
+  height: document.documentElement.clientHeight,
+});
+
 export function intersect(a: Box, b: Box): Box {
   const left = Math.max(a.left, b.left);
   const top = Math.max(a.top, b.top);
@@ -267,12 +265,7 @@ export function intersect(a: Box, b: Box): Box {
  */
 export function selectionBoxes(window: FrameWindow, range: Range): Box[] {
   const document = window.document;
-  const viewport = {
-    left: 0,
-    top: 0,
-    width: document.documentElement.clientWidth,
-    height: document.documentElement.clientHeight,
-  };
+  const viewport = viewportOf(document);
   const clips = new Map<Element, Box>();
   const boxes: Box[] = [];
   const root = range.commonAncestorContainer;
@@ -293,12 +286,7 @@ export function selectionBoxes(window: FrameWindow, range: Range): Box[] {
     if (part.collapsed) continue;
     const clip = clipInside(parent, viewport, clips);
     for (const rect of Array.from(part.getClientRects())) {
-      const box = intersect(clip, {
-        left: rect.left,
-        top: rect.top,
-        width: rect.width,
-        height: rect.height,
-      });
+      const box = intersect(clip, rect);
       if (box.width > 0 && box.height > 0) boxes.push(box);
       if (boxes.length === MAX_SELECTION_BOXES) return boxes;
     }
