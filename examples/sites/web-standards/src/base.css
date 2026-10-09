@@ -217,13 +217,67 @@ button.small {
   background: var(--accent);
 }
 
-.theme-toggle .when-dark,
-:root[data-theme="dark"] .theme-toggle .when-light {
-  display: none;
+/* The theme in use, as a button that opens a menu of the three. */
+.theme-switch {
+  flex-shrink: 0;
 }
 
-:root[data-theme="dark"] .theme-toggle .when-dark {
-  display: inline;
+.theme-button {
+  anchor-name: --theme-button;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.theme-button:hover,
+.theme-button[aria-expanded="true"] {
+  background: color-mix(in srgb, var(--text) 8%, var(--surface));
+}
+
+/* Under the button, its right edge on the button's. */
+.theme-menu {
+  margin: 0.35rem 0 0;
+  inset: auto;
+  position: fixed;
+  position-anchor: --theme-button;
+  position-area: bottom span-left;
+  min-width: 9.5rem;
+  padding: 0.3rem;
+}
+
+.theme-menu button {
+  display: flex;
+  width: 100%;
+  justify-content: flex-start;
+  gap: 0.6rem;
+  padding: 0.4rem 0.6rem;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--text);
+}
+
+.theme-menu button:hover,
+.theme-menu button:focus-visible {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.theme-menu .check {
+  margin-left: auto;
+  visibility: hidden;
+}
+
+.theme-menu [aria-checked="true"] {
+  color: var(--accent);
+}
+
+.theme-menu [aria-checked="true"] .check {
+  visibility: visible;
 }
 
 /* --- Popovers (the top layer) ------------------------------------------------- */
