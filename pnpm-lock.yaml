@@ -98,6 +98,9 @@ importers:
       '@tiptap/suggestion':
         specifier: 3.31.4
         version: 3.31.4(@floating-ui/dom@1.8.0)(@tiptap/core@3.31.4(@tiptap/pm@3.31.4))(@tiptap/pm@3.31.4)
+      '@urth/three-html-panel':
+        specifier: 0.2.0
+        version: 0.2.0(three@0.186.1)
       react:
         specifier: 19.3.0
         version: 19.3.0
@@ -134,6 +137,10 @@ importers:
         version: 1.1.0(@types/node@24.19.1)(@vitest/ui@5.0.3)(@volar/typescript@2.4.28(typescript@6.0.3))(@vue/language-core@3.3.12)(jsdom@30.1.2)(playwright@1.63.0)(publint@0.3.25)(sugarss@5.0.1(postcss@8.5.29))(svelte@5.57.2)(typescript@6.0.3)(vue-tsc@3.3.12(typescript@6.0.3))
 
   examples/sites/gallery:
+    dependencies:
+      '@urth/three-html-panel':
+        specifier: 0.2.0
+        version: 0.2.0(three@0.186.1)
     devDependencies:
       '@sveltejs/vite-plugin-svelte':
         specifier: 7.3.1
@@ -159,6 +166,9 @@ importers:
       '@mdi/js':
         specifier: 7.4.47
         version: 7.4.47
+      '@urth/three-html-panel':
+        specifier: 0.2.0
+        version: 0.2.0(three@0.186.1)
       vue:
         specifier: 3.5.43
         version: 3.5.43(typescript@6.0.3)
@@ -186,6 +196,10 @@ importers:
         version: 3.3.12(typescript@6.0.3)
 
   examples/sites/web-standards:
+    dependencies:
+      '@urth/three-html-panel':
+        specifier: 0.2.0
+        version: 0.2.0(three@0.186.1)
     devDependencies:
       vite:
         specifier: 'catalog:'
@@ -1027,6 +1041,11 @@ packages:
     engines: {node: '>=16.20.0'}
     cpu: [x64]
     os: [win32]
+
+  '@urth/three-html-panel@0.2.0':
+    resolution: {integrity: sha512-26eWuPR1GkLakwwJJRMI54Z5Veze263VSTCEp347vxOI55H9CRdxOXvBcYmDlX5ilquS3ns8MozQ7kxpojMIzg==}
+    peerDependencies:
+      three: '>=0.158.0'
 
   '@vitejs/plugin-react@6.1.2':
     resolution: {integrity: sha512-fhJNGUdscQa4HkI0xFxwonWyhnVReCPDbXI7FH7jmzpnVCrFQI7PRrhWecO263610vOrs9tr2Y4xcf8uAdFxbw==}
@@ -2941,6 +2960,10 @@ snapshots:
 
   '@typescript/typescript-win32-x64@7.0.2':
     optional: true
+
+  '@urth/three-html-panel@0.2.0(three@0.186.1)':
+    dependencies:
+      three: 0.186.1
 
   '@vitejs/plugin-react@6.1.2(@voidzero-dev/vite-plus-core@1.1.0(@types/node@24.19.1)(@volar/typescript@2.4.28(typescript@6.0.3))(@vue/language-core@3.3.12)(publint@0.3.25)(sugarss@5.0.1(postcss@8.5.29))(typescript@6.0.3)(vue-tsc@3.3.12(typescript@6.0.3)))':
     dependencies:

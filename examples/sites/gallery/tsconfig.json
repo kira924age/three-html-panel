@@ -10,11 +10,7 @@
     "isolatedModules": true,
     "verbatimModuleSyntax": true,
     "skipLibCheck": true,
-    "allowImportingTsExtensions": true,
-    "paths": {
-      "@urth/three-html-panel/agent": ["../../../src/agent/index.ts"],
-      "@urth/three-html-panel/page": ["../../../src/agent/page.ts"]
-    }
+    "allowImportingTsExtensions": true
   },
   "include": ["src/**/*.ts", "src/**/*.svelte"]
 }

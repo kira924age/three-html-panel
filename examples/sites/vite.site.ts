@@ -5,7 +5,10 @@
 //
 // A site starts the agent itself, first thing in its entry (see the sites'
 // agent module), with the host's origin from VITE_HOST_ORIGIN, the same
-// variable the scene uses (see originsFor and .env.example).
+// variable the scene uses (see originsFor and .env.example). It imports the
+// agent from the published package (@urth/three-html-panel, a dependency of
+// its own), as any site would: a change to the library shows in the sites
+// once it is published and their dependency raised.
 
 import { resolve } from "node:path";
 import { defineConfig, loadEnv, type PluginOption, type UserConfig } from "vite";
@@ -75,19 +78,6 @@ export function siteConfig({ name, dir, plugins = [], config = {} }: SiteOptions
       server: { ...server, port },
       preview: { ...server, port: port - 1000 },
       define: { "import.meta.env.VITE_HOST_ORIGIN": JSON.stringify(host) },
-      resolve: {
-        // What a site that installed the package would import, from the library's source here.
-        alias: [
-          {
-            find: /^@urth\/three-html-panel\/agent$/,
-            replacement: resolve(ROOT, "src/agent/index.ts"),
-          },
-          {
-            find: /^@urth\/three-html-panel\/page$/,
-            replacement: resolve(ROOT, "src/agent/page.ts"),
-          },
-        ],
-      },
       // Deployed, the whole site is readable from "null", as in development.
       plugins: [...plugins, staticHeaders({ "/*": { "Access-Control-Allow-Origin": "*" } })],
       ...config,
