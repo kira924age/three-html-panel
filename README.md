@@ -151,6 +151,23 @@ vp check        # format, lint and types
 
 The library is `src/` (the agent, which runs in panel pages, is `src/agent/`). The demo is in `examples/`: `examples/showcase/` is the 3D scene (`index.html` loads it), and `examples/sites/` holds the pages it shows as panels: `notes`, `controls` and `reader`, served from the other origin (with a few pages only the end-to-end tests use), and four sites that are packages of their own (`web-standards`, `hn-reader` with Vue, `chat` with React, `gallery` with Svelte), each built and deployed on its own and served from its own origin (see `examples/sites/vite.site.ts`; set `VITE_SITE_*_ORIGIN` where they are deployed, see `.env.example`). The end-to-end tests drive those pages in `e2e/harness/`, a scene with one flat panel.
 
+### Deploying the demo
+
+`.github/workflows/deploy.yml` deploys the demo to Cloudflare Pages on every push to `main` (and when run by hand), each part on its own origin: the scene, the panel pages (the same build), and the four example sites. Each build writes a `_headers` file with the sandbox and CORS headers its pages need. The workflow does nothing until the repository is set up, once:
+
+1. Create a Cloudflare API token with the permission Account › Cloudflare Pages › Edit, and note your account ID.
+2. Create the six Pages projects, with `main` as their production branch:
+
+   ```bash
+   for project in three-html-panel three-html-panel-pages three-html-panel-web-standards three-html-panel-hn-reader three-html-panel-chat three-html-panel-gallery; do pnpm dlx wrangler pages project create "$project" --production-branch main; done
+   ```
+
+   Each is served at `https://<project>.pages.dev` (wrangler prints the address; it differs if the name is taken).
+
+3. In the repository's settings, add the secrets `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`, and the variables with each project's origin (no trailing slash): `VITE_HOST_ORIGIN` (the scene), `VITE_PANEL_ORIGIN` (the panel pages), `VITE_SITE_WEB_STANDARDS_ORIGIN`, `VITE_SITE_HN_READER_ORIGIN`, `VITE_SITE_CHAT_ORIGIN` and `VITE_SITE_GALLERY_ORIGIN`. For a custom domain, use it instead.
+
+The builds point at one another through these origins (the agent answers only the scene's), so only the production addresses work together, not the per-deployment preview ones.
+
 ## License
 
 MIT

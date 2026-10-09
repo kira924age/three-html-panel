@@ -56,7 +56,8 @@
     "pack:lib": "vp pack",
     "prepublishOnly": "vp check && vp test run && vp pack",
     "dev:sites": "pnpm --parallel --filter \"./examples/sites/*\" dev",
-    "build:sites": "pnpm --filter \"./examples/sites/*\" build"
+    "build:sites": "pnpm --filter \"./examples/sites/*\" build",
+    "typecheck:sites": "pnpm --filter \"./examples/sites/*\" --if-present typecheck"
   },
   "devDependencies": {
     "@playwright/test": "1.63.0",

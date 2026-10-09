@@ -9,7 +9,12 @@
 
 import { resolve } from "node:path";
 import { defineConfig, loadEnv, type PluginOption, type UserConfig } from "vite";
-import { PANEL_SANDBOX_CSP, originsFor } from "../../vite.panels.config.ts";
+import {
+  PANEL_PAGE_HEADERS,
+  PANEL_SANDBOX_CSP,
+  originsFor,
+  staticHeaders,
+} from "../../vite.panels.config.ts";
 
 /** The repository's root, where the library's source is. */
 const ROOT = resolve(import.meta.dirname, "../..");
@@ -83,7 +88,8 @@ export function siteConfig({ name, dir, plugins = [], config = {} }: SiteOptions
           { find: /^three-html-panel\/page$/, replacement: resolve(ROOT, "src/agent/page.ts") },
         ],
       },
-      plugins,
+      // Deployed, the whole site is sandboxed and readable from "null", as in development.
+      plugins: [...plugins, staticHeaders({ "/*": PANEL_PAGE_HEADERS })],
       ...config,
     };
   });

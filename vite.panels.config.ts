@@ -57,6 +57,37 @@ function servedPages(): string[] {
 export const AGENT_BUILD_FILE = "agent.js";
 
 /**
+ * Writes a `_headers` file into a build, for static hosts that read it
+ * (Cloudflare Pages, Netlify): for each path pattern, the headers to send.
+ * The pages shown in panels need the same sandbox as in development, and to be
+ * readable from the opaque origin "null" that sandboxed pages request their
+ * scripts, styles and images from.
+ */
+export function staticHeaders(rules: Record<string, Record<string, string>>): Plugin {
+  const text = Object.entries(rules)
+    .map(
+      ([path, headers]) =>
+        `${path}\n${Object.entries(headers)
+          .map(([name, value]) => `  ${name}: ${value}`)
+          .join("\n")}`,
+    )
+    .join("\n");
+  return {
+    name: "three-html-panel:static-headers",
+    apply: "build",
+    generateBundle() {
+      this.emitFile({ type: "asset", fileName: "_headers", source: `${text}\n` });
+    },
+  };
+}
+
+/** The headers of a page shown in a panel, and of what it loads (see staticHeaders). */
+export const PANEL_PAGE_HEADERS = {
+  "Content-Security-Policy": PANEL_SANDBOX_CSP,
+  "Access-Control-Allow-Origin": "*",
+};
+
+/**
  * Puts `<script type="module" src=".../agent" data-host-origin="...">` first in
  * the <head> of the pages under examples/sites/. Module scripts run in document order,
  * so the agent runs before the page's own scripts.

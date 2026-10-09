@@ -1,0 +1,71 @@
+name: Deploy the demo
+
+# Builds the demo and deploys it to Cloudflare Pages, each part on its own
+# origin (a project of its own): the 3D scene, the panel pages it serves from
+# another origin (the same build), and the example sites that are packages of
+# their own. See "Deploying the demo" in the README for the one-time setup:
+# the projects, the CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID secrets, and
+# the variables with each project's origin.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One deployment at a time, the newest last.
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+env:
+  WRANGLER: wrangler@4.149.0
+  # The Cloudflare Pages projects: the scene, then the panel pages.
+  SCENE_PROJECT: three-html-panel
+  PANELS_PROJECT: three-html-panel-pages
+
+jobs:
+  deploy:
+    # Only once Cloudflare is set up for the repository (forks skip it).
+    if: vars.VITE_HOST_ORIGIN != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # Where each part is deployed: the builds point at one another with these
+      # (the agent answers only the scene's origin; the scene loads the pages).
+      VITE_HOST_ORIGIN: ${{ vars.VITE_HOST_ORIGIN }}
+      VITE_PANEL_ORIGIN: ${{ vars.VITE_PANEL_ORIGIN }}
+      VITE_SITE_WEB_STANDARDS_ORIGIN: ${{ vars.VITE_SITE_WEB_STANDARDS_ORIGIN }}
+      VITE_SITE_HN_READER_ORIGIN: ${{ vars.VITE_SITE_HN_READER_ORIGIN }}
+      VITE_SITE_CHAT_ORIGIN: ${{ vars.VITE_SITE_CHAT_ORIGIN }}
+      VITE_SITE_GALLERY_ORIGIN: ${{ vars.VITE_SITE_GALLERY_ORIGIN }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      # A part left at its default origin (localhost) would be deployed broken.
+      - name: Check that every origin is set
+        run: |
+          for name in VITE_HOST_ORIGIN VITE_PANEL_ORIGIN VITE_SITE_WEB_STANDARDS_ORIGIN \
+            VITE_SITE_HN_READER_ORIGIN VITE_SITE_CHAT_ORIGIN VITE_SITE_GALLERY_ORIGIN; do
+            if [ -z "${!name}" ]; then echo "::error::The repository variable $name is not set"; exit 1; fi
+          done
+      - uses: actions/checkout@v7
+      - uses: voidzero-dev/setup-vp@v1.21.1
+        with:
+          node-version: "24"
+          cache: true
+      # The scene and the panel pages, into dist/; the sites, each into its dist/.
+      - run: vp build
+      - run: vp run build:sites
+      - name: Deploy the scene and the panel pages
+        run: |
+          pnpm dlx "$WRANGLER" pages deploy dist --project-name "$SCENE_PROJECT" --branch main
+          pnpm dlx "$WRANGLER" pages deploy dist --project-name "$PANELS_PROJECT" --branch main
+      - name: Deploy the example sites
+        run: |
+          for site in web-standards hn-reader chat gallery; do
+            pnpm dlx "$WRANGLER" pages deploy "examples/sites/$site/dist" \
+              --project-name "three-html-panel-$site" --branch main
+          done
