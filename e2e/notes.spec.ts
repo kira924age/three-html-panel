@@ -269,13 +269,14 @@ test("paints a page's body background over the whole panel, as browsers do", asy
 
 test("draws an open popover over the page, where the page shows it, and not once it is closed", async () => {
   // In a clipped, transformed box: the popover is in the top layer, out of it.
-  // Its color comes from a rule through the box, which must still match it.
+  // Its color comes from a rule through the box, which must still match it;
+  // the box's ::after, cut to the box, must not be drawn again over the page.
   await panel.frame.evaluate(() => {
     const box = document.createElement("div");
     box.className = "clip";
     box.style.cssText =
       "position: absolute; left: 0; top: 0; width: 10px; height: 10px; overflow: hidden; transform: translateX(1px)";
-    box.innerHTML = `<style>.clip > button + #pop { background: rgb(220, 20, 20) }</style><button>Open</button><div id="pop" popover style="margin: 0; inset: auto; left: 600px; top: 400px; width: 200px; height: 100px; border: 0"></div>`;
+    box.innerHTML = `<style>.clip > button + #pop { background: rgb(220, 20, 20) } .clip::after { content: ""; position: absolute; inset: 0; background: rgb(20, 20, 220) }</style><button>Open</button><div id="pop" popover style="margin: 0; inset: auto; left: 600px; top: 400px; width: 200px; height: 100px; border: 0"></div>`;
     document.body.append(box);
   });
   const red = async () => {
@@ -288,6 +289,8 @@ test("draws an open popover over the page, where the page shows it, and not once
     await panel.frame.page().waitForTimeout(300);
     await panel.frame.evaluate(() => document.querySelector<HTMLElement>("#pop")!.showPopover());
     await expect.poll(red).toBe(true);
+    const [r, g, b] = await panel.pixel(100, 600);
+    expect(b > 180 && r < 60 && g < 60).toBe(false);
     await panel.frame.evaluate(() => document.querySelector<HTMLElement>("#pop")!.hidePopover());
     await expect.poll(red).toBe(false);
   });

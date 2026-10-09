@@ -1045,11 +1045,21 @@ describe("scrolled content", () => {
 });
 
 describe("the top layer", () => {
-  /** The snapshot's root, with these elements in the top layer (jsdom has none). */
+  /**
+   * The snapshot's root, with these elements in the top layer (jsdom has none)
+   * and these ::backdrop colors (jsdom gives the element's own for ::backdrop).
+   */
   function snapshotWithTopLayer(
     open: Record<string, string>,
     options: Partial<Parameters<typeof snapshotDocument>[1]> = {},
+    backdrops: Record<string, string> = {},
   ): HTMLElement {
+    const getComputedStyle = window.getComputedStyle.bind(window);
+    vi.spyOn(window, "getComputedStyle").mockImplementation((element, pseudo) =>
+      pseudo === "::backdrop"
+        ? ({ backgroundColor: backdrops[element.id] ?? "rgba(0, 0, 0, 0)" } as CSSStyleDeclaration)
+        : getComputedStyle(element, pseudo),
+    );
     for (const [id, pseudoClass] of Object.entries(open)) {
       const element = document.getElementById(id)!;
       const matches = element.matches.bind(element);
@@ -1113,12 +1123,7 @@ describe("the top layer", () => {
     document.body.innerHTML = `<main><dialog id="ask" open>Sure?</dialog></main>`;
     const dialog = document.getElementById("ask")!;
     dialog.getBoundingClientRect = () => new DOMRect(100, 80, 300, 160);
-    const getComputedStyle = window.getComputedStyle.bind(window);
-    vi.spyOn(window, "getComputedStyle").mockImplementation((element, pseudo) => {
-      if (element !== dialog || pseudo !== "::backdrop") return getComputedStyle(element, pseudo);
-      return { backgroundColor: "rgba(0, 0, 0, 0.5)" } as CSSStyleDeclaration;
-    });
-    const root = snapshotWithTopLayer({ ask: ":modal" });
+    const root = snapshotWithTopLayer({ ask: ":modal" }, {}, { ask: "rgba(0, 0, 0, 0.5)" });
     const copy = root.lastElementChild!.querySelector<HTMLElement>("#ask")!;
     expect(copy.hasAttribute("data-thp-modal")).toBe(true);
     const backdrop = root.lastElementChild!.previousElementSibling as HTMLElement;
@@ -1148,5 +1153,91 @@ describe("the top layer", () => {
     );
     expect(over.lastElementChild!.localName).toBe("div");
     expect(over.lastElementChild!.previousElementSibling!.querySelector("#menu")).not.toBeNull();
+  });
+
+  /** The root's children after the lifted element's chain (the agent's boxes drawn over it). */
+  const after = (root: HTMLElement, id: string) => {
+    const chain = Array.from(root.children).find(
+      (child) => child.localName === "body" && child.querySelector(`#${id}[data-thp-lifted]`),
+    )!;
+    const children = Array.from(root.children);
+    return children.slice(children.indexOf(chain) + 1);
+  };
+
+  it("hides the stand-ins' ::before and ::after, and copies far siblings bare", () => {
+    const items = Array.from({ length: 40 }, (_, index) => `<li class="item">${index}</li>`);
+    document.body.innerHTML = `<ul class="list"><li><div id="menu" popover>Menu</div></li>${items.join("")}</ul>`;
+    const root = snapshotWithTopLayer({ menu: ":popover-open" });
+    expect(root.querySelector("style")!.textContent).toContain(
+      "[data-thp-stand-in]::before,[data-thp-stand-in]::after{display:none!important}",
+    );
+    const list = root.lastElementChild!.querySelector<HTMLElement>("ul")!;
+    expect(list.hasAttribute("data-thp-stand-in")).toBe(true);
+    const siblings = Array.from(list.children).slice(1);
+    expect(siblings).toHaveLength(40);
+    // Near ones as they are (for `+` and `~`), hidden; far ones only counted.
+    expect(siblings[0]!.className).toBe("item");
+    expect((siblings[0] as HTMLElement).style.getPropertyValue("display")).toBe("none");
+    expect(siblings[30]!.localName).toBe("li");
+    expect(siblings[30]!.attributes).toHaveLength(0);
+  });
+
+  it("draws a popover's ::backdrop too", () => {
+    document.body.innerHTML = `<div id="menu" popover>Menu</div>`;
+    const root = snapshotWithTopLayer(
+      { menu: ":popover-open" },
+      {},
+      { menu: "rgba(0, 0, 0, 0.3)" },
+    );
+    const cover = root.lastElementChild!.previousElementSibling as HTMLElement;
+    expect(cover.style.backgroundColor).toBe("rgba(0, 0, 0, 0.3)");
+  });
+
+  it("draws each box of a selection running into a popover under it or over it, by where it is", () => {
+    document.body.innerHTML = `<p id="text">Page</p><div id="menu" popover><p id="inside">Menu</p></div>`;
+    document.getElementById("menu")!.getBoundingClientRect = () => new DOMRect(200, 0, 100, 100);
+    const range = document.createRange();
+    range.setStart(document.getElementById("text")!.firstChild!, 0);
+    range.setEnd(document.getElementById("inside")!.firstChild!, 2);
+    const page = new DOMRect(10, 10, 30, 10);
+    const inMenu = new DOMRect(210, 10, 30, 10);
+    const root = snapshotWithTopLayer(
+      { menu: ":popover-open" },
+      { selection: [page, inMenu], selectionIn: range },
+    );
+    const drawn = after(root, "menu") as HTMLElement[];
+    expect(drawn.map((box) => box.style.left)).toEqual(["210px"]);
+  });
+
+  it("draws an IME's underline, a list box's rows and the scrollbars in a popover over it", () => {
+    document.body.innerHTML = `<div id="menu" popover><input id="field" /><select id="list" size="3"><option>a</option></select><div id="scroller" style="overflow-x: hidden; overflow-y: auto">Long</div></div>`;
+    document.getElementById("menu")!.getBoundingClientRect = () => new DOMRect(0, 0, 300, 300);
+    const scroller = document.getElementById("scroller")!;
+    scroller.getBoundingClientRect = () => new DOMRect(10, 100, 100, 100);
+    Object.defineProperty(scroller, "clientHeight", { value: 100 });
+    Object.defineProperty(scroller, "clientWidth", { value: 100 });
+    Object.defineProperty(scroller, "scrollHeight", { value: 400 });
+    Object.defineProperty(scroller, "scrollWidth", { value: 100 });
+    const box = new DOMRect(10, 10, 50, 20);
+    const root = snapshotWithTopLayer(
+      { menu: ":popover-open" },
+      {
+        composition: {
+          field: document.getElementById("field")!,
+          value: "x",
+          boxes: [box],
+          color: "red",
+        },
+        listBox: document.getElementById("list"),
+        listBoxSelection: [
+          { shown: box, box, label: "a", font: "13px sans-serif", paddingLeft: 4 },
+        ],
+      },
+    );
+    const drawn = after(root, "menu") as HTMLElement[];
+    expect(drawn.some((element) => element.style.backgroundColor === "red")).toBe(true);
+    expect(drawn.some((element) => element.textContent === "a")).toBe(true);
+    // The scroller's track or thumb, at its right edge.
+    expect(drawn.some((element) => parseFloat(element.style.left) >= 100)).toBe(true);
   });
 });
