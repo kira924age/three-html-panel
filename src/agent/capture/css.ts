@@ -160,13 +160,12 @@ const URL_PATTERN = /url\(\s*(["']?)([^"')]+)\1\s*\)/g;
 
 /**
  * Replaces url(...) references, made absolute against `baseUrl`, with what
- * `resolve` returns for them (e.g. a data URL), or `none`. Without `resolve`,
- * only makes them absolute (a linked stylesheet's are relative to it).
+ * `resolve` returns for them (e.g. a data URL), or `none`.
  */
 export function inlineCssUrls(
   css: string,
   baseUrl: string,
-  resolve: (url: string) => string | null = (url) => url,
+  resolve: (url: string) => string | null,
 ): string {
   return css.replace(URL_PATTERN, (_match, _quote: string, raw: string) => {
     if (raw.startsWith("data:")) return `url("${raw}")`;
@@ -180,6 +179,10 @@ export function inlineCssUrls(
     return inlined ? `url("${inlined}")` : "none";
   });
 }
+
+/** Makes relative url() in a linked stylesheet absolute (they are relative to the stylesheet). */
+export const absolutizeUrls = (css: string, sheetUrl: string) =>
+  inlineCssUrls(css, sheetUrl, (url) => url);
 
 const isNamespace = (rule: string) => rule.startsWith("@namespace");
 
@@ -385,7 +388,7 @@ export class DocumentCss {
     if (source.href) {
       // A namespace's url() is a name, not a file.
       for (let i = 0; i < rules.length; i++)
-        if (!isNamespace(rules[i]!)) rules[i] = inlineCssUrls(rules[i]!, source.href);
+        if (!isNamespace(rules[i]!)) rules[i] = absolutizeUrls(rules[i]!, source.href);
     }
     sheets.push(inLayers(rules, layers));
   }

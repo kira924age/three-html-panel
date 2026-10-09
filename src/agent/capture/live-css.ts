@@ -32,8 +32,8 @@
 
 import type { FrameWindow } from "../../types";
 import {
+  absolutizeUrls,
   agentSheets,
-  inlineCssUrls,
   liveSelector,
   pageStylesheets,
   ruleCount,
@@ -537,7 +537,7 @@ export class LiveInteractionCss {
     if (!css) return;
     this.#widen(css);
     // In the agent's sheet, url() would be relative to the document.
-    if (source.href) css = inlineCssUrls(css, source.href);
+    if (source.href) css = absolutizeUrls(css, source.href);
     copied.push(media && media !== "all" ? `@media ${media}{${css}}` : css);
   }
 

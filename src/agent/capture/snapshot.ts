@@ -890,6 +890,14 @@ class Snapshotter {
     return boxes;
   }
 
+  /**
+   * The first box of a block's flow, if it is a block (its top margin can
+   * collapse with the block's); null if lines come first.
+   */
+  #firstBlock(container: Element): Element | null {
+    return this.#inFlowChildren(container, false, true)?.[0] ?? null;
+  }
+
   /** A length of a box (a margin, a padding) in px, as the copy has it (an animation's, baked) or the page. */
   #pxOf(box: Element, property: string): number {
     const style = this.#styles.get(box)!;
@@ -941,7 +949,7 @@ class Snapshotter {
         margins.push(parseFloat(before.getPropertyValue("margin-top")) || 0);
         break;
       }
-      box = this.#inFlowChildren(box, false, true)?.[0] ?? null;
+      box = this.#firstBlock(box);
     }
     return marginMovingFlow(margins, y);
   }

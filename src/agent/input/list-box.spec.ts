@@ -1,5 +1,14 @@
 // @vitest-environment jsdom
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vite-plus/test";
 import { InputSynthesizer } from "./input";
 import { isUsable, optionAt, selectRange, stepOption } from "./list-box";
 
@@ -14,11 +23,10 @@ beforeAll(() => {
         super(type, rest);
       }
     };
-  globalThis.MouseEvent = withoutView(MouseEvent as EventClass) as unknown as typeof MouseEvent;
-  globalThis.PointerEvent = withoutView(
-    (globalThis.PointerEvent ?? MouseEvent) as EventClass,
-  ) as unknown as typeof PointerEvent;
+  vi.stubGlobal("MouseEvent", withoutView(MouseEvent as EventClass));
+  vi.stubGlobal("PointerEvent", withoutView((globalThis.PointerEvent ?? MouseEvent) as EventClass));
 });
+afterAll(() => vi.unstubAllGlobals());
 
 let select: HTMLSelectElement;
 let changes: number;

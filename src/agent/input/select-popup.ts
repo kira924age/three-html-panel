@@ -135,6 +135,7 @@ export class SelectPopup {
 
   /** Moves the highlight by `steps` choosable items (or to the first or last one past the ends). */
   step(steps: number): void {
+    if (steps === 0) return;
     this.highlighted = stepOption(this.items.length, this.highlighted, steps, (item) =>
       this.choosable(item),
     );
