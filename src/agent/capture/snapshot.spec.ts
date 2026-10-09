@@ -1043,3 +1043,71 @@ describe("scrolled content", () => {
     expect(snapshot().querySelector("body")!.style.getPropertyValue("overflow")).toBe("");
   });
 });
+
+describe("the top layer", () => {
+  /** The snapshot's root, with these elements in the top layer (jsdom has none). */
+  function snapshotWithTopLayer(open: Record<string, string>): HTMLElement {
+    for (const [id, pseudoClass] of Object.entries(open)) {
+      const element = document.getElementById(id)!;
+      const matches = element.matches.bind(element);
+      vi.spyOn(element, "matches").mockImplementation(
+        (selector: string) => selector === pseudoClass || matches(selector),
+      );
+    }
+    const xhtml = snapshotDocument(document, { inlineImage: () => null });
+    return new DOMParser().parseFromString(xhtml, "application/xhtml+xml").documentElement;
+  }
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it("draws an open popover over the page where the page has it, out of its parents", () => {
+    document.body.innerHTML = `<style>#menu { color: rgb(1, 2, 3); --accent: red }</style>
+      <header style="backdrop-filter: blur(4px)">
+        <div id="menu" popover style="display: flex">Light</div>
+        <div id="closed" popover>Dark</div>
+      </header><main>Page</main>`;
+    document.getElementById("menu")!.getBoundingClientRect = () => new DOMRect(500, 40, 152, 120);
+    const root = snapshotWithTopLayer({ menu: ":popover-open" });
+    const menu = root.querySelector<HTMLElement>("#menu")!;
+    expect(menu.parentElement).toBe(root);
+    expect(root.lastElementChild).toBe(menu);
+    expect(menu.hasAttribute("data-thp-popover-open")).toBe(true);
+    for (const [name, value] of <[string, string][]>[
+      ["position", "fixed"],
+      ["left", "500px"],
+      ["top", "40px"],
+      ["width", "152px"],
+      ["height", "120px"],
+      ["display", "flex"],
+    ]) {
+      expect(menu.style.getPropertyValue(name)).toBe(value);
+      expect(menu.style.getPropertyPriority(name)).toBe("important");
+    }
+    // Its computed text style and custom properties (inherited in the header, which it is no longer in).
+    expect(menu.style.color).toBe("rgb(1, 2, 3)");
+    expect(menu.style.getPropertyValue("--accent")).toBe("red");
+    // A closed popover stays where it is, hidden by the page's rules.
+    const closed = root.querySelector("#closed")!;
+    expect(closed.parentElement!.localName).toBe("header");
+    expect(closed.hasAttribute("data-thp-popover-open")).toBe(false);
+  });
+
+  it("draws a modal dialog over its ::backdrop, over the page", () => {
+    document.body.innerHTML = `<main><dialog id="ask" open>Sure?</dialog></main>`;
+    const dialog = document.getElementById("ask")!;
+    dialog.getBoundingClientRect = () => new DOMRect(100, 80, 300, 160);
+    const getComputedStyle = window.getComputedStyle.bind(window);
+    vi.spyOn(window, "getComputedStyle").mockImplementation((element, pseudo) => {
+      if (element !== dialog || pseudo !== "::backdrop") return getComputedStyle(element, pseudo);
+      return { backgroundColor: "rgba(0, 0, 0, 0.5)" } as CSSStyleDeclaration;
+    });
+    const root = snapshotWithTopLayer({ ask: ":modal" });
+    const copy = root.querySelector<HTMLElement>("#ask")!;
+    expect(copy.hasAttribute("data-thp-modal")).toBe(true);
+    expect(root.lastElementChild).toBe(copy);
+    const backdrop = copy.previousElementSibling as HTMLElement;
+    expect(backdrop.style.backgroundColor).toBe("rgba(0, 0, 0, 0.5)");
+    expect(backdrop.style.position).toBe("fixed");
+    expect(copy.style.top).toBe("80px");
+  });
+});

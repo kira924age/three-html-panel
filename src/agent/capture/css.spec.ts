@@ -25,6 +25,12 @@ describe("rewriteSelector", () => {
     );
   });
 
+  it("lets an open popover and a modal dialog match their attributes (the copy is not in the top layer)", () => {
+    expect(rewriteSelector(".menu:popover-open, dialog:modal")).toBe(
+      ".menu:is(:popover-open,[data-thp-popover-open]), dialog:is(:modal,[data-thp-modal])",
+    );
+  });
+
   it("maps :root to html", () => {
     expect(rewriteSelector(":root")).toBe("html");
     expect(rewriteSelector(":root:hover")).toBe("html:is(:hover,[data-thp-hover])");

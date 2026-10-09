@@ -266,3 +266,27 @@ test("paints a page's body background over the whole panel, as browsers do", asy
       .toBe(true),
   );
 });
+
+test("draws an open popover over the page, where the page shows it, and not once it is closed", async () => {
+  // In a clipped, transformed box: the popover is in the top layer, out of it.
+  await panel.frame.evaluate(() => {
+    const box = document.createElement("div");
+    box.style.cssText =
+      "position: absolute; left: 0; top: 0; width: 10px; height: 10px; overflow: hidden; transform: translateX(1px)";
+    box.innerHTML = `<div id="pop" popover style="margin: 0; inset: auto; left: 600px; top: 400px; width: 200px; height: 100px; border: 0; background: rgb(220, 20, 20)"></div>`;
+    document.body.append(box);
+  });
+  const red = async () => {
+    const [r, g, b] = await panel.pixel(700, 450);
+    return r > 180 && g < 60 && b < 60;
+  };
+  await panel.ifDrawn(async () => {
+    // Drawn with the box, then opened (which changes nothing in the DOM).
+    await expect.poll(red).toBe(false);
+    await panel.frame.page().waitForTimeout(300);
+    await panel.frame.evaluate(() => document.querySelector<HTMLElement>("#pop")!.showPopover());
+    await expect.poll(red).toBe(true);
+    await panel.frame.evaluate(() => document.querySelector<HTMLElement>("#pop")!.hidePopover());
+    await expect.poll(red).toBe(false);
+  });
+});

@@ -23,6 +23,7 @@ import type { Box, FrameWindow } from "../../types";
 import { scrolledText } from "../input/caret";
 import { scrollbarsOf, type Scrollbar } from "../input/scrollbars";
 import type { PopupView } from "../input/select-popup";
+import { MODAL_ATTRIBUTE, POPOVER_OPEN_ATTRIBUTE } from "./css";
 
 /** Elements that do not contribute to what is on screen. <style> is collected separately. */
 const SKIPPED_ELEMENTS = new Set([
@@ -467,6 +468,8 @@ class Snapshotter {
   #fixedContainer: Element | null = null;
   /** Scrollbars to draw over the copy. */
   readonly scrollbars: Scrollbar[] = [];
+  /** Open popovers and modal dialogs, in the order copied: the page's top layer (see liftToTopLayer). */
+  readonly topLayer: { live: Element; copy: HTMLElement }[] = [];
 
   readonly #document: Document;
   readonly #options: SnapshotOptions;
@@ -499,6 +502,7 @@ class Snapshotter {
     this.#copyFormState(element, copy);
     this.#copyImage(element, copy);
     this.#copyAnimatedValues(element, copy);
+    this.#markTopLayer(element, copy);
 
     // <head> carries no visible content, but keep the element so the structure stays valid.
     if (element.tagName === "HEAD") return copy;
@@ -520,6 +524,20 @@ class Snapshotter {
     this.#copyScroll(element, copy);
     this.#hideScrollbars(element, copy, style);
     return copy;
+  }
+
+  /**
+   * An open popover or a modal dialog is in the top layer, which matches
+   * :popover-open or :modal: the copy is in none, so it gets their attributes
+   * (the page's rules are rewritten to match them too, see css.ts).
+   */
+  #markTopLayer(element: Element, copy: Element): void {
+    const popover = matches(element, ":popover-open");
+    const modal = matches(element, ":modal");
+    if (!popover && !modal) return;
+    if (popover) copy.setAttribute(POPOVER_OPEN_ATTRIBUTE, "");
+    if (modal) copy.setAttribute(MODAL_ATTRIBUTE, "");
+    this.topLayer.push({ live: element, copy: copy as HTMLElement });
   }
 
   /** Notes what a copy is of, and where it is positioned from if it is absolute or fixed. */
@@ -1417,6 +1435,95 @@ function inlineBackgroundImages(
   return missing ? "none" : inlined;
 }
 
+/** Whether an element matches a selector this browser may not know (it matches nothing then). */
+function matches(element: Element, selector: string): boolean {
+  try {
+    return element.matches(selector);
+  } catch {
+    return false;
+  }
+}
+
+/** What an element inherits that it could lose moved out of its parents (custom properties too). */
+const INHERITED_PROPERTIES = [
+  "color",
+  "color-scheme",
+  "font-family",
+  "font-size",
+  "font-style",
+  "font-variant",
+  "font-weight",
+  "font-stretch",
+  "line-height",
+  "letter-spacing",
+  "word-spacing",
+  "text-align",
+  "text-transform",
+  "text-indent",
+  "white-space",
+  "direction",
+  "writing-mode",
+  "visibility",
+];
+
+/**
+ * Browsers draw the top layer over the whole page, each element where it is
+ * on screen whatever its parents (a transform or a filter in them would
+ * otherwise be what a fixed element is placed from). The copy is moved to
+ * the end of the root, after the rest of the page, placed where the page has
+ * it, with what it inherited there; a modal dialog's ::backdrop goes under it.
+ */
+function liftToTopLayer(
+  document: Document,
+  root: HTMLElement,
+  { live, copy }: { live: Element; copy: HTMLElement },
+): void {
+  const view = document.defaultView!;
+  const style = view.getComputedStyle(live);
+  if (matches(live, ":modal")) {
+    const backdrop = view.getComputedStyle(live, "::backdrop").backgroundColor;
+    if (backdrop && !TRANSPARENT.test(backdrop)) {
+      const cover = root.ownerDocument.createElement("div");
+      cover.setAttribute(
+        "style",
+        `position:fixed;inset:0;margin:0;background:${backdrop};z-index:2147483646`,
+      );
+      root.appendChild(cover);
+    }
+  }
+  for (const name of Array.from(style)) {
+    if (name.startsWith("--")) copy.style.setProperty(name, style.getPropertyValue(name));
+  }
+  for (const name of INHERITED_PROPERTIES)
+    copy.style.setProperty(name, style.getPropertyValue(name));
+  const box = live.getBoundingClientRect();
+  const place: Record<string, string> = {
+    display: style.display,
+    position: "fixed",
+    inset: "auto",
+    left: `${box.left}px`,
+    top: `${box.top}px`,
+    width: `${box.width}px`,
+    height: `${box.height}px`,
+    "min-width": "0",
+    "min-height": "0",
+    "max-width": "none",
+    "max-height": "none",
+    margin: "0",
+    "box-sizing": "border-box",
+    // Placed already: not again by the page's anchor positioning, nor moved by a transform.
+    "position-area": "none",
+    transform: "none",
+    translate: "none",
+    rotate: "none",
+    scale: "none",
+    "z-index": "2147483646",
+  };
+  for (const [name, value] of Object.entries(place))
+    copy.style.setProperty(name, value, "important");
+  root.appendChild(copy);
+}
+
 /** Serializes the page as XHTML (an <html> element with the XHTML namespace). */
 export function snapshotDocument(document: Document, options: SnapshotOptions): string {
   const snapshotter = new Snapshotter(document, options);
@@ -1456,6 +1563,8 @@ export function snapshotDocument(document: Document, options: SnapshotOptions): 
   }
   drawScrollbars(root, snapshotter.scrollbars, options.scrollbar);
   for (const row of options.listBoxSelection ?? []) drawListBoxRow(root, row);
+  // Over the page and its selection; the agent's own <select> list goes over them.
+  for (const entry of snapshotter.topLayer) liftToTopLayer(document, root, entry);
   if (options.selectPopup) drawSelectPopup(root, options.selectPopup);
   return new XMLSerializer().serializeToString(root);
 }

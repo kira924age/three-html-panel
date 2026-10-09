@@ -50,6 +50,8 @@ const INVALIDATING_EVENTS = [
   "animationend",
   "animationiteration",
   "resize",
+  // A popover opened or closed (which changes no attribute), or a <dialog> or <details>.
+  "toggle",
   // The page's selection (dragging, an editable's caret, or the page's own code).
   "selectionchange",
   // A video shows another frame (while it plays, frames keep coming, see render()).
