@@ -11,7 +11,7 @@ describe("rewriteSelector", () => {
   it("keeps :focus, :focus-visible and :focus-within apart", () => {
     expect(rewriteSelector("input:focus")).toBe("input:is(:focus,[data-thp-focus])");
     expect(rewriteSelector("input:focus-visible")).toBe(
-      "input:is(:focus-visible,[data-thp-focus])",
+      "input:is(:focus-visible,[data-thp-focus-visible])",
     );
     expect(rewriteSelector(".card:focus-within")).toBe(
       ".card:is(:focus-within,[data-thp-focus-within])",
@@ -41,7 +41,7 @@ describe("liveSelector", () => {
       ".row:is(:hover,[data-thp-hover]) .tools, a:is(:active,[data-thp-active])",
     );
     expect(liveSelector("form:focus-within .hint, input:focus, input:focus-visible")).toBe(
-      "form:is(:focus-within,[data-thp-focus-within]) .hint, input:is(:focus,[data-thp-focus]), input:is(:focus-visible,[data-thp-focus])",
+      "form:is(:focus-within,[data-thp-focus-within]) .hint, input:is(:focus,[data-thp-focus]), input:is(:focus-visible,[data-thp-focus-visible])",
     );
     expect(liveSelector("li:not(:hover)")).toBe("li:not(:is(:hover,[data-thp-hover]))");
   });

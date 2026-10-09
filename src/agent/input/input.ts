@@ -375,8 +375,13 @@ export class InputSynthesizer {
 
   /** Preserve unconditional pointer-move captures when the host opts out. */
   optimizeHover = true;
+  /** The last input was keys, not a press: focus moved from now on shows (:focus-visible). */
+  private keyboardModality = false;
 
   handle(input: PanelInput): void {
+    // What focus that follows is shown as (:focus-visible): after keys, not after a press.
+    if (input.type === "key") this.keyboardModality = true;
+    else if (input.type === "pointer" && input.kind === "down") this.keyboardModality = false;
     const quietMove =
       this.optimizeHover &&
       input.type === "pointer" &&
@@ -590,10 +595,15 @@ export class InputSynthesizer {
    * page moving the focused element elsewhere). Returns whether a mark changed.
    */
   syncMarks(): boolean {
+    const focused = this.focus.current;
     return this.marks.update({
       hovered: this.hovered,
       active: this.active,
-      focused: this.focus.current,
+      focused,
+      // As browsers decide it: a field that takes text always shows its focus, anything else after keys.
+      focusVisible:
+        focused !== null &&
+        (this.keyboardModality || isTextField(focused) || isEditingHost(focused)),
     });
   }
 

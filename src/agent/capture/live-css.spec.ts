@@ -76,6 +76,12 @@ describe("LiveInteractionCss", () => {
       sheet.replaceSync(".row:hover .tools { display: flex }");
       adopted.push(sheet);
       expect(live.sync()).toBe(true);
+      // There twice (allowed): a rule inserted into it is still taken care of at once.
+      adopted.push(sheet);
+      live.sync();
+      sheet.insertRule(".row:hover .more { display: block }", 1);
+      sheet.insertRule(".x { color: red }", 2);
+      expect(live.sync()).toBe(false);
       expect((sheet.cssRules[0] as CSSStyleRule).selectorText).toBe(
         ".row:is(:hover,[data-thp-hover]) .tools",
       );
@@ -124,6 +130,29 @@ describe("LiveInteractionCss", () => {
     } finally {
       Object.defineProperty(StyleSheet.prototype, "disabled", native);
     }
+  });
+
+  it("rewrites a selector the page sets on a rule itself", () => {
+    setUp(".tools { display: none } .x { color: red }");
+    const rule = document.styleSheets[0]!.cssRules[1] as CSSStyleRule;
+    rule.selectorText = ".row:hover .tools";
+    expect(rule.selectorText).toBe(".row:is(:hover,[data-thp-hover]) .tools");
+    // Put back as the page set it, not as it was first.
+    live!.dispose();
+    live = null;
+    expect(rule.selectorText).toBe(".row:hover .tools");
+  });
+
+  it("forgets a rule the page deletes, without looking at all the rules again", () => {
+    setUp(".tools { display: none } .row:hover .tools { display: flex }");
+    const sheet = document.styleSheets[0]!;
+    const rule = sheet.cssRules[1] as CSSStyleRule;
+    sheet.deleteRule(1);
+    expect(live!.sync()).toBe(false);
+    live!.dispose();
+    live = null;
+    // Not written back into the rule the page dropped.
+    expect(rule.selectorText).toBe(".row:is(:hover,[data-thp-hover]) .tools");
   });
 
   it("rewrites rules in @media blocks, and each rule only once", () => {

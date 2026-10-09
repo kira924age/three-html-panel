@@ -21,11 +21,13 @@ export const HOVER_ATTRIBUTE = "data-thp-hover";
 export const ACTIVE_ATTRIBUTE = "data-thp-active";
 export const FOCUS_ATTRIBUTE = "data-thp-focus";
 export const FOCUS_WITHIN_ATTRIBUTE = "data-thp-focus-within";
+/** Focus the browser would show (from keys, or in a text field), not every focus. */
+export const FOCUS_VISIBLE_ATTRIBUTE = "data-thp-focus-visible";
 
 const INTERACTION_ATTRIBUTE_OF: Record<string, string> = {
   hover: HOVER_ATTRIBUTE,
   active: ACTIVE_ATTRIBUTE,
-  "focus-visible": FOCUS_ATTRIBUTE,
+  "focus-visible": FOCUS_VISIBLE_ATTRIBUTE,
   "focus-within": FOCUS_WITHIN_ATTRIBUTE,
   focus: FOCUS_ATTRIBUTE,
 };

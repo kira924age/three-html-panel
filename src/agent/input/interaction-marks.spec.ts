@@ -22,6 +22,10 @@ describe("InteractionMarks", () => {
     expect(marked("data-thp-active")).toEqual(["b"]);
     expect(marked("data-thp-focus")).toEqual(["a"]);
     expect(marked("data-thp-focus-within")).toEqual(["HTML", "BODY", "FORM", "P", "a"]);
+    // Not shown unless said so (focus from a press on a button).
+    expect(marked("data-thp-focus-visible")).toEqual([]);
+    marks.update({ hovered: [], active: [], focused: button, focusVisible: true });
+    expect(marked("data-thp-focus-visible")).toEqual(["b"]);
   });
 
   it("takes the marks off what left those states, and puts back what the page took off", () => {

@@ -203,6 +203,26 @@ describe("interaction states in the live page", () => {
     expect(seen).toEqual(["focus: grid", "click: false"]);
   });
 
+  it("shows focus as browsers do: not for a pressed button, but after keys", () => {
+    capture.start();
+    move();
+    press();
+    const button = document.querySelector("button")!;
+    expect(document.activeElement).toBe(button);
+    expect(button.hasAttribute("data-thp-focus-visible")).toBe(false);
+    capture.handle({ type: "blur" });
+    capture.handle({
+      type: "key",
+      key: "Tab",
+      shiftKey: false,
+      ctrlKey: false,
+      altKey: false,
+      metaKey: false,
+    });
+    expect(document.activeElement).toBe(button);
+    expect(button.hasAttribute("data-thp-focus-visible")).toBe(true);
+  });
+
   it("follows the page moving the focused element elsewhere, on the next capture", async () => {
     capture.start();
     const button = document.querySelector("button")!;
