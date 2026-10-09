@@ -85,6 +85,19 @@ function absolutizeUrls(css: string, sheetUrl: string): string {
 
 const isNamespace = (rule: string) => rule.startsWith("@namespace");
 
+/**
+ * A sheet's rules in the cascade layers it was imported into (outermost
+ * first, "" for an anonymous one), as on the page: its @namespace rules stay
+ * first, outside them (they cannot be in one).
+ */
+function inLayers(rules: string[], layers: readonly string[]): string[] {
+  if (layers.length === 0) return rules;
+  let layered = rules.filter((rule) => !isNamespace(rule)).join("\n");
+  for (const layer of [...layers].reverse())
+    layered = `@layer ${layer ? `${layer} ` : ""}{\n${layered}\n}`;
+  return [...rules.filter(isNamespace), layered];
+}
+
 function ruleCount(sheet: CSSStyleSheet): number {
   try {
     return sheet.cssRules.length;
@@ -163,31 +176,51 @@ export class DocumentCss {
     if (source.disabled) return;
     const sheet = this.readable(source);
     if (!sheet) return;
-    let rules: string[] = [];
-    this.serializeRules(sheet.cssRules, rules, sheets, layers);
+    const all = Array.from(sheet.cssRules);
+    // @layer statements before its @import rules declare layers before the
+    // imported ones: they come before the imported sheets, in a sheet of their own.
+    const { CSSImportRule, CSSLayerStatementRule } = this.window;
+    const imports = all.findLastIndex((rule) => rule instanceof CSSImportRule);
+    const statements = all
+      .slice(0, imports + 1)
+      .filter((rule) => CSSLayerStatementRule && rule instanceof CSSLayerStatementRule);
+    if (statements.length > 0)
+      sheets.push(
+        inLayers(
+          statements.map((rule) => rule.cssText),
+          layers,
+        ),
+      );
+    const rules: string[] = [];
+    this.serializeRules(
+      all.filter((rule) => !statements.includes(rule)),
+      rules,
+      sheets,
+      layers,
+    );
     if (source.href) {
       // A namespace's url() is a name, not a file.
       for (let i = 0; i < rules.length; i++)
         if (!isNamespace(rules[i]!)) rules[i] = absolutizeUrls(rules[i]!, source.href);
     }
-    if (layers.length > 0) {
-      // @namespace rules stay first, outside the layer (they cannot be in one).
-      let layered = rules.filter((rule) => !isNamespace(rule)).join("\n");
-      for (const layer of [...layers].reverse())
-        layered = `@layer ${layer ? `${layer} ` : ""}{\n${layered}\n}`;
-      rules = [...rules.filter(isNamespace), layered];
-    }
-    sheets.push(rules);
+    sheets.push(inLayers(rules, layers));
   }
 
   private serializeRules(
-    rules: CSSRuleList,
+    rules: ArrayLike<CSSRule>,
     out: string[],
     sheets: string[][],
     layers: string[],
   ): void {
-    const { CSSStyleRule, CSSMediaRule, CSSSupportsRule, CSSImportRule, CSSKeyframesRule, CSS } =
-      this.window;
+    const {
+      CSSStyleRule,
+      CSSMediaRule,
+      CSSSupportsRule,
+      CSSImportRule,
+      CSSKeyframesRule,
+      CSSGroupingRule,
+      CSS,
+    } = this.window;
     for (const rule of Array.from(rules)) {
       if (rule instanceof CSSStyleRule) {
         // Nested rules (CSS nesting) are serialized with the parent; rewrite the whole text then.
@@ -215,6 +248,18 @@ export class DocumentCss {
           this.serializeSheet(sheet, sheets, layer == null ? layers : [...layers, layer]);
       } else if (rule instanceof CSSKeyframesRule) {
         // Animations are frozen, so keyframes are never used.
+      } else if (
+        CSSGroupingRule &&
+        rule instanceof CSSGroupingRule &&
+        // @page has declarations of its own (and no effect on screen).
+        !(rule instanceof this.window.CSSPageRule)
+      ) {
+        // Other blocks of rules (@layer, @container, @scope…): their rules as
+        // the top level's (interaction states, @media checked here), in them.
+        const inner: string[] = [];
+        this.serializeRules(rule.cssRules, inner, sheets, layers);
+        const prelude = rule.cssText.slice(0, rule.cssText.indexOf("{")).trim();
+        out.push(`${rewriteSelector(prelude)} {\n${inner.join("\n")}\n}`);
       } else {
         out.push(rule.cssText);
       }

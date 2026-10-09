@@ -100,3 +100,13 @@ test("draws what is positioned in scrolled boxes where the page shows it", async
     expect(await shade(marker.top + marker.height + 3)).toBeGreaterThan(200);
   });
 });
+
+test("draws hover styles from a cascade layer", async ({ page }) => {
+  test.skip(!panel.drawn, "the hover style is only seen in the drawn image (no WebGL)");
+  const mark = await panel.box("#hover-mark");
+  const middle = () => panel.pixel(mark.left + mark.width / 2, mark.top + mark.height / 2);
+  expect(await middle()).toEqual([200, 200, 200]);
+  const point = await panel.at("#hover-mark");
+  await page.mouse.move(point.x, point.y);
+  await expect.poll(middle).toEqual([0, 120, 255]);
+});
