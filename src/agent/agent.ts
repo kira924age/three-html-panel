@@ -54,51 +54,53 @@ export interface AgentOptions {
 }
 
 export class PanelAgent {
-  private readonly capture: PageCapture;
-  private readonly stopLinks: () => void;
-  private port: MessagePort | null = null;
-  private seq = 0;
-  private disposed = false;
+  readonly #capture: PageCapture;
+  readonly #stopLinks: () => void;
+  #port: MessagePort | null = null;
+  #seq = 0;
+  #disposed = false;
+  readonly #window: Window;
+  readonly #parent: Window;
+  readonly #hostOrigin: string;
 
-  constructor(
-    private readonly window: Window,
-    private readonly parent: Window,
-    private readonly hostOrigin: string,
-  ) {
+  constructor(window: Window, parent: Window, hostOrigin: string) {
+    this.#window = window;
+    this.#parent = parent;
+    this.#hostOrigin = hostOrigin;
     // Before the page's scripts, like the capture's focus and pointer capture.
     emulateAnimationFrames(window as Window & typeof globalThis);
-    this.stopLinks = interceptLinks(window as Window & typeof globalThis, (url) =>
-      this.post({ type: "open", url }),
+    this.#stopLinks = interceptLinks(window as Window & typeof globalThis, (url) =>
+      this.#post({ type: "open", url }),
     );
-    this.capture = new PageCapture(window.document, {
-      onFrame: (frame) => this.post({ type: "frame", seq: this.seq++, ...frame }),
+    this.#capture = new PageCapture(window.document, {
+      onFrame: (frame) => this.#post({ type: "frame", seq: this.#seq++, ...frame }),
       onEditing: (editing, caret, selectedText, pointers, typing) =>
-        this.post({ type: "editing", editing, caret, selectedText, pointers, typing }),
-      onEditables: (boxes) => this.post({ type: "editables", boxes }),
+        this.#post({ type: "editing", editing, caret, selectedText, pointers, typing }),
+      onEditables: (boxes) => this.#post({ type: "editables", boxes }),
       // "" (not over the page) goes as "default"; the host stops using it when the pointer leaves anyway.
-      onCursor: (cursor) => this.post({ type: "cursor", cursor: cursor || "default" }),
+      onCursor: (cursor) => this.#post({ type: "cursor", cursor: cursor || "default" }),
     });
-    window.addEventListener("message", this.onWindowMessage);
-    window.addEventListener(PAGE_MESSAGE_EVENT, this.onPageMessage);
+    window.addEventListener("message", this.#onWindowMessage);
+    window.addEventListener(PAGE_MESSAGE_EVENT, this.#onPageMessage);
     const ready: ReadyMessage = { type: "ready", version: PROTOCOL_VERSION };
     parent.postMessage(ready, hostOrigin);
   }
 
   get connected(): boolean {
-    return this.port !== null;
+    return this.#port !== null;
   }
 
   dispose(): void {
-    this.disposed = true;
-    this.window.removeEventListener("message", this.onWindowMessage);
-    this.window.removeEventListener(PAGE_MESSAGE_EVENT, this.onPageMessage);
-    this.capture.dispose();
-    this.stopLinks();
-    this.closePort();
+    this.#disposed = true;
+    this.#window.removeEventListener("message", this.#onWindowMessage);
+    this.#window.removeEventListener(PAGE_MESSAGE_EVENT, this.#onPageMessage);
+    this.#capture.dispose();
+    this.#stopLinks();
+    this.#closePort();
   }
 
-  private readonly onWindowMessage = (event: MessageEvent) => {
-    if (event.source === null || event.source !== this.parent || event.origin !== this.hostOrigin)
+  readonly #onWindowMessage = (event: MessageEvent) => {
+    if (event.source === null || event.source !== this.#parent || event.origin !== this.#hostOrigin)
       return;
     const connect = parseConnect(event.data);
     const port = event.ports[0];
@@ -109,48 +111,48 @@ export class PanelAgent {
       port.close();
       return;
     }
-    this.closePort();
-    this.port = port;
-    port.onmessage = this.onPortMessage;
-    this.capture.start(connect.optimizeHover);
+    this.#closePort();
+    this.#port = port;
+    port.onmessage = this.#onPortMessage;
+    this.#capture.start(connect.optimizeHover);
   };
 
-  private readonly onPortMessage = (event: MessageEvent) => {
-    if (this.disposed) return;
+  readonly #onPortMessage = (event: MessageEvent) => {
+    if (this.#disposed) return;
     const message = parseHostMessage(event.data);
     if (!message) return;
     if (message.type === "app") {
-      this.window.dispatchEvent(new CustomEvent(HOST_MESSAGE_EVENT, { detail: message.data }));
+      this.#window.dispatchEvent(new CustomEvent(HOST_MESSAGE_EVENT, { detail: message.data }));
     } else if (message.type === "ping") {
-      this.post({ type: "pong" });
+      this.#post({ type: "pong" });
     } else if (message.type === "visibility") {
-      this.capture.setVisible(message.visible);
+      this.#capture.setVisible(message.visible);
     } else if (message.type === "pace") {
-      this.capture.setPace(message.intervalMs);
+      this.#capture.setPace(message.intervalMs);
     } else {
-      this.capture.handle(message);
+      this.#capture.handle(message);
     }
   };
 
-  private readonly onPageMessage = (event: Event) => {
-    this.post({ type: "app", data: (event as CustomEvent).detail });
+  readonly #onPageMessage = (event: Event) => {
+    this.#post({ type: "app", data: (event as CustomEvent).detail });
   };
 
-  private post(message: PageMessage): void {
-    if (!this.port) return;
+  #post(message: PageMessage): void {
+    if (!this.#port) return;
     try {
-      this.port.postMessage(message);
+      this.#port.postMessage(message);
     } catch (error) {
       // App data that cannot be cloned (a function, a DOM node).
       console.warn("[three-html-panel] could not send a message to the host:", error);
     }
   }
 
-  private closePort(): void {
-    if (!this.port) return;
-    this.port.onmessage = null;
-    this.port.close();
-    this.port = null;
+  #closePort(): void {
+    if (!this.#port) return;
+    this.#port.onmessage = null;
+    this.#port.close();
+    this.#port = null;
   }
 }
 

@@ -50,9 +50,9 @@ export class SelectPopup {
   readonly items: PopupItem[];
   readonly box: Box;
   readonly itemHeight: number;
-  private readonly font: string;
+  readonly #font: string;
   /** The first item shown. */
-  private scroll = 0;
+  #scroll = 0;
   /** The item under the pointer, or chosen with the keys. */
   highlighted: number;
 
@@ -60,7 +60,7 @@ export class SelectPopup {
     const document = select.ownerDocument;
     const window = document.defaultView as FrameWindow;
     this.items = itemsOf(select);
-    this.font = fontOf(select);
+    this.#font = fontOf(select);
     const fontSize = parseFloat(window.getComputedStyle(select).fontSize) || 13;
     this.itemHeight = Math.max(18, Math.round(fontSize * 1.5));
 
@@ -70,7 +70,7 @@ export class SelectPopup {
     const widest = Math.max(
       0,
       ...this.items.map(
-        (item) => textWidth(document, this.font, item.label) + (item.grouped ? GROUP_INDENT : 0),
+        (item) => textWidth(document, this.#font, item.label) + (item.grouped ? GROUP_INDENT : 0),
       ),
     );
     const width = Math.min(
@@ -100,10 +100,10 @@ export class SelectPopup {
       0,
       this.items.findIndex((item) => item.index === select.selectedIndex),
     );
-    this.reveal(this.highlighted);
+    this.#reveal(this.highlighted);
   }
 
-  private get shown(): number {
+  get #shown(): number {
     return Math.round((this.box.height - 2 * BORDER) / this.itemHeight);
   }
 
@@ -116,7 +116,7 @@ export class SelectPopup {
   itemAt(x: number, y: number): number | null {
     if (!this.contains(x, y)) return null;
     const row = Math.floor((y - this.box.top - BORDER) / this.itemHeight);
-    const item = this.scroll + Math.max(0, Math.min(this.shown - 1, row));
+    const item = this.#scroll + Math.max(0, Math.min(this.#shown - 1, row));
     return item < this.items.length ? item : null;
   }
 
@@ -148,7 +148,7 @@ export class SelectPopup {
       left--;
     }
     this.highlighted = item;
-    this.reveal(item);
+    this.#reveal(item);
   }
 
   /** Highlights the first choosable item (after the highlighted one) whose label starts with `text`. */
@@ -159,7 +159,7 @@ export class SelectPopup {
       const item = (this.highlighted + offset) % count;
       if (this.choosable(item) && this.items[item]!.label.trim().toLowerCase().startsWith(prefix)) {
         this.highlighted = item;
-        this.reveal(item);
+        this.#reveal(item);
         return;
       }
     }
@@ -169,12 +169,12 @@ export class SelectPopup {
   scrollBy(deltaY: number): void {
     const rows =
       deltaY > 0 ? Math.ceil(deltaY / this.itemHeight) : Math.floor(deltaY / this.itemHeight);
-    this.scroll = Math.max(0, Math.min(this.items.length - this.shown, this.scroll + rows));
+    this.#scroll = Math.max(0, Math.min(this.items.length - this.#shown, this.#scroll + rows));
   }
 
-  private reveal(item: number): void {
-    if (item < this.scroll) this.scroll = item;
-    else if (item >= this.scroll + this.shown) this.scroll = item - this.shown + 1;
+  #reveal(item: number): void {
+    if (item < this.#scroll) this.#scroll = item;
+    else if (item >= this.#scroll + this.#shown) this.#scroll = item - this.#shown + 1;
   }
 
   get view(): PopupView {
@@ -182,10 +182,10 @@ export class SelectPopup {
     return {
       box: this.box,
       itemHeight: this.itemHeight,
-      font: this.font,
-      items: this.items.slice(this.scroll, this.scroll + this.shown).map((item, row) => ({
+      font: this.#font,
+      items: this.items.slice(this.#scroll, this.#scroll + this.#shown).map((item, row) => ({
         ...item,
-        highlighted: this.scroll + row === this.highlighted,
+        highlighted: this.#scroll + row === this.highlighted,
         selected: item.index >= 0 && item.index === selected,
       })),
     };
