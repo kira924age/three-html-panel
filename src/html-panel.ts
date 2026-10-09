@@ -21,6 +21,7 @@ import {
   MeshBasicMaterial,
   Plane,
   PlaneGeometry,
+  SRGBColorSpace,
   Vector2,
   Vector3,
   type Camera,
@@ -29,6 +30,7 @@ import {
   type Ray,
   type WebGLRenderer,
 } from "three";
+import { parseCssColor, type SrgbColor } from "./css-color";
 import { FrameRenderer } from "./frame-renderer";
 import { PanelConnection } from "./panel-connection";
 import { getSharedKeyboard, type KeyboardTarget, type PanelKeyboard } from "./panel-keyboard";
@@ -139,17 +141,8 @@ function openInNewTab(url: URL): void {
   window.open(url.href, "_blank", "noopener,noreferrer");
 }
 
-const RGBA = /^rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)\s*(?:[,/]\s*([\d.]+)(%?)\s*)?\)$/;
-
-/** A CSS color as an opaque color and an alpha. THREE.Color ignores alpha (with a warning). */
-export function splitAlpha(css: string): { rgb: string; alpha: number } {
-  if (css === "transparent") return { rgb: "rgb(0, 0, 0)", alpha: 0 };
-  const match = RGBA.exec(css);
-  if (!match) return { rgb: css, alpha: 1 };
-  const [, r, g, b, a, percent] = match;
-  const alpha = a === undefined ? 1 : Number(a) / (percent ? 100 : 1);
-  return { rgb: `rgb(${r}, ${g}, ${b})`, alpha: Math.min(1, Math.max(0, alpha)) };
-}
+/** The caret's color before the page has sent one that can be read: the usual one, opaque black. */
+const DEFAULT_CARET_COLOR: SrgbColor = { r: 0, g: 0, b: 0, alpha: 1 };
 
 export interface HtmlPanelEventMap extends Object3DEventMap {
   /** `cursor` changed. */
@@ -205,6 +198,11 @@ export class HtmlPanel
   private selected = "";
   /** The caret the page reported last, in its CSS pixels, for placing the IME. */
   private caretBox: Caret | null = null;
+  /**
+   * The last visible caret color that could be read. A color that cannot be
+   * read keeps it, rather than turning black and vanishing on a dark page.
+   */
+  private caretColor: SrgbColor = DEFAULT_CARET_COLOR;
   /** Where the page's text fields are (CSS px), as it reported last. */
   private editables: Box[] = [];
   /** What drove the pointer last: the IME is placed at the caret only for a mouse. */
@@ -493,9 +491,10 @@ export class HtmlPanel
 
   private updateCaret(caret: Caret | null): void {
     this.caretBox = caret;
-    const color = caret ? splitAlpha(caret.color) : null;
+    const color = caret ? (parseCssColor(caret.color) ?? this.caretColor) : null;
     // A transparent caret (caret-color: transparent) is how a page hides it.
     if (color?.alpha === 0) caret = null;
+    else if (color) this.caretColor = color;
     this.caret.userData.hasCaret = caret !== null;
     this.caret.visible = caret !== null;
     if (!caret) return;
@@ -507,7 +506,7 @@ export class HtmlPanel
       (0.5 - (caret.y + caret.height / 2) / this.pageHeight) * this.worldHeight,
       0.0005,
     );
-    this.caret.material.color.setStyle(color!.rgb);
+    this.caret.material.color.setRGB(color!.r, color!.g, color!.b, SRGBColorSpace);
     this.caret.material.opacity = color!.alpha;
   }
 
