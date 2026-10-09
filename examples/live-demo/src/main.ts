@@ -1,6 +1,7 @@
 import {
   AmbientLight,
   BufferGeometry,
+  Clock,
   Color,
   DirectionalLight,
   GridHelper,
@@ -11,9 +12,9 @@ import {
   Vector3,
   WebGLRenderer,
 } from "three";
-import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { VRButton } from "three/addons/webxr/VRButton.js";
 import { HtmlPanel, PanelPointer, PanelXRKeyboard, PanelXRPointer } from "@urth/three-html-panel";
+import { Navigation, attachStick, type ViewMode } from "./navigation";
 import { SITES, parseSiteMessage, siteNamed, type Site, type SiteMessage } from "./sites";
 
 const renderer = new WebGLRenderer({ antialias: true });
@@ -33,16 +34,11 @@ sun.position.set(2, 4, 3);
 scene.add(new AmbientLight(0xffffff, 1.2), sun);
 scene.add(new GridHelper(20, 20, 0x3a4150, 0x2a303b));
 
-// The site straight ahead, the switcher to its left turned toward the viewer:
-// look around by dragging outside them; the wheel and a right-button drag
-// outside them zoom and pan.
+// The site straight ahead, the switcher to its left turned toward the viewer.
+// Moving around: see navigation.ts.
 const EYE_HEIGHT = 1.45;
 const camera = new PerspectiveCamera(55, innerWidth / innerHeight, 0.05, 100);
 camera.position.set(0, EYE_HEIGHT, 0.4);
-const controls = new OrbitControls(camera, renderer.domElement);
-controls.target.set(0, EYE_HEIGHT, -0.2);
-controls.enableDamping = true;
-controls.update();
 
 const SITE_SIZE = 2.3;
 const SITE_DISTANCE = 2.4;
@@ -120,6 +116,33 @@ show(first);
 const panels = () => (shown ? [switcher, shown] : [switcher]);
 new PanelPointer(camera, renderer.domElement, panels);
 
+// Keys move the view unless a panel's text field has them.
+const navigation = new Navigation(camera, renderer.domElement, () =>
+  panels().some((panel) => panel.isTyping),
+);
+// Orbiting turns around the site shown (each site's panel is in the same place).
+navigation.setCenter(new Vector3(0, EYE_HEIGHT, -SITE_DISTANCE));
+attachStick(
+  document.querySelector<HTMLElement>("#stick")!,
+  document.querySelector<HTMLElement>("#stick > span")!,
+  navigation,
+);
+// The view mode buttons, and V, switch between orbit and first person.
+const modeButtons = document.querySelectorAll<HTMLButtonElement>("#view button");
+const showMode = (mode: ViewMode) => {
+  for (const button of modeButtons)
+    button.setAttribute("aria-pressed", String(button.value === mode));
+};
+for (const button of modeButtons) {
+  button.addEventListener("click", () => {
+    navigation.mode = button.value as ViewMode;
+    // Keys go to the scene again, not to the button.
+    button.blur();
+  });
+}
+navigation.onModeChange(showMode);
+showMode(navigation.mode);
+
 // In VR, each controller points at the panels with a ray; the trigger presses.
 const xrPointer = new PanelXRPointer(renderer, panels);
 // In VR, a keyboard shows under the panel whose text field has focus.
@@ -141,8 +164,11 @@ addEventListener("resize", () => {
   renderer.setSize(innerWidth, innerHeight);
 });
 
+const clock = new Clock();
 renderer.setAnimationLoop(() => {
+  const seconds = Math.min(clock.getDelta(), 0.1);
   xrPointer.update();
-  controls.update();
+  // In VR, the headset moves the view.
+  if (!renderer.xr.isPresenting) navigation.update(seconds);
   renderer.render(scene, camera);
 });
