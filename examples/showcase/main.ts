@@ -70,9 +70,9 @@ const pageUrl = (path: string) => new URL(path, panelBase);
 const siteOrigins = import.meta.env.VITE_SITE_ORIGINS as Record<string, string>;
 const siteUrl = (name: string) => new URL("/", siteOrigins[name]);
 
-// All pages run sandboxed (their servers send the same sandbox, see
-// vite.panels.config.ts and examples/sites/vite.site.ts): none can reach the
-// scene's cookies, storage or document, nor take its keyboard.
+// All pages run sandboxed (the iframes' sandbox attribute; the server of the
+// demo's own panel pages sends the same sandbox too, see vite.panels.config.ts):
+// none can reach the scene's cookies, storage or document, nor take its keyboard.
 /**
  * A link the user follows in a panel: to another page of the same site, it opens
  * in the panel (the page loads the agent too, and connects again); elsewhere,

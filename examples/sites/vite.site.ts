@@ -9,13 +9,7 @@
 
 import { resolve } from "node:path";
 import { defineConfig, loadEnv, type PluginOption, type UserConfig } from "vite";
-import {
-  PANEL_PAGE_HEADERS,
-  PANEL_SANDBOX_CSP,
-  originVariable,
-  originsFor,
-  staticHeaders,
-} from "../../vite.panels.config.ts";
+import { originVariable, originsFor, staticHeaders } from "../../vite.panels.config.ts";
 
 /** The repository's root, where the library's source is. */
 const ROOT = resolve(import.meta.dirname, "../..");
@@ -68,12 +62,11 @@ export function siteConfig({ name, dir, plugins = [], config = {} }: SiteOptions
     const port = SITE_PORTS[name];
     const server = {
       strictPort: true,
-      // Shown sandboxed, the page is on the opaque origin "null", and so is
-      // every request it makes for its own scripts and styles.
+      // Shown sandboxed (the scene's iframes are), the page is on the opaque
+      // origin "null", and so is every request it makes for its own scripts
+      // and styles. Opened directly, it is an ordinary page of its origin:
+      // these are the demo's own sites, trusted, which send no sandbox.
       cors: { origin: [host, "null"] },
-      // The sandbox also comes with the page, so that it holds when the page is
-      // opened directly or embedded elsewhere, not only in the scene.
-      headers: { "Content-Security-Policy": PANEL_SANDBOX_CSP },
     };
     return {
       root: dir,
@@ -95,8 +88,8 @@ export function siteConfig({ name, dir, plugins = [], config = {} }: SiteOptions
           },
         ],
       },
-      // Deployed, the whole site is sandboxed and readable from "null", as in development.
-      plugins: [...plugins, staticHeaders({ "/*": PANEL_PAGE_HEADERS })],
+      // Deployed, the whole site is readable from "null", as in development.
+      plugins: [...plugins, staticHeaders({ "/*": { "Access-Control-Allow-Origin": "*" } })],
       ...config,
     };
   });
