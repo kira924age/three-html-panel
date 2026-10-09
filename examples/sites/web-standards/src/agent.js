@@ -3,6 +3,6 @@
 // an ordinary page. It must run before the page's other scripts: main.js
 // imports it first.
 
-import { startAgent } from "three-html-panel/agent";
+import { startAgent } from "@urth/three-html-panel/agent";
 
 startAgent({ hostOrigin: import.meta.env.VITE_HOST_ORIGIN });

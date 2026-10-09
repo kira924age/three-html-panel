@@ -12,8 +12,8 @@
     "skipLibCheck": true,
     "allowImportingTsExtensions": true,
     "paths": {
-      "three-html-panel/agent": ["../../../src/agent/index.ts"],
-      "three-html-panel/page": ["../../../src/agent/page.ts"]
+      "@urth/three-html-panel/agent": ["../../../src/agent/index.ts"],
+      "@urth/three-html-panel/page": ["../../../src/agent/page.ts"]
     },
     "jsx": "react-jsx"
   },
