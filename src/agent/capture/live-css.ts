@@ -18,6 +18,9 @@
 // The stylesheets of shadow roots are not rewritten: the agent's hover and
 // focus stop at a shadow root anyway.
 //
+// The page's selector queries (matches, closest, querySelector(All)) are
+// rewritten the same way, for its scripts to see the states its CSS does.
+//
 // Rules the page's script cannot read (a cross-origin stylesheet without CORS,
 // linked or imported) cannot be edited. Their interaction rules, from the copy
 // DocumentCss fetches, go into a sheet of the agent's own (adoptedStyleSheets),
@@ -183,6 +186,69 @@ function wrapCssom(window: FrameWindow, onChange: CssomListener): () => void {
   };
 }
 
+/** Per window: how many use the patched selector queries, and what puts them back. */
+const queryPatches = new WeakMap<object, { users: number; unpatch: () => void }>();
+
+/** Selectors with an interaction pseudo-class in them, rewritten (a page queries the same few again and again). */
+const querySelectors = new Map<string, string>();
+const MAX_QUERY_SELECTORS = 256;
+const MAY_HAVE_INTERACTION = /:(?:hover|active|focus)/;
+
+function liveQuery(selector: unknown): unknown {
+  if (typeof selector !== "string" || !MAY_HAVE_INTERACTION.test(selector)) return selector;
+  let rewritten = querySelectors.get(selector);
+  if (rewritten === undefined) {
+    rewritten = liveSelector(selector) ?? selector;
+    if (querySelectors.size >= MAX_QUERY_SELECTORS) querySelectors.clear();
+    querySelectors.set(selector, rewritten);
+  }
+  return rewritten;
+}
+
+/**
+ * Makes the page's selector queries (matches, closest, querySelector,
+ * querySelectorAll) see the agent's interaction states as its stylesheets
+ * do: `menu.matches(":hover")` is true while the agent hovers the menu.
+ * Patched once per window; put back when the last user stops.
+ */
+function patchSelectorQueries(window: FrameWindow): () => void {
+  let patch = queryPatches.get(window);
+  if (!patch) {
+    const restores: (() => void)[] = [];
+    const wrap = (proto: Record<string, unknown> | undefined, name: string) => {
+      const original = proto?.[name];
+      if (!proto || typeof original !== "function") return;
+      // The page's elements call these with themselves as `this`: no arrow function.
+      const wrapped = function (this: unknown, selector: unknown, ...rest: unknown[]) {
+        return original.call(this, liveQuery(selector), ...rest);
+      };
+      proto[name] = wrapped;
+      restores.push(() => {
+        if (proto[name] === wrapped) proto[name] = original;
+      });
+    };
+    const prototypes = [window.Element, window.Document, window.DocumentFragment].map(
+      (type) => type?.prototype as unknown as Record<string, unknown> | undefined,
+    );
+    for (const proto of prototypes) {
+      for (const name of ["querySelector", "querySelectorAll"]) wrap(proto, name);
+    }
+    for (const name of ["matches", "closest", "webkitMatchesSelector"]) wrap(prototypes[0], name);
+    patch = { users: 0, unpatch: () => restores.reverse().forEach((restore) => restore()) };
+    queryPatches.set(window, patch);
+  }
+  patch.users++;
+  const current = patch;
+  let stopped = false;
+  return () => {
+    if (stopped) return;
+    stopped = true;
+    if (--current.users > 0) return;
+    current.unpatch();
+    queryPatches.delete(window);
+  };
+}
+
 const joinParts = (parts: [CSSStyleSheet | null, string][]) =>
   parts.map(([, part]) => part).join("|");
 
@@ -223,6 +289,7 @@ export class LiveInteractionCss {
   private adopted: CSSStyleSheet | null = null;
   private readonly window: FrameWindow;
   private readonly unwatch: () => void;
+  private readonly unpatchQueries: () => void;
 
   constructor(
     private readonly document: Document,
@@ -234,6 +301,7 @@ export class LiveInteractionCss {
   ) {
     this.window = document.defaultView as FrameWindow;
     this.unwatch = watchStylesheets(this.window, (change) => this.cssomChanged(change));
+    this.unpatchQueries = patchSelectorQueries(this.window);
   }
 
   /**
@@ -407,6 +475,7 @@ export class LiveInteractionCss {
     this.originals.clear();
     this.adopt("");
     this.unwatch();
+    this.unpatchQueries();
     this.reset();
   }
 

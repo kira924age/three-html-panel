@@ -132,6 +132,23 @@ describe("LiveInteractionCss", () => {
     }
   });
 
+  it("lets the page's selector queries see the marks, as its stylesheets do", () => {
+    setUp(".tools { display: none }");
+    const row = document.querySelector(".row")!;
+    const button = document.querySelector("button")!;
+    expect(row.matches(":hover")).toBe(false);
+    row.setAttribute("data-thp-hover", "");
+    button.setAttribute("data-thp-focus", "");
+    expect(row.matches(":hover")).toBe(true);
+    expect(button.closest(".row:hover")).toBe(row);
+    expect(document.querySelector(":focus")).toBe(button);
+    expect(row.querySelectorAll(":hover, :focus")).toHaveLength(1);
+    // Put back when it stops.
+    live!.dispose();
+    live = null;
+    expect(row.matches(":hover")).toBe(false);
+  });
+
   it("rewrites a selector the page sets on a rule itself", () => {
     setUp(".tools { display: none } .x { color: red }");
     const rule = document.styleSheets[0]!.cssRules[1] as CSSStyleRule;

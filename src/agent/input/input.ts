@@ -385,11 +385,12 @@ export class InputSynthesizer {
     // What focus that follows is shown as (:focus-visible): after keys, not after a press.
     // Not after a shortcut (Ctrl, Cmd or Alt held) or a modifier alone, as in browsers.
     if (
-      input.type === "key" &&
-      !input.ctrlKey &&
-      !input.metaKey &&
-      !input.altKey &&
-      !MODIFIER_KEYS.has(input.key)
+      input.type === "text" ||
+      (input.type === "key" &&
+        !input.ctrlKey &&
+        !input.metaKey &&
+        !input.altKey &&
+        !MODIFIER_KEYS.has(input.key))
     )
       this.keyboardModality = true;
     else if (input.type === "pointer" && input.kind === "down") this.keyboardModality = false;
@@ -607,7 +608,7 @@ export class InputSynthesizer {
    */
   syncMarks(): boolean {
     const focused = this.focus.current;
-    return this.marks.update({
+    const changed = this.marks.update({
       hovered: this.hovered,
       active: this.active,
       focused,
@@ -616,6 +617,26 @@ export class InputSynthesizer {
         focused !== null &&
         (this.keyboardModality || isTextField(focused) || isEditingHost(focused)),
     });
+    this.finishTransitions(changed);
+    return changed.length > 0;
+  }
+
+  /**
+   * Transitions the marks started (`.row:hover .tools { transform: none }`)
+   * end at once in the page, as they are drawn (the image shows transitions
+   * at their end): a press lands where the image shows the element, not where
+   * it is on its way.
+   */
+  private finishTransitions(changed: Element[]): void {
+    if (changed.length === 0 || typeof this.document.getAnimations !== "function") return;
+    // Starts the transitions the marks cause (getAnimations brings styles up to date).
+    for (const animation of this.document.getAnimations()) {
+      // A CSS transition, checked by shape (as snapshot.ts does).
+      if (!("transitionProperty" in animation) || animation.playState !== "running") continue;
+      const target = (animation.effect as KeyframeEffect | null)?.target;
+      if (target && changed.some((element) => element === target || element.contains(target)))
+        animation.finish();
+    }
   }
 
   /** Not pressed anymore: no longer :active. */

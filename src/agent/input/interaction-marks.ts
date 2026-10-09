@@ -38,19 +38,20 @@ export class InteractionMarks {
     ].map((name) => [name, new Set()]),
   );
 
-  /** Marks the elements in these states, and only those. Returns whether any mark changed. */
-  update({ hovered, active, focused, focusVisible = false }: InteractionState): boolean {
+  /** Marks the elements in these states, and only those. Returns the elements whose marks changed. */
+  update({ hovered, active, focused, focusVisible = false }: InteractionState): Element[] {
     const focusWithin: Element[] = [];
     for (let element = focused; element; element = element.parentElement) focusWithin.push(element);
-    // Not short-circuited: every attribute is brought up to date.
-    const changed = [
-      this.mark(HOVER_ATTRIBUTE, hovered),
-      this.mark(ACTIVE_ATTRIBUTE, active),
-      this.mark(FOCUS_ATTRIBUTE, focused ? [focused] : []),
-      this.mark(FOCUS_VISIBLE_ATTRIBUTE, focused && focusVisible ? [focused] : []),
-      this.mark(FOCUS_WITHIN_ATTRIBUTE, focusWithin),
-    ];
-    return changed.includes(true);
+    const changed = new Set<Element>();
+    for (const [name, elements] of [
+      [HOVER_ATTRIBUTE, hovered],
+      [ACTIVE_ATTRIBUTE, active],
+      [FOCUS_ATTRIBUTE, focused ? [focused] : []],
+      [FOCUS_VISIBLE_ATTRIBUTE, focused && focusVisible ? [focused] : []],
+      [FOCUS_WITHIN_ATTRIBUTE, focusWithin],
+    ] as const)
+      this.mark(name, elements, changed);
+    return Array.from(changed);
   }
 
   /** Removes every mark. */
@@ -58,22 +59,20 @@ export class InteractionMarks {
     this.update({ hovered: [], active: [], focused: null });
   }
 
-  private mark(name: string, elements: Iterable<Element>): boolean {
+  private mark(name: string, elements: Iterable<Element>, changed: Set<Element>): void {
     const marked = this.marked.get(name)!;
     const next = new Set(elements);
-    let changed = false;
     for (const element of marked) {
       if (next.has(element)) continue;
       element.removeAttribute(name);
-      changed = true;
+      changed.add(element);
     }
     // Set again if the page took it off (re-rendering an element's attributes, say).
     for (const element of next) {
       if (element.hasAttribute(name)) continue;
       element.setAttribute(name, "");
-      changed = true;
+      changed.add(element);
     }
     this.marked.set(name, next);
-    return changed;
   }
 }

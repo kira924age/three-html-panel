@@ -233,6 +233,52 @@ describe("interaction states in the live page", () => {
     expect(button.hasAttribute("data-thp-focus-visible")).toBe(true);
   });
 
+  it("makes focus show after typed text, as after keys", async () => {
+    capture.start();
+    move();
+    press();
+    const button = document.querySelector("button")!;
+    capture.handle({ type: "text", text: "a" });
+    await settle();
+    expect(button.hasAttribute("data-thp-focus-visible")).toBe(true);
+  });
+
+  it("ends at once the transitions a hover starts, as the image shows them", () => {
+    const row = document.querySelector(".row")!;
+    const tools = document.querySelector(".tools")!;
+    const [before, other] = ["p", "p"].map((tag) =>
+      document.body.appendChild(document.createElement(tag)),
+    );
+    let hitTarget: Element = before!;
+    Object.defineProperty(document, "elementFromPoint", {
+      configurable: true,
+      value: () => hitTarget,
+    });
+    // jsdom runs no transitions: as the browser lists them.
+    const transition = (target: Element) => ({
+      transitionProperty: "transform",
+      playState: "running",
+      effect: { target },
+      finish: vi.fn(),
+    });
+    const inRow = transition(tools);
+    const unrelated = transition(other!);
+    document.getAnimations = () => [inRow, unrelated] as unknown as Animation[];
+    try {
+      capture.start();
+      move();
+      inRow.finish.mockClear();
+      unrelated.finish.mockClear();
+      // From another element onto the row: the row is hovered now, and what is in it.
+      hitTarget = row;
+      move();
+      expect(inRow.finish).toHaveBeenCalled();
+      expect(unrelated.finish).not.toHaveBeenCalled();
+    } finally {
+      delete (document as { getAnimations?: unknown }).getAnimations;
+    }
+  });
+
   it("follows the page moving the focused element elsewhere, on the next capture", async () => {
     capture.start();
     const button = document.querySelector("button")!;

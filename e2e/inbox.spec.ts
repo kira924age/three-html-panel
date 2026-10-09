@@ -21,6 +21,17 @@ test("archives a message with a button that shows only while it is hovered", asy
   const message = await panel.box(MESSAGE);
   await page.mouse.move(...xy(panel.screen(message.left + 40, message.top + message.height / 2)));
   await expect.poll(async () => (await panel.box(`${MESSAGE} .archive`)).width).toBeGreaterThan(0);
+  // The subject's hover transition ended at once, as the panel draws it: not still on its way.
+  expect(
+    await panel.frame.evaluate(
+      (selector) =>
+        document
+          .querySelector(selector)!
+          .getAnimations()
+          .filter((animation) => animation.playState === "running").length,
+      `${MESSAGE} .subject`,
+    ),
+  ).toBe(0);
   await panel.ifDrawn(async () => {
     // The panel draws the hover's background.
     await expect
