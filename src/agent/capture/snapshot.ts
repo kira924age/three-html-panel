@@ -23,6 +23,8 @@ import type { Box, FrameWindow } from "../../types";
 import { scrolledText } from "../input/caret";
 import { scrollbarsOf, type Scrollbar } from "../input/scrollbars";
 import type { PopupView } from "../input/select-popup";
+import type { SelectionBox } from "../input/selection";
+import { topLayerStates } from "../input/top-layer";
 import { MODAL_ATTRIBUTE, POPOVER_OPEN_ATTRIBUTE } from "./css";
 
 /** Elements that do not contribute to what is on screen. <style> is collected separately. */
@@ -43,10 +45,10 @@ export interface SnapshotOptions {
   ignored?: ReadonlySet<Element>;
   /** Returns a data URL for an image, or null if it is not available yet. */
   inlineImage: (url: string) => string | null;
-  /** The selected text in the focused field, as measured by measureSelection(). */
-  selection?: readonly Box[];
-  /** What the selection is in (the field, or the page's range): drawn in its layer (see liftToTopLayer). */
-  selectionIn?: Node | Range | null;
+  /** The selected text in the focused field, as measured by measureSelection(), or the page's (each box with its text). */
+  selection?: readonly SelectionBox[];
+  /** The field the selection is in, if it is a field's: drawn in its layer (see liftToTopLayer). */
+  selectionIn?: Element | null;
   /** The page's ::selection background, if any; a default is used when it is transparent. */
   selectionColor?: string;
   /** The selection is not where the keys go (the panel is not active): drawn grey, as browsers do. */
@@ -536,9 +538,9 @@ class Snapshotter {
    * (the page's rules are rewritten to match them too, see css.ts).
    */
   #markTopLayer(element: Element, copy: Element): void {
-    const popover = matches(element, ":popover-open");
-    const modal = matches(element, ":modal");
-    if (!popover && !modal) return;
+    const states = topLayerStates(element);
+    if (!states) return;
+    const { popover, modal } = states;
     if (popover) copy.setAttribute(POPOVER_OPEN_ATTRIBUTE, "");
     if (modal) copy.setAttribute(MODAL_ATTRIBUTE, "");
     this.topLayer.push({ live: element, copy: copy as HTMLElement });
@@ -1442,43 +1444,39 @@ function inlineBackgroundImages(
   return missing ? "none" : inlined;
 }
 
-/** Whether an element matches a selector this browser may not know (it matches nothing then). */
-function matches(element: Element, selector: string): boolean {
-  try {
-    return element.matches(selector);
-  } catch {
-    return false;
-  }
-}
-
 /** Marks the stand-ins liftToTopLayer moves a top layer element with, and the element. */
 const STAND_IN_ATTRIBUTE = "data-thp-stand-in";
 const LIFTED_ATTRIBUTE = "data-thp-lifted";
 /**
  * A parent's stand-in makes no box (`display: contents`, in its style), nor
  * its ::before and ::after, which `display: contents` keeps; its other
- * children's make none either (those copied bare have no style to say so).
+ * children's stand-ins make none either.
  */
 const STAND_IN_RULES = [
   `[${STAND_IN_ATTRIBUTE}]::before,[${STAND_IN_ATTRIBUTE}]::after{display:none!important}`,
   `[${STAND_IN_ATTRIBUTE}]>:not([${STAND_IN_ATTRIBUTE}],[${LIFTED_ATTRIBUTE}]){display:none!important}`,
 ];
 /**
- * Other children of a parent copied with their attributes, nearest first;
- * further ones are bare elements of the same names, which keep only their
- * count (for :nth-child and :nth-of-type) and are cheap in a long list.
+ * Children after the lifted one (or its parent's stand-in) are copied only
+ * this far: rules look back at earlier siblings (`+`, `~`, :nth-child), and
+ * forward only with :nth-last-child, :last-child, :only-child and :has(),
+ * which a few later ones keep right for all but long lists.
  */
-const SIBLINGS_WITH_ATTRIBUTES = 16;
+const LATER_SIBLINGS = 16;
 
-/** A stand-in for another child of a parent: its attributes if near the lifted one, else only its name. */
-function siblingStandIn(sibling: Element, distance: number): Element {
-  if (distance > SIBLINGS_WITH_ATTRIBUTES)
-    return sibling.ownerDocument.createElementNS(sibling.namespaceURI, sibling.localName);
-  return hidden(sibling.cloneNode(false) as Element, "none");
+/**
+ * A stand-in for another child of a parent: its attributes, so that rules
+ * match as they did, without its style (which could show it: an inline
+ * `display: … !important` beats STAND_IN_RULES).
+ */
+function siblingStandIn(sibling: Element): Element {
+  const clone = sibling.cloneNode(false) as Element;
+  clone.removeAttribute("style");
+  return clone;
 }
 
 /** An element (a stand-in) with this display, over the page's own (in its style attribute too). */
-function hidden<T extends Element>(element: T, display: "none" | "contents"): T {
+function withDisplay<T extends Element>(element: T, display: "none" | "contents"): T {
   (element as Element as HTMLElement).style.setProperty("display", display, "important");
   return element;
 }
@@ -1487,7 +1485,7 @@ function hidden<T extends Element>(element: T, display: "none" | "contents"): T 
  * Browsers draw the top layer over the whole page, each element where it is
  * on screen whatever its parents (a transform, a filter or a clip in them
  * would otherwise place or cut it). The copy is moved to the end of the root,
- * after the rest of the page, placed where the page has it (`box`), over its
+ * after the rest of the page, placed where the page has it, over its
  * ::backdrop.
  *
  * The page's rules that reach it through its parents and their siblings
@@ -1503,7 +1501,6 @@ function liftToTopLayer(
   document: Document,
   root: HTMLElement,
   { live, copy }: { live: Element; copy: HTMLElement },
-  box: DOMRect,
 ): void {
   const view = document.defaultView!;
   const style = view.getComputedStyle(live);
@@ -1517,7 +1514,8 @@ function liftToTopLayer(
     root.appendChild(cover);
   }
   // A hidden stand-in takes its place (as the page has it); its parents' stand-ins are made from there.
-  const placeholder = hidden(copy.cloneNode(false) as Element, "none");
+  const placeholder = withDisplay(copy.cloneNode(false) as Element, "none");
+  const box = live.getBoundingClientRect();
   const place: Record<string, string> = {
     display: style.display,
     position: "fixed",
@@ -1550,12 +1548,11 @@ function liftToTopLayer(
   while (original.parentElement && original.parentElement !== root) {
     const parent = original.parentElement;
     const shell = parent.cloneNode(false) as HTMLElement;
-    hidden(shell, "contents").setAttribute(STAND_IN_ATTRIBUTE, "");
+    withDisplay(shell, "contents").setAttribute(STAND_IN_ATTRIBUTE, "");
     const children = Array.from(parent.children);
     const at = children.indexOf(original);
-    children.forEach((child, index) =>
-      shell.appendChild(child === original ? lifted : siblingStandIn(child, Math.abs(index - at))),
-    );
+    for (const child of children.slice(0, at + 1 + LATER_SIBLINGS))
+      shell.appendChild(child === original ? lifted : siblingStandIn(child));
     lifted = shell;
     original = parent;
   }
@@ -1593,33 +1590,21 @@ export function snapshotDocument(document: Document, options: SnapshotOptions): 
   // What the agent draws over the page goes over the page, or over the top
   // layer element it is in: drawn after it, at the same z-index.
   const layers = snapshotter.topLayer;
-  const boxes = layers.map(({ live }) => live.getBoundingClientRect());
   const layerOf = (node: Node | null | undefined): number => {
     if (!node) return -1;
     for (let index = layers.length - 1; index >= 0; index--)
       if (layers[index]!.live.contains(node)) return index;
     return -1;
   };
-  // A field's selection is in its layer; the page's range may run into a top
-  // layer element: each box is in the last one the range reaches that it is on.
-  const within = options.selectionIn;
-  const selectionLayerOf = (box: Box): number => {
-    if (!within || !("intersectsNode" in within)) return layerOf(within);
-    const x = box.left + box.width / 2;
-    const y = box.top + box.height / 2;
-    for (let index = layers.length - 1; index >= 0; index--) {
-      const { left, top, right, bottom } = boxes[index]!;
-      if (x < left || x > right || y < top || y > bottom) continue;
-      if (within.intersectsNode(layers[index]!.live)) return index;
-    }
-    return -1;
-  };
-  const selectionLayers = (options.selection ?? []).map(selectionLayerOf);
+  // A field's selection is in the field's layer; the page's, each box in its text's.
+  const selectionLayers = (options.selection ?? []).map((box) =>
+    layerOf(box.text ?? options.selectionIn),
+  );
   const compositionLayer = layerOf(options.composition?.field);
   const listBoxLayer = layerOf(options.listBox);
   const scrollbarLayers = snapshotter.scrollbars.map((bar) => layerOf(bar.element));
   for (let layer = -1; layer < layers.length; layer++) {
-    if (layer >= 0) liftToTopLayer(document, root, layers[layer]!, boxes[layer]!);
+    if (layer >= 0) liftToTopLayer(document, root, layers[layer]!);
     options.selection?.forEach((box, index) => {
       if (selectionLayers[index] === layer) drawBox(root, box, css);
     });

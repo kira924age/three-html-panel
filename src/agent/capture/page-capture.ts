@@ -389,7 +389,7 @@ export class PageCapture {
     const xhtml = this.#measure(() =>
       snapshotDocument(this.#document, {
         selection,
-        selectionIn: isTextField(focused) ? focused : range,
+        selectionIn: isTextField(focused) ? focused : null,
         selectionColor,
         // The page's selection, when the keys do not go to it (the host took them, or the page made it).
         selectionInactive:

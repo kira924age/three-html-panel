@@ -1093,9 +1093,10 @@ describe("the top layer", () => {
     expect(root.lastElementChild).toBe(header.parentElement);
     const button = menu.previousElementSibling as HTMLElement;
     expect(button.localName).toBe("button");
-    expect(button.style.getPropertyValue("display")).toBe("none");
+    // Hidden by the stand-ins' rules (STAND_IN_RULES).
+    expect(button.hasAttribute("style")).toBe(false);
     expect(header.nextElementSibling!.localName).toBe("main");
-    expect((header.nextElementSibling as HTMLElement).style.display).toBe("none");
+    expect(header.nextElementSibling!.hasAttribute("style")).toBe(false);
     // Where it was, a hidden stand-in (the header's children are counted as they were).
     const body = root.querySelector("body")!;
     const place = body.querySelector<HTMLElement>("header > button + #menu")!;
@@ -1138,19 +1139,19 @@ describe("the top layer", () => {
     menu.getBoundingClientRect = () => new DOMRect(0, 0, 100, 100);
     const boxes = (root: HTMLElement) =>
       Array.from(root.children).filter((child) => child.localName === "div");
-    const selection = [new DOMRect(10, 10, 30, 10)];
-    const under = snapshotWithTopLayer(
-      { menu: ":popover-open" },
-      { selection, selectionIn: document.getElementById("text") },
-    );
+    const at = (id: string) => ({
+      left: 10,
+      top: 10,
+      width: 30,
+      height: 10,
+      text: document.getElementById(id)!.firstChild as Text,
+    });
+    const under = snapshotWithTopLayer({ menu: ":popover-open" }, { selection: [at("text")] });
     expect(boxes(under)).toHaveLength(1);
     expect(boxes(under)[0]!.nextElementSibling!.localName).toBe("body");
     expect(under.lastElementChild!.querySelector("#menu")).not.toBeNull();
     vi.restoreAllMocks();
-    const over = snapshotWithTopLayer(
-      { menu: ":popover-open" },
-      { selection, selectionIn: document.getElementById("inside")!.firstChild },
-    );
+    const over = snapshotWithTopLayer({ menu: ":popover-open" }, { selection: [at("inside")] });
     expect(over.lastElementChild!.localName).toBe("div");
     expect(over.lastElementChild!.previousElementSibling!.querySelector("#menu")).not.toBeNull();
   });
@@ -1164,22 +1165,50 @@ describe("the top layer", () => {
     return children.slice(children.indexOf(chain) + 1);
   };
 
-  it("hides the stand-ins' ::before and ::after, and copies far siblings bare", () => {
-    const items = Array.from({ length: 40 }, (_, index) => `<li class="item">${index}</li>`);
-    document.body.innerHTML = `<ul class="list"><li><div id="menu" popover>Menu</div></li>${items.join("")}</ul>`;
+  it("hides the stand-ins' ::before and ::after, keeps the earlier siblings and a few later ones", () => {
+    const items = (from: number, count: number) =>
+      Array.from(
+        { length: count },
+        (_, index) => `<li class="item" style="display: block !important">${from + index}</li>`,
+      ).join("");
+    document.body.innerHTML = `<ul class="list">${items(0, 30)}<li><div id="menu" popover>Menu</div></li>${items(31, 40)}</ul>`;
     const root = snapshotWithTopLayer({ menu: ":popover-open" });
     expect(root.querySelector("style")!.textContent).toContain(
       "[data-thp-stand-in]::before,[data-thp-stand-in]::after{display:none!important}",
     );
     const list = root.lastElementChild!.querySelector<HTMLElement>("ul")!;
     expect(list.hasAttribute("data-thp-stand-in")).toBe(true);
-    const siblings = Array.from(list.children).slice(1);
-    expect(siblings).toHaveLength(40);
-    // Near ones as they are (for `+` and `~`), hidden; far ones only counted.
-    expect(siblings[0]!.className).toBe("item");
-    expect((siblings[0] as HTMLElement).style.getPropertyValue("display")).toBe("none");
-    expect(siblings[30]!.localName).toBe("li");
-    expect(siblings[30]!.attributes).toHaveLength(0);
+    const children = Array.from(list.children);
+    // All 30 earlier ones (for `~` and :nth-child), the menu's item, 16 later ones.
+    expect(children).toHaveLength(30 + 1 + 16);
+    expect(children[30]!.querySelector("#menu")).not.toBeNull();
+    expect(children[0]!.className).toBe("item");
+    // Without their style, whose !important would show them over the rule that hides them.
+    expect(children[0]!.hasAttribute("style")).toBe(false);
+    expect(children[46]!.className).toBe("item");
+  });
+
+  it("lifts a popover opened in an open popover over it, through its stand-in", () => {
+    document.body.innerHTML = `<nav class="bar"><div id="menu" popover><div id="sub" popover>Sub</div></div></nav>`;
+    document.getElementById("menu")!.getBoundingClientRect = () => new DOMRect(0, 0, 100, 100);
+    document.getElementById("sub")!.getBoundingClientRect = () => new DOMRect(100, 0, 80, 60);
+    const root = snapshotWithTopLayer({ menu: ":popover-open", sub: ":popover-open" });
+    const chains = Array.from(root.children).filter((child) =>
+      child.hasAttribute("data-thp-stand-in"),
+    );
+    expect(chains).toHaveLength(2);
+    const [menuChain, subChain] = chains;
+    // The menu, with a hidden stand-in for the submenu where it was.
+    const menu = menuChain!.querySelector<HTMLElement>("#menu[data-thp-lifted]")!;
+    expect(menu.querySelector<HTMLElement>("#sub")!.style.getPropertyValue("display")).toBe("none");
+    // The submenu after it, in stand-ins for the nav and the menu (which makes no box there).
+    const sub = subChain!.querySelector<HTMLElement>("#sub[data-thp-lifted]")!;
+    const menuStandIn = sub.parentElement!;
+    expect(menuStandIn.id).toBe("menu");
+    expect(menuStandIn.hasAttribute("data-thp-stand-in")).toBe(true);
+    expect(menuStandIn.style.getPropertyValue("display")).toBe("contents");
+    expect(menuStandIn.parentElement!.className).toBe("bar");
+    expect(sub.style.left).toBe("100px");
   });
 
   it("draws a popover's ::backdrop too", () => {
@@ -1193,20 +1222,16 @@ describe("the top layer", () => {
     expect(cover.style.backgroundColor).toBe("rgba(0, 0, 0, 0.3)");
   });
 
-  it("draws each box of a selection running into a popover under it or over it, by where it is", () => {
+  it("draws each box of a selection running into a popover under it or over it, by the text it is of", () => {
     document.body.innerHTML = `<p id="text">Page</p><div id="menu" popover><p id="inside">Menu</p></div>`;
-    document.getElementById("menu")!.getBoundingClientRect = () => new DOMRect(200, 0, 100, 100);
-    const range = document.createRange();
-    range.setStart(document.getElementById("text")!.firstChild!, 0);
-    range.setEnd(document.getElementById("inside")!.firstChild!, 2);
-    const page = new DOMRect(10, 10, 30, 10);
-    const inMenu = new DOMRect(210, 10, 30, 10);
-    const root = snapshotWithTopLayer(
-      { menu: ":popover-open" },
-      { selection: [page, inMenu], selectionIn: range },
-    );
+    document.getElementById("menu")!.getBoundingClientRect = () => new DOMRect(0, 0, 100, 100);
+    const text = (id: string) => document.getElementById(id)!.firstChild as Text;
+    // Page text the popover covers, and popover text spilling out of it.
+    const page = { left: 10, top: 10, width: 30, height: 10, text: text("text") };
+    const spilled = { left: 10, top: 120, width: 30, height: 10, text: text("inside") };
+    const root = snapshotWithTopLayer({ menu: ":popover-open" }, { selection: [page, spilled] });
     const drawn = after(root, "menu") as HTMLElement[];
-    expect(drawn.map((box) => box.style.left)).toEqual(["210px"]);
+    expect(drawn.map((box) => box.style.top)).toEqual(["120px"]);
   });
 
   it("draws an IME's underline, a list box's rows and the scrollbars in a popover over it", () => {
