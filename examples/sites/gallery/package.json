@@ -9,6 +9,9 @@
     "preview": "vp preview",
     "typecheck": "svelte-check"
   },
+  "dependencies": {
+    "@urth/three-html-panel": "0.2.0"
+  },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "7.3.1",
     "svelte": "5.57.2",

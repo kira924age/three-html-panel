@@ -8,6 +8,9 @@
     "build": "vp build",
     "preview": "vp preview"
   },
+  "dependencies": {
+    "@urth/three-html-panel": "0.2.0"
+  },
   "devDependencies": {
     "vite": "catalog:",
     "vite-plus": "catalog:"
