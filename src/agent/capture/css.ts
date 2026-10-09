@@ -68,7 +68,33 @@ const isWrapped = (selector: string, start: number, end: number) =>
   /^\s*,\s*\[data-thp-/.test(selector.slice(end, end + 16));
 
 /**
- * Replaces the interaction pseudo-classes, but those that follow a
+ * Where in `selector` the text is not selector syntax: inside an attribute
+ * selector (`[title=":hover"]`) or a string, or escaped (Tailwind's
+ * `.md\:hover\:underline`). One flag per character.
+ */
+function quotedText(selector: string): boolean[] {
+  const quoted: boolean[] = [];
+  let quote = "";
+  let brackets = 0;
+  for (let i = 0; i < selector.length; i++) {
+    const char = selector[i]!;
+    quoted.push(quote !== "" || brackets > 0);
+    if (char === "\\") {
+      // The character escaped is part of a name (or of the string).
+      quoted.push(true);
+      i++;
+    } else if (quote) {
+      if (char === quote) quote = "";
+    } else if (char === '"' || char === "'") quote = char;
+    else if (char === "[") brackets++;
+    else if (char === "]" && brackets > 0) brackets--;
+  }
+  return quoted;
+}
+
+/**
+ * Replaces the interaction pseudo-classes, but those inside an attribute
+ * selector, a string or an escape (not pseudo-classes), those that follow a
  * pseudo-element, and those rewritten already (a selector the page read back
  * and added to, say).
  */
@@ -76,11 +102,16 @@ function replaceInteractionPseudoClasses(
   selector: string,
   replace: (match: string, attribute: string) => string,
 ): string {
-  return selector.replace(INTERACTION_PSEUDO_CLASS, (match, name: string, offset: number) =>
-    followsPseudoElement(selector, offset) || isWrapped(selector, offset, offset + match.length)
+  let quoted: boolean[] | null = null;
+  return selector.replace(INTERACTION_PSEUDO_CLASS, (match, name: string, offset: number) => {
+    // Only for selectors with a bracket, a quote or an escape at all: most have none.
+    if (/["'[\\]/.test(selector)) quoted ??= quotedText(selector);
+    return quoted?.[offset] ||
+      followsPseudoElement(selector, offset) ||
+      isWrapped(selector, offset, offset + match.length)
       ? match
-      : replace(match, INTERACTION_ATTRIBUTE_OF[name]!),
-  );
+      : replace(match, INTERACTION_ATTRIBUTE_OF[name]!);
+  });
 }
 
 const LIVE_REWRITE =

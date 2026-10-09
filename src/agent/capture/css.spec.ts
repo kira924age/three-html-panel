@@ -76,6 +76,17 @@ describe("liveSelector", () => {
     );
   });
 
+  it("leaves the text of attribute selectors, strings and escapes, which is not a pseudo-class", () => {
+    expect(liveSelector('[data-tip=":hover to see"]')).toBeNull();
+    expect(liveSelector("[title=':active']:hover")).toBe(
+      "[title=':active']:is(:hover,[data-thp-hover])",
+    );
+    // Tailwind's escaped class names.
+    expect(liveSelector(".md\\:hover\\:underline:hover")).toBe(
+      ".md\\:hover\\:underline:is(:hover,[data-thp-hover])",
+    );
+  });
+
   it("is null for selectors without them, or rewritten already", () => {
     expect(liveSelector("li:hover-like, p:first-child")).toBeNull();
     expect(liveSelector(".row:is(:hover, [data-thp-hover])")).toBeNull();

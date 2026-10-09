@@ -96,6 +96,29 @@ const APPLE_PLATFORM = /mac|iphone|ipad|ipod/i;
 const FOCUSABLE_SELECTOR =
   'input, textarea, select, button, a[href], [tabindex], [contenteditable=""], [contenteditable="true"], [contenteditable="plaintext-only"]';
 
+/** Those of `elements` not inside another of them. */
+function topmost(elements: Element[]): Element[] {
+  return elements.filter(
+    (element) => !elements.some((other) => other !== element && other.contains(element)),
+  );
+}
+
+/**
+ * The CSS transitions running on these elements and in them. Brings styles up
+ * to date (as the next hit test would anyway): transitions just caused start.
+ */
+function runningTransitions(roots: Element[]): Animation[] {
+  const found: Animation[] = [];
+  for (const root of roots) {
+    if (typeof root.getAnimations !== "function") continue;
+    for (const animation of root.getAnimations({ subtree: true }))
+      // A CSS transition, checked by shape (as snapshot.ts does).
+      if ("transitionProperty" in animation && animation.playState === "running")
+        found.push(animation);
+  }
+  return found;
+}
+
 /** Keys that only modify others: pressed alone, they do not make focus show. */
 const MODIFIER_KEYS = new Set(["Shift", "Control", "Meta", "Alt", "AltGraph", "CapsLock", "Fn"]);
 
@@ -608,16 +631,25 @@ export class InputSynthesizer {
    */
   syncMarks(): boolean {
     const focused = this.focus.current;
-    const changed = this.marks.update({
-      hovered: this.hovered,
-      active: this.active,
-      focused,
-      // As browsers decide it: a field that takes text always shows its focus, anything else after keys.
-      focusVisible:
-        focused !== null &&
-        (this.keyboardModality || isTextField(focused) || isEditingHost(focused)),
-    });
-    this.finishTransitions(changed);
+    let running: Set<Animation> | null = null;
+    let roots: Element[] = [];
+    const changed = this.marks.update(
+      {
+        hovered: this.hovered,
+        active: this.active,
+        focused,
+        // As browsers decide it: a field that takes text always shows its focus, anything else after keys.
+        focusVisible:
+          focused !== null &&
+          (this.keyboardModality || isTextField(focused) || isEditingHost(focused)),
+      },
+      (elements) => {
+        roots = topmost(elements);
+        // What was already on its way is the page's own doing: left to run.
+        running = new Set(runningTransitions(roots));
+      },
+    );
+    if (running) this.finishTransitions(roots, running);
     return changed.length > 0;
   }
 
@@ -625,18 +657,11 @@ export class InputSynthesizer {
    * Transitions the marks started (`.row:hover .tools { transform: none }`)
    * end at once in the page, as they are drawn (the image shows transitions
    * at their end): a press lands where the image shows the element, not where
-   * it is on its way.
+   * it is on its way. Only those: not the page's own, running already.
    */
-  private finishTransitions(changed: Element[]): void {
-    if (changed.length === 0 || typeof this.document.getAnimations !== "function") return;
-    // Starts the transitions the marks cause (getAnimations brings styles up to date).
-    for (const animation of this.document.getAnimations()) {
-      // A CSS transition, checked by shape (as snapshot.ts does).
-      if (!("transitionProperty" in animation) || animation.playState !== "running") continue;
-      const target = (animation.effect as KeyframeEffect | null)?.target;
-      if (target && changed.some((element) => element === target || element.contains(target)))
-        animation.finish();
-    }
+  private finishTransitions(roots: Element[], running: Set<Animation>): void {
+    for (const transition of runningTransitions(roots))
+      if (!running.has(transition)) transition.finish();
   }
 
   /** Not pressed anymore: no longer :active. */

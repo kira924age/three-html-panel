@@ -38,10 +38,18 @@ export class InteractionMarks {
     ].map((name) => [name, new Set()]),
   );
 
-  /** Marks the elements in these states, and only those. Returns the elements whose marks changed. */
-  update({ hovered, active, focused, focusVisible = false }: InteractionState): Element[] {
+  /**
+   * Marks the elements in these states, and only those. Returns the elements
+   * whose marks changed. `beforeChange` is told which, before anything is
+   * changed (to see what the page was doing before the marks).
+   */
+  update(
+    { hovered, active, focused, focusVisible = false }: InteractionState,
+    beforeChange: (changed: Element[]) => void = () => {},
+  ): Element[] {
     const focusWithin: Element[] = [];
     for (let element = focused; element; element = element.parentElement) focusWithin.push(element);
+    const changes: { name: string; add: Element[]; remove: Element[]; next: Set<Element> }[] = [];
     const changed = new Set<Element>();
     for (const [name, elements] of [
       [HOVER_ATTRIBUTE, hovered],
@@ -49,30 +57,26 @@ export class InteractionMarks {
       [FOCUS_ATTRIBUTE, focused ? [focused] : []],
       [FOCUS_VISIBLE_ATTRIBUTE, focused && focusVisible ? [focused] : []],
       [FOCUS_WITHIN_ATTRIBUTE, focusWithin],
-    ] as const)
-      this.mark(name, elements, changed);
-    return Array.from(changed);
+    ] as const) {
+      const next = new Set<Element>(elements);
+      const remove = Array.from(this.marked.get(name)!).filter((element) => !next.has(element));
+      // Set again if the page took it off (re-rendering an element's attributes, say).
+      const add = Array.from(next).filter((element) => !element.hasAttribute(name));
+      for (const element of [...remove, ...add]) changed.add(element);
+      changes.push({ name, add, remove, next });
+    }
+    const list = Array.from(changed);
+    if (list.length > 0) beforeChange(list);
+    for (const { name, add, remove, next } of changes) {
+      for (const element of remove) element.removeAttribute(name);
+      for (const element of add) element.setAttribute(name, "");
+      this.marked.set(name, next);
+    }
+    return list;
   }
 
   /** Removes every mark. */
   dispose(): void {
     this.update({ hovered: [], active: [], focused: null });
-  }
-
-  private mark(name: string, elements: Iterable<Element>, changed: Set<Element>): void {
-    const marked = this.marked.get(name)!;
-    const next = new Set(elements);
-    for (const element of marked) {
-      if (next.has(element)) continue;
-      element.removeAttribute(name);
-      changed.add(element);
-    }
-    // Set again if the page took it off (re-rendering an element's attributes, say).
-    for (const element of next) {
-      if (element.hasAttribute(name)) continue;
-      element.setAttribute(name, "");
-      changed.add(element);
-    }
-    this.marked.set(name, next);
   }
 }

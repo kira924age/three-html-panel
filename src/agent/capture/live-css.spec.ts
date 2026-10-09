@@ -143,6 +143,9 @@ describe("LiveInteractionCss", () => {
     expect(button.closest(".row:hover")).toBe(row);
     expect(document.querySelector(":focus")).toBe(button);
     expect(row.querySelectorAll(":hover, :focus")).toHaveLength(1);
+    // An attribute's value is left as it is.
+    button.setAttribute("data-tip", ":hover to see");
+    expect(document.querySelector('[data-tip=":hover to see"]')).toBe(button);
     // Put back when it stops.
     live!.dispose();
     live = null;
