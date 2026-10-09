@@ -32,13 +32,14 @@
 
 import type { FrameWindow } from "../../types";
 import {
-  absolutizeUrls,
   agentSheets,
+  inlineCssUrls,
   liveSelector,
   pageStylesheets,
   ruleCount,
   sheetSignature,
   signatureParts,
+  stylesheetsSignature,
   unwrapLiveSelector,
 } from "./css";
 
@@ -267,9 +268,6 @@ export function hasTransition(style: CSSStyleDeclaration): boolean {
   return /[1-9]|var\(/.test(duration);
 }
 
-const joinParts = (parts: [CSSStyleSheet | null, string][]) =>
-  parts.map(([, part]) => part).join("|");
-
 export class LiveInteractionCss {
   /**
    * The parts of the signature as last synced (see signatureParts), and where
@@ -365,8 +363,8 @@ export class LiveInteractionCss {
     this.#adoptedList = this.#pageAdoptedList();
     const sheets = pageStylesheets(this.#document);
     const parts = signatureParts(sheets);
-    const signature = joinParts(parts);
-    if (signature === (this.#signature ??= joinParts(this.#parts))) return false;
+    const signature = stylesheetsSignature(parts);
+    if (signature === (this.#signature ??= stylesheetsSignature(this.#parts))) return false;
     this.#parts = parts;
     this.#partIndex.clear();
     parts.forEach(([sheet], i) => {
@@ -539,7 +537,7 @@ export class LiveInteractionCss {
     if (!css) return;
     this.#widen(css);
     // In the agent's sheet, url() would be relative to the document.
-    if (source.href) css = absolutizeUrls(css, source.href);
+    if (source.href) css = inlineCssUrls(css, source.href);
     copied.push(media && media !== "all" ? `@media ${media}{${css}}` : css);
   }
 

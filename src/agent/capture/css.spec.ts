@@ -3,6 +3,7 @@ import {
   inlineCssUrls,
   liveSelector,
   rewriteSelector,
+  signatureParts,
   stylesheetsSignature,
   unwrapLiveSelector,
 } from "./css";
@@ -107,16 +108,16 @@ describe("stylesheetsSignature", () => {
       { cssText: "@import url(menu.css);", styleSheet: imported },
       rule(".a { color: red }"),
     ]);
-    const before = stylesheetsSignature([page]);
+    const before = stylesheetsSignature(signatureParts([page]));
     importedRules.push(rule(".nav:hover .sub { display: block }"));
-    expect(stylesheetsSignature([page])).not.toBe(before);
+    expect(stylesheetsSignature(signatureParts([page]))).not.toBe(before);
   });
 
   it("changes when a sheet is disabled or enabled", () => {
     const page = sheet([rule(".a { color: red }")]);
-    const enabled = stylesheetsSignature([page]);
+    const enabled = stylesheetsSignature(signatureParts([page]));
     (page as { disabled: boolean }).disabled = true;
-    expect(stylesheetsSignature([page])).not.toBe(enabled);
+    expect(stylesheetsSignature(signatureParts([page]))).not.toBe(enabled);
   });
 });
 

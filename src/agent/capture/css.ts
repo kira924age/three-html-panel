@@ -158,11 +158,15 @@ export const FREEZE_ANIMATIONS_CSS =
 
 const URL_PATTERN = /url\(\s*(["']?)([^"')]+)\1\s*\)/g;
 
-/** Replaces url(...) references with what `resolve` returns (e.g. a data URL), or `none`. */
+/**
+ * Replaces url(...) references, made absolute against `baseUrl`, with what
+ * `resolve` returns for them (e.g. a data URL), or `none`. Without `resolve`,
+ * only makes them absolute (a linked stylesheet's are relative to it).
+ */
 export function inlineCssUrls(
   css: string,
   baseUrl: string,
-  resolve: (url: string) => string | null,
+  resolve: (url: string) => string | null = (url) => url,
 ): string {
   return css.replace(URL_PATTERN, (_match, _quote: string, raw: string) => {
     if (raw.startsWith("data:")) return `url("${raw}")`;
@@ -174,18 +178,6 @@ export function inlineCssUrls(
     }
     const inlined = resolve(absolute);
     return inlined ? `url("${inlined}")` : "none";
-  });
-}
-
-/** Makes relative url() in a linked stylesheet absolute (they are relative to the stylesheet). */
-export function absolutizeUrls(css: string, sheetUrl: string): string {
-  return css.replace(URL_PATTERN, (match, _quote: string, raw: string) => {
-    if (raw.startsWith("data:")) return match;
-    try {
-      return `url("${new URL(raw, sheetUrl).href}")`;
-    } catch {
-      return "none";
-    }
   });
 }
 
@@ -277,13 +269,11 @@ export function signatureParts(sheets: CSSStyleSheet[]): [CSSStyleSheet | null, 
 /**
  * What the page's stylesheets are: which (a <style> whose text is replaced
  * has a new sheet, with as many rules maybe), how many rules each has, whether
- * it is disabled, and the same of the sheets they import.
+ * it is disabled, and the same of the sheets they import. From its parts
+ * (signatureParts).
  */
-export function stylesheetsSignature(sheets: CSSStyleSheet[]): string {
-  return signatureParts(sheets)
-    .map(([, part]) => part)
-    .join("|");
-}
+export const stylesheetsSignature = (parts: [CSSStyleSheet | null, string][]) =>
+  parts.map(([, part]) => part).join("|");
 
 /**
  * Collects a document's CSS, recollecting only when its stylesheets or the
@@ -334,7 +324,7 @@ export class DocumentCss {
    */
   get(): readonly string[] {
     const sheets = pageStylesheets(this.#document);
-    const signature = stylesheetsSignature(sheets);
+    const signature = stylesheetsSignature(signatureParts(sheets));
     const changedInside = this.#inner.some(({ rules, length }) => rules.length !== length);
     if (signature !== this.#signature || changedInside) {
       this.#inner = [];
@@ -395,7 +385,7 @@ export class DocumentCss {
     if (source.href) {
       // A namespace's url() is a name, not a file.
       for (let i = 0; i < rules.length; i++)
-        if (!isNamespace(rules[i]!)) rules[i] = absolutizeUrls(rules[i]!, source.href);
+        if (!isNamespace(rules[i]!)) rules[i] = inlineCssUrls(rules[i]!, source.href);
     }
     sheets.push(inLayers(rules, layers));
   }

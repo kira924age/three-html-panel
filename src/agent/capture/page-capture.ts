@@ -549,25 +549,20 @@ export class PageCapture {
 }
 
 /** A selection's ends and the page's version, to tell whether what was measured of it still holds. */
-interface SelectionKey {
-  start: Node;
-  startOffset: number;
-  end: Node;
-  endOffset: number;
-  version: number;
-}
+type SelectionKey = [
+  start: Node,
+  startOffset: number,
+  end: Node,
+  endOffset: number,
+  version: number,
+];
 
-const selectionKey = (range: Range, version: number): SelectionKey => ({
-  start: range.startContainer,
-  startOffset: range.startOffset,
-  end: range.endContainer,
-  endOffset: range.endOffset,
+const selectionKey = (range: Range, version: number): SelectionKey => [
+  range.startContainer,
+  range.startOffset,
+  range.endContainer,
+  range.endOffset,
   version,
-});
+];
 
-const sameKey = (a: SelectionKey, b: SelectionKey) =>
-  a.start === b.start &&
-  a.startOffset === b.startOffset &&
-  a.end === b.end &&
-  a.endOffset === b.endOffset &&
-  a.version === b.version;
+const sameKey = (a: SelectionKey, b: SelectionKey) => a.every((value, i) => value === b[i]);

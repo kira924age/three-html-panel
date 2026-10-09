@@ -616,15 +616,22 @@ class Snapshotter {
   }
 
   #copyCanvas(canvas: HTMLCanvasElement): Node | null {
-    const image = this.#inert.createElement("img");
-    for (const attribute of Array.from(canvas.attributes))
-      image.setAttribute(attribute.name, attribute.value);
+    const image = this.#imageOf(canvas);
     try {
       image.setAttribute("src", canvas.toDataURL());
     } catch {
       // A canvas tainted by cross-origin content cannot be read.
     }
-    const { width, height } = canvas.getBoundingClientRect();
+    return image;
+  }
+
+  /** An image in place of a canvas or a video: its attributes (but `skipped`), at its size. */
+  #imageOf(element: Element, skipped?: ReadonlySet<string>): HTMLElement {
+    const image = this.#inert.createElement("img");
+    for (const attribute of Array.from(element.attributes)) {
+      if (!skipped?.has(attribute.name)) image.setAttribute(attribute.name, attribute.value);
+    }
+    const { width, height } = element.getBoundingClientRect();
     image.style.width = `${width}px`;
     image.style.height = `${height}px`;
     return image;
@@ -650,22 +657,15 @@ class Snapshotter {
 
   /** A video, as an image of the frame it shows (its poster before it plays). */
   #copyVideo(video: HTMLVideoElement): Node {
-    const image = this.#inert.createElement("img");
-    for (const attribute of Array.from(video.attributes)) {
-      if (!VIDEO_ATTRIBUTES.has(attribute.name))
-        image.setAttribute(attribute.name, attribute.value);
-    }
     const showsPoster = video.poster !== "" && video.paused && video.currentTime === 0;
     const poster = video.poster ? this.#options.inlineImage(video.poster) : null;
     const source = showsPoster
       ? (poster ?? this.#videoFrame(video))
       : (this.#videoFrame(video) ?? poster);
+    const image = this.#imageOf(video, VIDEO_ATTRIBUTES);
     if (source) image.setAttribute("src", source);
-    const { width, height } = video.getBoundingClientRect();
     const computed = this.#window.getComputedStyle(video);
     image.style.setProperty("box-sizing", "border-box");
-    image.style.setProperty("width", `${width}px`);
-    image.style.setProperty("height", `${height}px`);
     // A video letterboxes its frame by default; an image would stretch it.
     image.style.setProperty("object-fit", computed.objectFit);
     image.style.setProperty("object-position", computed.objectPosition);
@@ -864,8 +864,12 @@ class Snapshotter {
   /**
    * The boxes of a container's flow (its in-flow element children), or null
    * if anything else is in it that its flow would not move as it moves them.
+   *
+   * `first`: only the first box of a block's flow, if it is a block (its top
+   * margin can collapse with the block's); null if lines come first. Floats
+   * do not separate them, as absolute and fixed elements do not.
    */
-  #inFlowChildren(container: Element, items: boolean): Element[] | null {
+  #inFlowChildren(container: Element, items: boolean, first = false): Element[] | null {
     const boxes: Element[] = [];
     for (const node of Array.from(container.childNodes)) {
       if (node.nodeType === Node.TEXT_NODE) {
@@ -875,9 +879,13 @@ class Snapshotter {
       const style = node.nodeType === Node.ELEMENT_NODE && this.#styles.get(node as Element);
       if (!style || style.display === "none") continue;
       if (style.position === "absolute" || style.position === "fixed") continue;
-      if (style.display === "contents" || (style.cssFloat || "none") !== "none") return null;
-      if (!items && !BLOCK_LEVEL.test(style.display)) return null;
+      if ((style.cssFloat || "none") !== "none") {
+        if (first) continue;
+        return null;
+      }
+      if (style.display === "contents" || (!items && !BLOCK_LEVEL.test(style.display))) return null;
       boxes.push(node as Element);
+      if (first) break;
     }
     return boxes;
   }
@@ -890,26 +898,6 @@ class Snapshotter {
     return value.endsWith("px")
       ? parseFloat(value)
       : parseFloat(style.getPropertyValue(property)) || 0;
-  }
-
-  /**
-   * The first box of a block's flow, if it is a block (its top margin can
-   * collapse with the block's); null if lines come first. What is out of the
-   * flow (floats, absolute and fixed elements) does not separate them.
-   */
-  #firstBlock(container: Element): Element | null {
-    for (const node of Array.from(container.childNodes)) {
-      if (node.nodeType === Node.TEXT_NODE) {
-        if (/\S/.test((node as Text).data)) return null;
-        continue;
-      }
-      const style = node.nodeType === Node.ELEMENT_NODE && this.#styles.get(node as Element);
-      if (!style || style.display === "none") continue;
-      if (style.position === "absolute" || style.position === "fixed") continue;
-      if ((style.cssFloat || "none") !== "none") continue;
-      return BLOCK_LEVEL.test(style.display) ? (node as Element) : null;
-    }
-    return null;
   }
 
   /**
@@ -953,7 +941,7 @@ class Snapshotter {
         margins.push(parseFloat(before.getPropertyValue("margin-top")) || 0);
         break;
       }
-      box = this.#firstBlock(box);
+      box = this.#inFlowChildren(box, false, true)?.[0] ?? null;
     }
     return marginMovingFlow(margins, y);
   }
@@ -1259,22 +1247,20 @@ const SCROLLBAR_THUMB_ACTIVE_COLOR = "rgb(0 0 0 / 64%)";
 const TRANSPARENT = /^(transparent|rgba\(0, 0, 0, 0\))$/;
 const SCROLLBAR_INSET = 2;
 
-/** Adds a fixed box on top of everything to the root copy. */
+/** Adds a fixed box on top of everything to the root copy (`css` may override its own). */
 function drawBox(
   root: HTMLElement,
-  left: number,
-  top: number,
-  width: number,
-  height: number,
+  { left, top, width, height }: Box,
   css: string,
-): void {
+  zIndex = 2147483647,
+): HTMLElement {
   const element = root.ownerDocument.createElement("div");
   element.setAttribute(
     "style",
     `position:fixed;left:${left}px;top:${top}px;width:${width}px;height:${height}px;` +
-      `margin:0;padding:0;border:0;pointer-events:none;z-index:2147483647;${css}`,
+      `margin:0;padding:0;border:0;pointer-events:none;z-index:${zIndex};${css}`,
   );
-  root.appendChild(element);
+  return root.appendChild(element);
 }
 
 /** Adds the scrollbars on top of everything, as fixed boxes in the root copy. */
@@ -1283,11 +1269,8 @@ function drawScrollbars(
   bars: readonly Scrollbar[],
   state: SnapshotOptions["scrollbar"],
 ): void {
-  const box = (left: number, top: number, width: number, height: number, css: string) =>
-    drawBox(root, left, top, width, height, css);
   for (const { element, axis, track, thumb, gutter } of bars) {
-    if (gutter)
-      box(track.left, track.top, track.width, track.height, `background:${SCROLLBAR_TRACK_COLOR}`);
+    if (gutter) drawBox(root, track, `background:${SCROLLBAR_TRACK_COLOR}`);
     const width = Math.max(0, thumb.width - 2 * SCROLLBAR_INSET);
     const height = Math.max(0, thumb.height - 2 * SCROLLBAR_INSET);
     const current = state?.element === element && state.axis === axis ? state.state : null;
@@ -1298,7 +1281,8 @@ function drawScrollbars(
           ? SCROLLBAR_THUMB_HOVER_COLOR
           : SCROLLBAR_THUMB_COLOR;
     const style = `background:${color};border-radius:${Math.min(width, height) / 2}px`;
-    box(thumb.left + SCROLLBAR_INSET, thumb.top + SCROLLBAR_INSET, width, height, style);
+    const left = thumb.left + SCROLLBAR_INSET;
+    drawBox(root, { left, top: thumb.top + SCROLLBAR_INSET, width, height }, style);
   }
 }
 
@@ -1306,15 +1290,9 @@ const POPUP_HIGHLIGHT = "rgb(30 110 220)";
 
 /** Draws a selected option of a focused list box over its copy: white on the selection's blue, cut to the box. */
 function drawListBoxRow(root: HTMLElement, row: ListBoxRow): void {
-  const document = root.ownerDocument;
   const { shown, box } = row;
-  const clip = document.createElement("div");
-  clip.setAttribute(
-    "style",
-    `position:fixed;left:${shown.left}px;top:${shown.top}px;width:${shown.width}px;height:${shown.height}px;` +
-      "margin:0;padding:0;border:0;overflow:hidden;pointer-events:none;z-index:2147483646",
-  );
-  const option = document.createElement("div");
+  const clip = drawBox(root, shown, "overflow:hidden", 2147483646);
+  const option = root.ownerDocument.createElement("div");
   option.setAttribute(
     "style",
     `position:absolute;left:${box.left - shown.left}px;top:${box.top - shown.top}px;width:${box.width}px;height:${box.height}px;` +
@@ -1323,23 +1301,19 @@ function drawListBoxRow(root: HTMLElement, row: ListBoxRow): void {
   );
   option.textContent = row.label;
   clip.appendChild(option);
-  root.appendChild(clip);
 }
 
 /** Draws the open list of a <select>, as a fixed box over everything. */
 function drawSelectPopup(root: HTMLElement, view: PopupView): void {
-  const document = root.ownerDocument;
-  const list = document.createElement("div");
-  const { left, top, width, height } = view.box;
-  list.setAttribute(
-    "style",
-    `position:fixed;left:${left}px;top:${top}px;width:${width}px;height:${height}px;box-sizing:border-box;` +
-      "margin:0;padding:0;border:1px solid rgb(118 118 118);background:#fff;color:#000;overflow:hidden;" +
-      "box-shadow:0 2px 8px rgb(0 0 0 / 25%);pointer-events:none;z-index:2147483647;text-align:left;" +
+  const list = drawBox(
+    root,
+    view.box,
+    "box-sizing:border-box;border:1px solid rgb(118 118 118);background:#fff;color:#000;overflow:hidden;" +
+      "box-shadow:0 2px 8px rgb(0 0 0 / 25%);text-align:left;" +
       `font:${view.font};line-height:${view.itemHeight}px;letter-spacing:normal;text-transform:none`,
   );
   for (const item of view.items) {
-    const row = document.createElement("div");
+    const row = root.ownerDocument.createElement("div");
     const indent = item.grouped ? 20 : 8;
     const color = item.highlighted
       ? "#fff"
@@ -1359,7 +1333,6 @@ function drawSelectPopup(root: HTMLElement, view: PopupView): void {
     row.textContent = item.label;
     list.appendChild(row);
   }
-  root.appendChild(list);
 }
 
 const BACKGROUND_PROPERTIES = [
@@ -1463,21 +1436,14 @@ export function snapshotDocument(document: Document, options: SnapshotOptions): 
     : pageColor
       ? `background:${pageColor};mix-blend-mode:multiply`
       : `background:${SELECTION_COLOR}`;
-  for (const { left, top, width, height } of options.selection ?? [])
-    drawBox(root, left, top, width, height, css);
+  for (const box of options.selection ?? []) drawBox(root, box, css);
   // Composed text is underlined, as IMEs do.
   if (options.composition) {
     const { boxes, color } = options.composition;
     for (const box of boxes) {
       const thickness = Math.max(1, Math.round(box.height / 14));
-      drawBox(
-        root,
-        box.left,
-        box.top + box.height - thickness,
-        box.width,
-        thickness,
-        `background:${color}`,
-      );
+      const top = box.top + box.height - thickness;
+      drawBox(root, { ...box, top, height: thickness }, `background:${color}`);
     }
   }
   drawScrollbars(root, snapshotter.scrollbars, options.scrollbar);
