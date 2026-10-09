@@ -47,6 +47,24 @@ describe("a panel iframe that takes focus", () => {
     expect(document.activeElement).toBe(hostInput);
   });
 
+  it("does not count giving focus back as the user focusing the host", () => {
+    keyboard.register(frame, { sandboxed: true });
+    hostInput.focus();
+    const before = performance.now() + 1;
+    const now = vi.spyOn(performance, "now").mockReturnValue(before);
+    try {
+      pageTakesFocus();
+      expect(document.activeElement).toBe(hostInput);
+      expect(keyboard.hostFocusedSince(before)).toBe(false);
+      // The user focusing it is counted.
+      hostInput.blur();
+      hostInput.focus();
+      expect(keyboard.hostFocusedSince(before)).toBe(true);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
   it("loses it when sandboxed and there is nowhere to give it back to", () => {
     keyboard.register(frame, { sandboxed: true });
     hostInput.remove();

@@ -67,6 +67,10 @@ export class PanelKeyboard {
   /** The target that was last sent composed text, until it is told composition ended. */
   private composingFor: KeyboardTarget | null = null;
   private lastHostFocus: HTMLElement | null = null;
+  /** When the user last focused something in the host (not the hidden field, not a panel). */
+  private hostFocusAt = -Infinity;
+  /** Focus being given back to the host by the guard below, not moved by the user. */
+  private givingBack = false;
 
   constructor(container: HTMLElement = document.body) {
     const field = this.field;
@@ -125,6 +129,7 @@ export class PanelKeyboard {
           !this.frames.has(target as HTMLIFrameElement)
         ) {
           this.lastHostFocus = target;
+          if (!this.givingBack) this.hostFocusAt = performance.now();
         }
       },
       true,
@@ -162,6 +167,14 @@ export class PanelKeyboard {
     this.target = target;
     this.field.value = "";
     if (document.activeElement !== this.field) this.field.focus({ preventScroll: true });
+  }
+
+  /**
+   * Whether the user focused something in the host at or after `time` (a
+   * performance.now() value). Pressing a panel does not move focus.
+   */
+  hostFocusedSince(time: number): boolean {
+    return this.hostFocusAt >= time;
   }
 
   /** Whether keys go to `target` now. */
@@ -269,7 +282,14 @@ export class PanelKeyboard {
       // A panel took focus: give it back, to the hidden field while typing into
       // a panel, or else where focus was in the host.
       if (this.target) this.field.focus({ preventScroll: true });
-      else if (this.lastHostFocus?.isConnected) this.lastHostFocus.focus({ preventScroll: true });
+      else if (this.lastHostFocus?.isConnected) {
+        this.givingBack = true;
+        try {
+          this.lastHostFocus.focus({ preventScroll: true });
+        } finally {
+          this.givingBack = false;
+        }
+      }
       // With nowhere to go, a sandboxed panel loses focus all the same. A
       // trusted one is left the hidden field, as before (the page's focus is
       // virtual anyway, see input/input.ts).

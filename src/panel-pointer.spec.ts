@@ -7,6 +7,7 @@ import { PanelPointer } from "./panel-pointer";
 let canvas: HTMLCanvasElement;
 let pointer: PanelPointer;
 let panel: HtmlPanel & {
+  blur: ReturnType<typeof vi.fn>;
   focusForTyping: ReturnType<typeof vi.fn>;
   pointer: ReturnType<typeof vi.fn>;
 };
@@ -60,6 +61,16 @@ function tap(x = 400, y = 300): Event {
 }
 
 describe("PanelPointer", () => {
+  it("blurs the panels not pressed, and not the one pressed", () => {
+    canvas.dispatchEvent(at("pointerdown", "mouse"));
+    expect(panel.blur).not.toHaveBeenCalled();
+    canvas.dispatchEvent(at("pointerup", "mouse"));
+    canvas.dispatchEvent(
+      new PointerEvent("pointerdown", { clientX: 5, clientY: 5, button: 0, pointerId: 2 }),
+    );
+    expect(panel.blur).toHaveBeenCalledTimes(1);
+  });
+
   it("tells the panel what drives the pointer", () => {
     canvas.dispatchEvent(at("pointerdown", "touch"));
     canvas.dispatchEvent(at("pointerup", "touch"));

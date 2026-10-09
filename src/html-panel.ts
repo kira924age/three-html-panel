@@ -226,8 +226,8 @@ export class HtmlPanel
   private readonly corners = [new Vector3(), new Vector3(), new Vector3()] as const;
   private readonly screenSize = new Vector2();
   private readonly worldPosition = new Vector3();
-  /** Until when the page may act on the user's behalf: shortly after the user acted on the panel. */
-  private userActionUntil = -Infinity;
+  /** When the user last acted on the panel: the page may act on their behalf shortly after. */
+  private userActionAt = -Infinity;
   /** A press on the panel is held (between down and up): dragging is acting on it too. */
   private pressing = false;
 
@@ -325,7 +325,7 @@ export class HtmlPanel
       onEditables: (boxes) => (this.editables = boxes),
       onOpen: (url) => {
         // Not on its own: a page cannot open tabs, sandboxed or not, unless the user just acted on it.
-        if (performance.now() > this.userActionUntil) return;
+        if (!this.userJustActed()) return;
         (options.onLink ?? openInNewTab)(new URL(url), this);
       },
       onMessage: (data) => options.onMessage?.(data),
@@ -565,8 +565,16 @@ export class HtmlPanel
    */
   private mayTakeKeyboard(): boolean {
     return (
-      !this.sandboxed || this.keyboard.isTarget(this) || performance.now() <= this.userActionUntil
+      !this.sandboxed ||
+      this.keyboard.isTarget(this) ||
+      // Not if the user focused something in the host since: the keys are meant for it.
+      (this.userJustActed() && !this.keyboard.hostFocusedSince(this.userActionAt))
     );
+  }
+
+  /** Whether the user acted on the panel within the last USER_ACTION_MS. */
+  private userJustActed(): boolean {
+    return performance.now() <= this.userActionAt + USER_ACTION_MS;
   }
 
   pointer(
@@ -582,8 +590,7 @@ export class HtmlPanel
     // Only presses, releases and drags (the user acting on this panel) open the
     // window, not hovering: a slow drag selecting text may take the keys at any point.
     const dragging = kind === "move" && this.pressing;
-    if (kind === "down" || kind === "up" || dragging)
-      this.userActionUntil = performance.now() + USER_ACTION_MS;
+    if (kind === "down" || kind === "up" || dragging) this.userActionAt = performance.now();
     if (kind === "down") this.pressing = true;
     else if (kind === "up" || kind === "leave") this.pressing = false;
     const { x, y } = uv ? this.toPage(uv) : { x: 0, y: 0 };
@@ -597,7 +604,7 @@ export class HtmlPanel
 
   sendKey(event: KeyboardEvent): void {
     // Enter on a focused link opens it.
-    this.userActionUntil = performance.now() + USER_ACTION_MS;
+    this.userActionAt = performance.now();
     const { key, shiftKey, ctrlKey, altKey, metaKey } = event;
     this.send({ type: "key", key, shiftKey, ctrlKey, altKey, metaKey });
   }
@@ -660,7 +667,7 @@ export class HtmlPanel
     ) {
       return false;
     }
-    this.userActionUntil = performance.now() + USER_ACTION_MS;
+    this.userActionAt = performance.now();
     this.keyboard.focus(this);
     // The tap's release went out before this touchend: its answer has counted it.
     this.tapAnswerAt = this.pointersSent;
@@ -708,8 +715,10 @@ export class HtmlPanel
 
   blurFromHost(): void {
     // The host decides: editing ends now, whatever the page reports later.
-    // The user acted elsewhere since pressing the panel: the page may not take the keys back.
-    this.userActionUntil = -Infinity;
+    // The user acted elsewhere since pressing the panel: the page may not take
+    // the keys back, nor reopen the window by a drag still held.
+    this.userActionAt = -Infinity;
+    this.pressing = false;
     this.editing = false;
     this.typing = false;
     this.updateCaret(null);
@@ -721,7 +730,7 @@ export class HtmlPanel
     // Pressing elsewhere: no press on this panel is held, and the page may not
     // take the keys back from what the user pressed meanwhile.
     this.pressing = false;
-    this.userActionUntil = -Infinity;
+    this.userActionAt = -Infinity;
     if (!this.editing) return;
     this.keyboard.release(this);
     this.editing = false;

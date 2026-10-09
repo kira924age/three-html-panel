@@ -8,7 +8,7 @@ import {
   type MeshBasicMaterial,
   type WebGLRenderer,
 } from "three";
-import { afterEach, beforeAll, describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { parseCssColor } from "./css-color";
 import { FAR_PACE_MS, HtmlPanel, PANEL_SANDBOX, defaultPixelRatio } from "./html-panel";
 import { PanelKeyboard } from "./panel-keyboard";
@@ -135,6 +135,9 @@ describe("the panel's iframe", () => {
       typing: true,
     };
     const delivered = () => new Promise((resolve) => setTimeout(resolve, 20));
+    // Tests that set the clock leave it to the next ones otherwise (spying again
+    // returns the spy already there).
+    afterEach(() => vi.spyOn(performance, "now").mockRestore());
 
     it("draws the caret in the page's color and alpha, whatever syntax the page wrote it in", async () => {
       const panel = open(false);
@@ -287,35 +290,79 @@ describe("the panel's iframe", () => {
       port.close();
     });
 
-    it("does not take the keys back from a host field the user focused right after pressing the panel", async () => {
-      const keyboard = new PanelKeyboard();
-      const panel = open(true, keyboard);
-      const port = connect(panel);
-      const received: unknown[] = [];
-      port.onmessage = (event) => received.push(event.data);
-      vi.spyOn(document, "hasFocus").mockReturnValue(true);
-      const hostField = document.body.appendChild(document.createElement("input"));
-      try {
-        panel.pointer("down", new Vector2(0.5, 0.5));
-        panel.pointer("up", new Vector2(0.5, 0.5));
-        port.postMessage(editing);
-        await delivered();
-        expect(keyboard.isTarget(panel)).toBe(true);
+    describe("after the user pressed it and then focused a field of the host", () => {
+      let keyboard: PanelKeyboard;
+      let panel: HtmlPanel;
+      let port: MessagePort;
+      let received: unknown[];
+      let hostField: HTMLInputElement;
+      let hasFocus: { mockRestore(): void };
+      beforeEach(() => {
+        keyboard = new PanelKeyboard();
+        panel = open(true, keyboard);
+        port = connect(panel);
+        received = [];
+        port.onmessage = (event) => received.push(event.data);
+        hasFocus = vi.spyOn(document, "hasFocus").mockReturnValue(true);
+        hostField = document.body.appendChild(document.createElement("input"));
+      });
+      afterEach(() => {
+        hasFocus.mockRestore();
+        hostField.remove();
+        port.close();
+      });
 
-        // Within the second after the press, the user moves on to a field of the host.
-        hostField.focus();
-        await delivered();
-        expect(keyboard.isTarget(panel)).toBe(false);
+      /** The page claims a field within the second after the press: it must be refused. */
+      async function expectRefused() {
         received.length = 0;
         port.postMessage(editing);
         await delivered();
         expect(document.activeElement).toBe(hostField);
         expect(keyboard.isTarget(panel)).toBe(false);
         expect(received).toContainEqual({ type: "blur" });
-      } finally {
-        hostField.remove();
-        port.close();
       }
+
+      it("does not take the keys back when it had them", async () => {
+        panel.pointer("down", new Vector2(0.5, 0.5));
+        panel.pointer("up", new Vector2(0.5, 0.5));
+        port.postMessage(editing);
+        await delivered();
+        expect(keyboard.isTarget(panel)).toBe(true);
+
+        hostField.focus();
+        await delivered();
+        expect(keyboard.isTarget(panel)).toBe(false);
+        await expectRefused();
+      });
+
+      it("does not take them when it waited to claim a field until then", async () => {
+        panel.pointer("down", new Vector2(0.5, 0.5));
+        panel.pointer("up", new Vector2(0.5, 0.5));
+        hostField.focus();
+        await delivered();
+        await expectRefused();
+      });
+
+      it("does not take them back by a drag still held", async () => {
+        panel.pointer("down", new Vector2(0.5, 0.5));
+        port.postMessage(editing);
+        await delivered();
+        expect(keyboard.isTarget(panel)).toBe(true);
+
+        hostField.focus();
+        await delivered();
+        panel.pointer("move", new Vector2(0.6, 0.5));
+        await expectRefused();
+      });
+
+      it("takes them again when the user presses the panel again", async () => {
+        hostField.focus();
+        await delivered();
+        panel.pointer("down", new Vector2(0.5, 0.5));
+        port.postMessage(editing);
+        await delivered();
+        expect(keyboard.isTarget(panel)).toBe(true);
+      });
     });
 
     it("does not take the keys back from another panel the user pressed right after it", async () => {
