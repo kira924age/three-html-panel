@@ -1,0 +1,270 @@
+/* Tables */
+.table-scroll {
+  max-height: 16rem;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+caption {
+  text-align: left;
+  padding: 0.6rem 0.75rem;
+  color: var(--muted);
+  caption-side: top;
+}
+
+th,
+td {
+  padding: 0.45rem 0.75rem;
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+}
+
+thead th {
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+  box-shadow: 0 1px 0 var(--line);
+}
+
+th button {
+  all: unset;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+th[aria-sort="ascending"] button::after {
+  content: " ▲";
+  font-size: 0.7em;
+}
+
+th[aria-sort="descending"] button::after {
+  content: " ▼";
+  font-size: 0.7em;
+}
+
+tbody tr:nth-child(even) {
+  background: color-mix(in srgb, var(--text) 3%, transparent);
+}
+
+tbody tr:hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+td.number,
+th.number {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+tfoot td {
+  font-weight: 600;
+  border-bottom: 0;
+}
+
+/* Disclosure */
+details {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  margin: 0.5rem 0;
+  padding: 0 1rem;
+}
+
+summary {
+  cursor: pointer;
+  padding: 0.7rem 0;
+  font-weight: 600;
+  list-style: none;
+  display: flex;
+  justify-content: space-between;
+}
+
+summary::-webkit-details-marker {
+  display: none;
+}
+
+summary::after {
+  content: "›";
+  transition: transform 0.2s;
+}
+
+details[open] summary::after {
+  transform: rotate(90deg);
+}
+
+details p {
+  margin: 0 0 0.8rem;
+  color: var(--muted);
+}
+
+/* Dialog */
+dialog {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  color: var(--text);
+  padding: 1.25rem 1.5rem;
+  width: min(26rem, 90vw);
+  box-shadow: var(--shadow);
+}
+
+dialog::backdrop {
+  background: rgb(10 12 16 / 45%);
+  backdrop-filter: blur(2px);
+}
+
+dialog label {
+  display: grid;
+  gap: 0.3rem;
+}
+
+dialog menu {
+  justify-content: flex-end;
+}
+
+/* Anchored to the button that opens it (CSS anchor positioning). */
+[popovertarget="menu"] {
+  anchor-name: --menu-button;
+}
+
+.menu {
+  margin: 0.25rem 0 0;
+  inset: auto;
+  position-anchor: --menu-button;
+  position-area: bottom span-right;
+  min-width: 11rem;
+}
+
+.menu a,
+.menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.4rem 0.6rem;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--text);
+  text-decoration: none;
+}
+
+.menu a:hover,
+.menu button:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.tip {
+  max-width: 18rem;
+  padding: 0.75rem 1rem;
+}
+
+.tip p {
+  margin: 0.25rem 0 0;
+}
+
+/* --- Tabs --- */
+
+.tabs {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+[role="tablist"] {
+  display: flex;
+  border-bottom: 1px solid var(--line);
+}
+
+[role="tab"] {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  padding: 0.6rem 1rem;
+  border-bottom: 2px solid transparent;
+}
+
+[role="tab"]:hover {
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+}
+
+[role="tab"][aria-selected="true"] {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+[role="tabpanel"] {
+  padding: 0.5rem 1rem;
+}
+
+/* --- Web components --- */
+
+.component-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.5rem;
+  align-items: center;
+}
+
+/* --- View transitions --- */
+
+.vt-list {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(8rem, 1fr));
+  gap: 0.5rem;
+}
+
+.vt-list li {
+  padding: 0.6rem 0.8rem;
+  border-radius: 8px;
+  color: white;
+  font-weight: 600;
+  background: oklch(60% 0.15 var(--hue));
+}
+
+/* --- Intl --- */
+
+.intl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.4rem 1.25rem;
+}
+
+.intl dt {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.intl dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.limits {
+  padding-left: 1.6rem;
+}
+
+[aria-pressed="true"].ghost {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+input {
+  font: inherit;
+  color: inherit;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.4rem 0.6rem;
+}

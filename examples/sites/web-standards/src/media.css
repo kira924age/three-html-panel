@@ -1,0 +1,262 @@
+figure {
+  margin: 0;
+}
+
+figcaption {
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin-top: 0.35rem;
+}
+
+.chosen {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+}
+
+/* --- Responsive images --- */
+
+.gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
+  gap: 1rem;
+}
+
+.gallery img {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 10;
+  object-fit: cover;
+  border-radius: var(--radius);
+  background: var(--line);
+}
+
+/* --- Fitting and shaping --- */
+
+.fit-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+}
+
+.fit {
+  display: block;
+  width: 9rem;
+  aspect-ratio: 1;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: repeating-conic-gradient(var(--line) 0 25%, transparent 0 50%) 0 0 / 16px 16px;
+}
+
+.fit.cover {
+  object-fit: cover;
+}
+
+.fit.contain {
+  object-fit: contain;
+}
+
+.fit.fill {
+  object-fit: fill;
+}
+
+.fit.top {
+  object-position: top;
+}
+
+.shape-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.25rem;
+  align-items: center;
+  margin-bottom: 1.25rem;
+}
+
+.shape {
+  width: 8rem;
+  aspect-ratio: 1;
+  object-fit: cover;
+}
+
+.shape.circle {
+  clip-path: circle(50%);
+}
+
+.shape.hexagon {
+  clip-path: polygon(25% 5%, 75% 5%, 100% 50%, 75% 95%, 25% 95%, 0 50%);
+}
+
+.shape.faded {
+  mask-image: radial-gradient(circle, black 45%, transparent 72%);
+}
+
+.blend {
+  position: relative;
+  width: 10rem;
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: linear-gradient(135deg, #f59e0b, #ef4444);
+}
+
+.blend img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  mix-blend-mode: multiply;
+}
+
+.blend span {
+  position: relative;
+  font-family: var(--heading);
+  font-size: 1.6rem;
+  color: white;
+  mix-blend-mode: overlay;
+}
+
+.filter-demo img {
+  display: block;
+  width: 100%;
+  max-width: 34rem;
+  aspect-ratio: 16 / 10;
+  object-fit: cover;
+  border-radius: var(--radius);
+  transition: filter 0.3s;
+}
+
+.filter-demo button[aria-pressed="true"] {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+/* --- SVG --- */
+
+.svg-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2rem;
+  align-items: end;
+}
+
+.orbit {
+  offset-path: path("M 22 60 A 58 22 0 1 0 138 60 A 58 22 0 1 0 22 60");
+  animation: orbit 4s linear infinite;
+}
+
+@keyframes orbit {
+  to {
+    offset-distance: 100%;
+  }
+}
+
+.chart svg {
+  width: 20rem;
+  max-width: 100%;
+  height: auto;
+  display: block;
+}
+
+.chart rect {
+  fill: var(--accent);
+  transition: opacity 0.15s;
+}
+
+.chart rect:hover {
+  opacity: 0.6;
+}
+
+.chart text {
+  fill: var(--muted);
+  font-size: 9px;
+  font-family: system-ui, sans-serif;
+}
+
+/* --- Canvas --- */
+
+#sketch {
+  display: block;
+  width: 100%;
+  max-width: 45rem;
+  aspect-ratio: 3;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  touch-action: none;
+  cursor: crosshair;
+}
+
+/* --- Video and audio --- */
+
+.player {
+  position: relative;
+  max-width: 40rem;
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: black;
+}
+
+.player video {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: contain;
+}
+
+/* The captions, drawn by the page (the browser's own are outside the page's DOM). */
+.caption-line {
+  position: absolute;
+  left: 50%;
+  bottom: 3.6rem;
+  translate: -50% 0;
+  margin: 0;
+  padding: 0.2rem 0.6rem;
+  border-radius: 4px;
+  background: rgb(0 0 0 / 70%);
+  color: white;
+  font-size: 1rem;
+  text-align: center;
+  max-width: 90%;
+}
+
+.caption-line:empty {
+  display: none;
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+  padding: 0.5rem;
+  background: #111;
+  color: #eee;
+}
+
+.controls .ghost {
+  color: #cbd5ff;
+  border-color: #4b5a8a;
+}
+
+.controls input[type="range"] {
+  flex: 1 1 8rem;
+  accent-color: var(--accent);
+}
+
+.controls output {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  min-width: 7.5em;
+}
+
+.controls [aria-pressed="false"] {
+  opacity: 0.6;
+}
+
+.limits {
+  padding-left: 1.6rem;
+}

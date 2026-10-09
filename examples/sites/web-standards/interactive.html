@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Interactive · Web Platform Field Guide</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&display=swap"
+    />
+    <link rel="stylesheet" href="./src/base.css" />
+    <link rel="stylesheet" href="./src/interactive.css" />
+    <script type="module" src="./src/interactive.js"></script>
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="./index.html" data-page>Field Guide</a>
+      <nav class="site-nav" aria-label="Pages">
+        <a href="./index.html" data-page>Home</a>
+        <a href="./media.html" data-page>Media</a>
+        <a href="./forms.html" data-page>Forms</a>
+        <a href="./layout.html" data-page>Layout &amp; type</a>
+        <a href="./interactive.html" data-page>Interactive</a>
+      </nav>
+      <button type="button" class="theme-toggle ghost" aria-pressed="false" data-action="theme">
+        <span class="when-light">Dark</span><span class="when-dark">Light</span>
+      </button>
+    </header>
+
+    <div class="layout">
+      <nav class="toc" aria-label="Sections">
+        <p class="toc-title">On this page</p>
+        <ol></ol>
+      </nav>
+
+      <main>
+        <section id="tables">
+          <h1>Interactive</h1>
+          <p class="lede">Widgets the browser gives for free, and a few built with its APIs.</p>
+          <h2>Tables</h2>
+          <p>Click a column's header to sort. The header sticks while the table scrolls.</p>
+          <div class="table-scroll" tabindex="0">
+            <table id="elements-table">
+              <caption>
+                Elements and when browsers shipped them
+              </caption>
+              <thead>
+                <tr>
+                  <th scope="col"><button type="button">Element</button></th>
+                  <th scope="col"><button type="button">Category</button></th>
+                  <th scope="col" class="number"><button type="button">Year</button></th>
+                  <th scope="col" class="number"><button type="button">Support</button></th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+              <tfoot>
+                <tr>
+                  <td colspan="3">Average support</td>
+                  <td id="support-average" class="number"></td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </section>
+
+        <section id="disclosure">
+          <h2>Disclosure</h2>
+          <p>Details elements with the same <code>name</code> open one at a time.</p>
+          <details name="faq" open>
+            <summary>What is a disclosure widget?</summary>
+            <p>A summary that shows or hides the content after it. No script needed.</p>
+          </details>
+          <details name="faq">
+            <summary>Can it be animated?</summary>
+            <p>Its marker turns with a transition here; the content appears at once.</p>
+          </details>
+          <details name="faq">
+            <summary>Does it work without JavaScript?</summary>
+            <p>Yes. This whole section has no script.</p>
+          </details>
+        </section>
+
+        <section id="overlays">
+          <h2>Dialog and popover</h2>
+          <p>
+            A modal <code>&lt;dialog&gt;</code> and a <code>popover</code> are drawn in the top
+            layer, above everything else.
+          </p>
+          <div class="button-row">
+            <button type="button" data-action="open-dialog">Open the dialog</button>
+            <button type="button" class="ghost" popovertarget="tip">Show a popover</button>
+            <button type="button" class="ghost" popovertarget="menu" aria-haspopup="menu">
+              A menu ▾
+            </button>
+          </div>
+          <div id="tip" popover class="tip">
+            <strong>Popover</strong>
+            <p>Light dismiss: press outside it, or press Escape.</p>
+          </div>
+          <div id="menu" popover role="menu" class="menu">
+            <button role="menuitem" type="button" data-choice="Copy">Copy</button>
+            <button role="menuitem" type="button" data-choice="Duplicate">Duplicate</button>
+            <button role="menuitem" type="button" data-choice="Archive">Archive</button>
+          </div>
+          <dialog id="dialog" aria-labelledby="dialog-title">
+            <form method="dialog">
+              <h3 id="dialog-title">Rename the guide</h3>
+              <label>Title <input name="title" value="Web Platform Field Guide" required /></label>
+              <menu class="button-row">
+                <button value="cancel" formnovalidate class="ghost">Cancel</button>
+                <button value="save">Save</button>
+              </menu>
+            </form>
+          </dialog>
+          <p class="hint" id="overlay-result" role="status"></p>
+        </section>
+
+        <section id="tabs">
+          <h2>Tabs</h2>
+          <p>
+            An ARIA tab list: click a tab, or move between them with the arrow keys, Home and End.
+          </p>
+          <div class="tabs">
+            <div role="tablist" aria-label="Formats">
+              <button role="tab" id="tab-html" aria-controls="panel-html" aria-selected="true">
+                HTML
+              </button>
+              <button
+                role="tab"
+                id="tab-css"
+                aria-controls="panel-css"
+                aria-selected="false"
+                tabindex="-1"
+              >
+                CSS
+              </button>
+              <button
+                role="tab"
+                id="tab-js"
+                aria-controls="panel-js"
+                aria-selected="false"
+                tabindex="-1"
+              >
+                JavaScript
+              </button>
+            </div>
+            <div role="tabpanel" id="panel-html" aria-labelledby="tab-html">
+              <p>The structure: what each part of the page <em>is</em>.</p>
+            </div>
+            <div role="tabpanel" id="panel-css" aria-labelledby="tab-css" hidden>
+              <p>The presentation: how each part <em>looks</em>, on every screen.</p>
+            </div>
+            <div role="tabpanel" id="panel-js" aria-labelledby="tab-js" hidden>
+              <p>The behaviour: what each part <em>does</em> when you act on it.</p>
+            </div>
+          </div>
+        </section>
+
+        <section id="components">
+          <h2>Web components</h2>
+          <p>
+            A custom element with its own shadow DOM and styles, and a slot for its label; and an
+            element whose shadow root is declared in the HTML.
+          </p>
+          <div class="component-row">
+            <fg-rating value="3"><span>Rate this page</span></fg-rating>
+            <fg-badge>
+              <template shadowrootmode="open">
+                <style>
+                  :host {
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 0.4rem;
+                    padding: 0.3rem 0.7rem;
+                    border-radius: 999px;
+                    background: linear-gradient(90deg, #2f6fde, #a855f7);
+                    color: white;
+                    font:
+                      600 0.85rem system-ui,
+                      sans-serif;
+                  }
+                  .dot {
+                    width: 0.5rem;
+                    height: 0.5rem;
+                    border-radius: 50%;
+                    background: #fde68a;
+                  }
+                </style>
+                <span class="dot"></span><slot></slot>
+              </template>
+              Declarative shadow DOM
+            </fg-badge>
+          </div>
+          <p class="hint" id="rating-result" role="status"></p>
+        </section>
+
+        <section id="transitions">
+          <h2>View transitions</h2>
+          <p>
+            <code>document.startViewTransition()</code> animates the list from its old order to the
+            new one; moving between the pages of this site uses a cross-document transition.
+          </p>
+          <div class="button-row">
+            <button type="button" data-action="shuffle">Shuffle</button>
+            <button type="button" class="ghost" data-action="sort">Sort</button>
+          </div>
+          <ol class="vt-list" id="vt-list"></ol>
+        </section>
+
+        <section id="intl">
+          <h2>Intl</h2>
+          <p>
+            Dates, numbers, relative times and lists, written the way each language writes them.
+          </p>
+          <div class="button-row" role="group" aria-label="Language">
+            <button type="button" class="ghost" data-locale="en-GB" aria-pressed="true">
+              English
+            </button>
+            <button type="button" class="ghost" data-locale="ja-JP">日本語</button>
+            <button type="button" class="ghost" data-locale="de-DE">Deutsch</button>
+            <button type="button" class="ghost" data-locale="ar-EG">العربية</button>
+          </div>
+          <dl class="intl" id="intl-list"></dl>
+        </section>
+
+        <section id="limits">
+          <h2>In a panel</h2>
+          <ul class="limits">
+            <li>
+              The dialog and the popovers are in the top layer, which a panel draws in the page's
+              flow for now.
+            </li>
+            <li>
+              View transitions draw their animation in pseudo-elements: the panel shows the result.
+            </li>
+          </ul>
+        </section>
+      </main>
+    </div>
+    <footer class="site-footer">Interactive · Web Platform Field Guide</footer>
+  </body>
+</html>

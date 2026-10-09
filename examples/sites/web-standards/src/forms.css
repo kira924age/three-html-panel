@@ -1,0 +1,271 @@
+/* Forms: fields, choices, errors, progress. */
+
+fieldset {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 0.75rem 1rem 1rem;
+  margin: 0 0 1rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: 0.75rem 1rem;
+}
+
+legend {
+  font-weight: 600;
+  padding: 0 0.4rem;
+}
+
+fieldset > .hint,
+fieldset > .choices {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+.field {
+  display: grid;
+  gap: 0.25rem;
+  align-content: start;
+}
+
+.field label {
+  font-weight: 500;
+  font-size: 0.9rem;
+}
+
+.optional {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.4rem 0.6rem;
+  accent-color: var(--accent);
+}
+
+input[type="checkbox"],
+input[type="radio"] {
+  width: 1rem;
+  height: 1rem;
+}
+
+input[type="range"] {
+  padding: 0;
+}
+
+input[type="color"] {
+  padding: 0.1rem;
+  height: 2.2rem;
+  width: 3.5rem;
+}
+
+textarea {
+  resize: vertical;
+}
+
+/* Errors show only after the user has been in the field (or tried to submit). */
+.error {
+  display: none;
+  color: var(--danger);
+  font-size: 0.8rem;
+}
+
+input:user-invalid,
+form.submitted input:invalid {
+  border-color: var(--danger);
+}
+
+.field:has(input:user-invalid) .error,
+form.submitted .field:has(input:invalid) .error {
+  display: block;
+}
+
+.choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.choice {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    border-color 0.15s;
+}
+
+.choice:has(input:checked) {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.field-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  grid-column: 1 / -1;
+}
+
+.field-row label {
+  display: grid;
+  gap: 0.25rem;
+  font-size: 0.9rem;
+}
+
+.consent {
+  margin: 0.25rem 0;
+}
+
+form.submitted .consent:has(input:invalid) {
+  border-color: var(--danger);
+}
+
+.form-summary:empty {
+  display: none;
+}
+
+.form-summary {
+  border-radius: var(--radius);
+  padding: 0.75rem 1rem;
+  border: 1px solid;
+}
+
+.form-summary.failed {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.form-summary.done {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+
+.form-summary ul {
+  margin: 0.25rem 0 0;
+  padding-left: 1.2rem;
+}
+
+/* Progress */
+.progress-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: 0.75rem 1.5rem;
+}
+
+.progress-grid label {
+  display: grid;
+  gap: 0.25rem;
+  font-size: 0.9rem;
+}
+
+progress,
+meter {
+  width: 100%;
+  height: 0.9rem;
+  accent-color: var(--accent);
+}
+
+.spinner {
+  width: 1.4rem;
+  height: 1.4rem;
+  border: 3px solid color-mix(in srgb, var(--accent) 25%, transparent);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+/* --- Search --- */
+
+search form {
+  display: grid;
+  gap: 0.3rem;
+  max-width: 28rem;
+}
+
+input[type="search"] {
+  padding-left: 2rem;
+  background: var(--bg) no-repeat 0.6rem center / 1rem
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238a8f98' stroke-width='2.5'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='m20 20-4-4'/%3E%3C/svg%3E");
+}
+
+.element-list {
+  list-style: none;
+  padding: 0;
+  margin: 0.75rem 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.element-list li {
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  padding: 0.15rem 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.element-list mark {
+  background: var(--mark);
+  color: inherit;
+}
+
+.field.wide {
+  grid-column: 1 / -1;
+}
+
+/* --- Constraint validation --- */
+
+table.validity {
+  margin-top: 1rem;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+  width: 100%;
+}
+
+.validity th,
+.validity td {
+  border-bottom: 1px solid var(--line);
+  padding: 0.3rem 0.5rem;
+  text-align: left;
+}
+
+.validity td.yes {
+  color: var(--ok);
+}
+
+.validity td.no {
+  color: var(--danger);
+}
+
+fieldset:disabled {
+  opacity: 0.55;
+}
+
+input:disabled,
+select:disabled {
+  cursor: not-allowed;
+}
+
+#shipping {
+  margin-top: 0.75rem;
+}
