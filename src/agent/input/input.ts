@@ -7,7 +7,8 @@
 // skips some of its usual default actions. Those that matter for typical pages
 // are reimplemented:
 //
-// - hover/enter/leave bookkeeping, and the :hover/:active state (via attributes)
+// - hover/enter/leave bookkeeping, and the :hover/:active/:focus state, as
+//   attributes on the page's elements (interaction-marks.ts)
 // - pointer capture, which throws for a pointer the browser does not know
 // - focus (see VirtualFocus), and placing the caret where a field was pressed;
 //   selecting text by dragging, double click (word) and triple click (line)
@@ -36,6 +37,7 @@ import {
 import { contentAction } from "./contenteditable";
 import { editAction, lineEnd, lineStart, wordAt } from "./editing";
 import { EditHistory, type FieldState } from "./history";
+import { InteractionMarks } from "./interaction-marks";
 import { PAN_START_DISTANCE, panAxes, type PanAxes } from "./pan";
 import {
   announceChange,
@@ -94,6 +96,33 @@ const APPLE_PLATFORM = /mac|iphone|ipad|ipod/i;
 const FOCUSABLE_SELECTOR =
   'input, textarea, select, button, a[href], [tabindex], [contenteditable=""], [contenteditable="true"], [contenteditable="plaintext-only"]';
 
+/** Those of `elements` not inside another of them, each once. */
+function topmost(elements: Element[]): Element[] {
+  const unique = Array.from(new Set(elements));
+  return unique.filter(
+    (element) => !unique.some((other) => other !== element && other.contains(element)),
+  );
+}
+
+/**
+ * The CSS transitions running on these elements and in them. Brings styles up
+ * to date (as the next hit test would anyway): transitions just caused start.
+ */
+function runningTransitions(roots: Element[]): Animation[] {
+  const found: Animation[] = [];
+  for (const root of roots) {
+    if (typeof root.getAnimations !== "function") continue;
+    for (const animation of root.getAnimations({ subtree: true }))
+      // A CSS transition, checked by shape (as snapshot.ts does).
+      if ("transitionProperty" in animation && animation.playState === "running")
+        found.push(animation);
+  }
+  return found;
+}
+
+/** Keys that only modify others: pressed alone, they do not make focus show. */
+const MODIFIER_KEYS = new Set(["Shift", "Control", "Meta", "Alt", "AltGraph", "CapsLock", "Fn"]);
+
 /** A focused element that is a contenteditable element's root (its editing host). */
 const isEditingHost = (element: Element | null): element is HTMLElement =>
   element !== null && editingHostOf(element) === element;
@@ -132,6 +161,8 @@ export class VirtualFocus {
   constructor(
     private readonly document: Document,
     private readonly onChange: () => void,
+    /** Focus moved: called before the focus events, which the page handles with the new focus in place. */
+    private readonly onMove: () => void = () => {},
   ) {
     this.window = document.defaultView as FrameWindow;
     const proto = this.window.HTMLElement.prototype;
@@ -198,6 +229,7 @@ export class VirtualFocus {
     const previous = this.current;
     if (previous === element) return;
     this.element = element;
+    this.onMove();
     const { FocusEvent } = this.window;
     if (previous) {
       previous.dispatchEvent(new FocusEvent("blur", { relatedTarget: element }));
@@ -227,6 +259,13 @@ export interface InputSynthesizerOptions {
   measure: <T>(run: () => T) => T;
   /** Called after anything that may have changed what the page looks like. */
   onChange: () => void;
+  /**
+   * Where the marks may start transitions, to end them at once (see
+   * syncMarks): nowhere (the page has none), inside the elements whose marks
+   * change, also in their later siblings (`.a:hover ~ .b`), or anywhere
+   * (`:has()`). Asked only when marks change.
+   */
+  transitions?: () => "none" | "inside" | "siblings" | "everywhere";
 }
 
 /** A finger or controller drag that may scroll, from where it was pressed. */
@@ -277,6 +316,7 @@ export class InputSynthesizer {
   readonly active = new Set<Element>();
   private readonly window: FrameWindow;
   private readonly focus: VirtualFocus;
+  private readonly marks = new InteractionMarks();
   private hoverTarget: Element | null = null;
   private captureTarget: Element | null = null;
   private press: Press | null = null;
@@ -356,7 +396,7 @@ export class InputSynthesizer {
   ) {
     this.window = document.defaultView as FrameWindow;
     this.patchPointerCapture();
-    this.focus = new VirtualFocus(document, options.onChange);
+    this.focus = new VirtualFocus(document, options.onChange, () => this.syncMarks());
     // Added before the page's scripts run, so it comes before their listeners.
     this.window.addEventListener(
       "beforeinput",
@@ -369,8 +409,22 @@ export class InputSynthesizer {
 
   /** Preserve unconditional pointer-move captures when the host opts out. */
   optimizeHover = true;
+  /** The last input was keys, not a press: focus moved from now on shows (:focus-visible). */
+  private keyboardModality = false;
 
   handle(input: PanelInput): void {
+    // What focus that follows is shown as (:focus-visible): after keys, not after a press.
+    // Not after a shortcut (Ctrl, Cmd or Alt held) or a modifier alone, as in browsers.
+    if (
+      input.type === "text" ||
+      (input.type === "key" &&
+        !input.ctrlKey &&
+        !input.metaKey &&
+        !input.altKey &&
+        !MODIFIER_KEYS.has(input.key))
+    )
+      this.keyboardModality = true;
+    else if (input.type === "pointer" && input.kind === "down") this.keyboardModality = false;
     const quietMove =
       this.optimizeHover &&
       input.type === "pointer" &&
@@ -573,6 +627,62 @@ export class InputSynthesizer {
 
   dispose(): void {
     window.clearTimeout(this.pageTimer);
+    this.marks.dispose();
+  }
+
+  /**
+   * Puts the hover, press and focus on the page's elements, for its CSS to
+   * match: right when they change, so that the next hit test (and the page's
+   * handlers) find what they show, a button shown only while its row is
+   * hovered, say. Also before a capture, for what changed without input (the
+   * page moving the focused element elsewhere). Returns whether a mark changed.
+   */
+  syncMarks(): boolean {
+    const focused = this.focus.current;
+    let running: Set<Animation> | null = null;
+    let roots: Element[] = [];
+    const changed = this.marks.update(
+      {
+        hovered: this.hovered,
+        active: this.active,
+        focused,
+        // As browsers decide it: a field that takes text always shows its focus, anything else after keys.
+        focusVisible:
+          focused !== null &&
+          (this.keyboardModality || isTextField(focused) || isEditingHost(focused)),
+      },
+      (elements) => {
+        const scope = this.options.transitions?.() ?? "inside";
+        if (scope === "none") return;
+        roots =
+          scope === "everywhere"
+            ? [this.document.documentElement]
+            : scope === "siblings"
+              ? topmost(elements.map((element) => element.parentElement ?? element))
+              : topmost(elements);
+        // What was already on its way is the page's own doing: left to run.
+        running = new Set(runningTransitions(roots));
+      },
+    );
+    if (running) this.finishTransitions(roots, running);
+    return changed.length > 0;
+  }
+
+  /**
+   * Transitions the marks started (`.row:hover .tools { transform: none }`)
+   * end at once in the page, as they are drawn (the image shows transitions
+   * at their end): a press lands where the image shows the element, not where
+   * it is on its way. Only those: not the page's own, running already.
+   */
+  private finishTransitions(roots: Element[], running: Set<Animation>): void {
+    for (const transition of runningTransitions(roots))
+      if (!running.has(transition)) transition.finish();
+  }
+
+  /** Not pressed anymore: no longer :active. */
+  private clearActive(): void {
+    this.active.clear();
+    this.syncMarks();
   }
 
   /** Whether a point is on a character of the page's text (not only inside an element with text). */
@@ -858,6 +968,7 @@ export class InputSynthesizer {
     this.hovered.clear();
     for (const element of chain) this.hovered.add(element);
     this.hoverTarget = target;
+    this.syncMarks();
   }
 
   private pointerDown(
@@ -898,6 +1009,7 @@ export class InputSynthesizer {
     this.captureTarget = null;
     this.active.clear();
     for (const element of ancestors(target)) this.active.add(element);
+    this.syncMarks();
 
     const init = this.pointerInit(x, y, 1);
     const pointerOk = target.dispatchEvent(this.pointerEvent("pointerdown", init));
@@ -1076,7 +1188,7 @@ export class InputSynthesizer {
     // A drag that scrolled already ended for the page (pointercancel): no pointerup, no click.
     if (pan?.active) {
       this.press = null;
-      this.active.clear();
+      this.clearActive();
       this.updateHover(this.hitTest(x, y), x, y);
       return;
     }
@@ -1084,7 +1196,7 @@ export class InputSynthesizer {
     // Pressed on a <select> and released over its list: the release is the list's.
     if (this.popup && press?.openedPopup && this.popup.contains(x, y)) {
       this.press = null;
-      this.active.clear();
+      this.clearActive();
       // Dragged from the select to an option: that option is chosen, as in browsers.
       this.chooseAt(x, y);
       return;
@@ -1117,7 +1229,8 @@ export class InputSynthesizer {
       this.captureTarget = null;
     }
     this.press = null;
-    this.active.clear();
+    // Released: no longer :active, before the click.
+    this.clearActive();
     this.updateHover(target, x, y);
 
     if (!press || press.moved) return;

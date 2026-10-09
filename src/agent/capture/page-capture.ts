@@ -28,8 +28,9 @@ import {
   visibleBoxOf,
 } from "../input/selection";
 import type { Box, Caret, Frame, FrameWindow, PanelInput } from "../../types";
-import { DocumentCss } from "./css";
+import { DocumentCss, INTERACTION_ATTRIBUTES } from "./css";
 import { ImageInliner } from "./images";
+import { LiveInteractionCss } from "./live-css";
 import { MAX_EDITABLES, MAX_TEXT_LENGTH } from "../../protocol";
 import { RenderPacer } from "./pacer";
 import { buildFrameSvg, isSampledLive, snapshotDocument, type ListBoxRow } from "./snapshot";
@@ -82,6 +83,10 @@ export interface PageCaptureOptions {
 export class PageCapture {
   private readonly window: FrameWindow;
   private readonly css: DocumentCss;
+  private readonly liveCss: LiveInteractionCss;
+  /** A transition has run in the page (see the transitions option of InputSynthesizer). */
+  private sawTransition = false;
+  private inlineTransition: boolean | null = null;
   private readonly images: ImageInliner;
   private readonly input: InputSynthesizer;
   private readonly mutations: MutationObserver;
@@ -134,16 +139,45 @@ export class PageCapture {
     this.css = new DocumentCss(
       document,
       (url) => this.images.get(url),
-      () => this.changed(),
+      () => {
+        // A cross-origin stylesheet's copy arrived: its interaction rules apply to the live page too.
+        this.liveCss.reset();
+        this.changed();
+      },
+    );
+    this.liveCss = new LiveInteractionCss(
+      document,
+      (sheet) => this.css.readable(sheet),
+      () => {
+        // A rule may have changed in place (an adopted sheet replaced with as many rules).
+        this.css.invalidate();
+        this.changed();
+      },
     );
     this.mutations = new this.window.MutationObserver((records) => {
-      if (records.some((record) => record.type !== "attributes")) this.textVersion++;
+      // The agent's own interaction marks: changing them is input, which says
+      // itself whether the page may look different (see optimizeHover).
+      const changes = records.filter(
+        (record) =>
+          record.type !== "attributes" || !INTERACTION_ATTRIBUTES.has(record.attributeName!),
+      );
+      if (changes.length === 0) return;
+      if (changes.some((record) => record.type !== "attributes")) this.textVersion++;
       this.changed();
     });
     this.input = new InputSynthesizer(document, {
       measure: this.measure,
       onChange: () => this.changed(),
+      transitions: () => {
+        // The rules as they are now, before the marks change.
+        if (this.liveCss.sync()) this.changed();
+        if (!this.liveCss.hasTransitions && !this.sawTransition && !this.inlineTransitions())
+          return "none";
+        return this.liveCss.reach;
+      },
     });
+    // A transition ran (one in an inline style, say): the page has some.
+    this.window.addEventListener("transitionrun", this.transitionRan, true);
 
     this.mutations.observe(document, {
       subtree: true,
@@ -152,6 +186,9 @@ export class PageCapture {
       characterData: true,
     });
     for (const type of INVALIDATING_EVENTS) this.window.addEventListener(type, this.changed, true);
+    // A stylesheet loaded (a <link>'s, or one a <style> imports). Load events
+    // of elements do not reach the window.
+    document.addEventListener("load", this.stylesheetsChanged, true);
     void document.fonts?.ready.then(() => {
       this.css.invalidate();
       this.changed();
@@ -197,6 +234,8 @@ export class PageCapture {
 
   handle(input: PanelInput): void {
     if (this.disposed) return;
+    // Rules the page added since apply to the hover before the input is hit tested.
+    if (this.liveCss.sync()) this.changed();
     this.input.handle(input);
     // Cursor hit testing depends on pointer coordinates, even when an
     // unchanged hover skips capture. Keep its notification independent.
@@ -212,9 +251,12 @@ export class PageCapture {
     this.disposed = true;
     clearTimeout(this.timer);
     this.input.dispose();
+    this.liveCss.dispose();
     this.mutations.disconnect();
     for (const type of INVALIDATING_EVENTS)
       this.window.removeEventListener(type, this.changed, true);
+    this.document.removeEventListener("load", this.stylesheetsChanged, true);
+    this.window.removeEventListener("transitionrun", this.transitionRan, true);
   }
 
   /** Runs a measurement that adds elements to the page, without it counting as a change. */
@@ -231,10 +273,32 @@ export class PageCapture {
     this.schedule();
   };
 
-  /** The page may look different: capture it again, and measure its selection again. */
+  /**
+   * The page may look different: capture it again, and measure its selection
+   * again. Its stylesheets may have changed too (the DOM did, or input made
+   * the page render).
+   */
   private readonly changed = () => {
     this.layoutVersion++;
+    this.liveCss.invalidate();
+    this.inlineTransition = null;
     this.invalidate();
+  };
+
+  private readonly transitionRan = () => {
+    this.sawTransition = true;
+  };
+
+  /** Whether an element has a transition in its inline style (cached until the page changes). */
+  private inlineTransitions(): boolean {
+    this.inlineTransition ??= this.document.querySelector('[style*="transition"]') !== null;
+    return this.inlineTransition;
+  }
+
+  private readonly stylesheetsChanged = (event: Event) => {
+    const { HTMLLinkElement, HTMLStyleElement } = this.window;
+    if (event.target instanceof HTMLLinkElement || event.target instanceof HTMLStyleElement)
+      this.changed();
   };
 
   // A plain timer, not requestAnimationFrame: browsers may hold back rAF in an
@@ -263,6 +327,11 @@ export class PageCapture {
   private render(): void {
     if (this.disposed || !this.dirty) return;
     this.dirty = false;
+    // Before measuring anything: the page may have added rules since the last
+    // input, or moved the focused element (its ancestors are :focus-within).
+    // Either may lay the page out differently: its selection is measured again.
+    const rewritten = this.liveCss.sync();
+    if (this.input.syncMarks() || rewritten) this.layoutVersion++;
     const started = performance.now();
     try {
       // The viewport, including any scrollbar: exactly the iframe's size.
@@ -315,9 +384,6 @@ export class PageCapture {
     // The snapshot measures scrolled text fields with a mirror (caret.ts).
     const xhtml = this.measure(() =>
       snapshotDocument(this.document, {
-        hovered: this.input.hovered,
-        active: this.input.active,
-        focused,
         selection,
         selectionColor,
         // The page's selection, when the keys do not go to it (the host took them, or the page made it).
