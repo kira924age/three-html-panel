@@ -141,7 +141,7 @@ function openInNewTab(url: URL): void {
   window.open(url.href, "_blank", "noopener,noreferrer");
 }
 
-/** The caret's color when the page's cannot be read: the usual one, opaque black. */
+/** The caret's color before the page has sent one that can be read: the usual one, opaque black. */
 const DEFAULT_CARET_COLOR: SrgbColor = { r: 0, g: 0, b: 0, alpha: 1 };
 
 export interface HtmlPanelEventMap extends Object3DEventMap {
@@ -198,6 +198,11 @@ export class HtmlPanel
   private selected = "";
   /** The caret the page reported last, in its CSS pixels, for placing the IME. */
   private caretBox: Caret | null = null;
+  /**
+   * The last visible caret color that could be read. A color that cannot be
+   * read keeps it, rather than turning black and vanishing on a dark page.
+   */
+  private caretColor: SrgbColor = DEFAULT_CARET_COLOR;
   /** Where the page's text fields are (CSS px), as it reported last. */
   private editables: Box[] = [];
   /** What drove the pointer last: the IME is placed at the caret only for a mouse. */
@@ -486,9 +491,10 @@ export class HtmlPanel
 
   private updateCaret(caret: Caret | null): void {
     this.caretBox = caret;
-    const color = caret ? (parseCssColor(caret.color) ?? DEFAULT_CARET_COLOR) : null;
+    const color = caret ? (parseCssColor(caret.color) ?? this.caretColor) : null;
     // A transparent caret (caret-color: transparent) is how a page hides it.
     if (color?.alpha === 0) caret = null;
+    else if (color) this.caretColor = color;
     this.caret.userData.hasCaret = caret !== null;
     this.caret.visible = caret !== null;
     if (!caret) return;

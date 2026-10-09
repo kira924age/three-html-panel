@@ -1,5 +1,13 @@
 // @vitest-environment jsdom
-import { PerspectiveCamera, Scene, Vector2, Vector4, type WebGLRenderer } from "three";
+import {
+  PerspectiveCamera,
+  Scene,
+  Vector2,
+  Vector4,
+  type Mesh,
+  type MeshBasicMaterial,
+  type WebGLRenderer,
+} from "three";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vite-plus/test";
 import { FAR_PACE_MS, HtmlPanel, PANEL_SANDBOX, defaultPixelRatio } from "./html-panel";
 import { PanelKeyboard } from "./panel-keyboard";
@@ -120,6 +128,49 @@ describe("the panel's iframe", () => {
       typing: true,
     };
     const delivered = () => new Promise((resolve) => setTimeout(resolve, 20));
+
+    it("draws the caret in the page's color and alpha, whatever syntax the page wrote it in", async () => {
+      const panel = open(false);
+      const port = connect(panel);
+      const caret = (panel as unknown as { caret: Mesh<never, MeshBasicMaterial> }).caret;
+      const show = async (color: string) => {
+        port.postMessage({ ...editing, caret: { ...editing.caret, color } });
+        await delivered();
+      };
+      const rgb = () => {
+        const { r, g, b } = caret.material.color.getRGB({ r: 0, g: 0, b: 0 }, "srgb");
+        return [r, g, b].map((c) => Math.round(c * 255));
+      };
+
+      await show("color(srgb 0 0 0 / 0.87)");
+      expect(caret.userData.hasCaret).toBe(true);
+      expect(rgb()).toEqual([0, 0, 0]);
+      expect(caret.material.opacity).toBe(0.87);
+
+      await show("oklch(0.627955 0.257683 29.2339 / 0.5)");
+      expect(rgb()).toEqual([255, 0, 0]);
+      expect(caret.material.opacity).toBe(0.5);
+
+      // A color it cannot read keeps the last one it could, without a warning.
+      const warn = vi.spyOn(console, "warn");
+      await show("color(future-space 0.1 0.2 0.3)");
+      expect(caret.userData.hasCaret).toBe(true);
+      expect(rgb()).toEqual([255, 0, 0]);
+      expect(caret.material.opacity).toBe(0.5);
+      expect(warn).not.toHaveBeenCalled();
+      warn.mockRestore();
+
+      // caret-color: transparent hides it, and is not kept for colors it cannot read.
+      await show("rgba(0, 0, 0, 0)");
+      expect(caret.userData.hasCaret).toBe(false);
+      expect(caret.visible).toBe(false);
+      await show("color(srgb 0 0 1 / 0)");
+      expect(caret.userData.hasCaret).toBe(false);
+      await show("not a color");
+      expect(caret.userData.hasCaret).toBe(true);
+      expect(rgb()).toEqual([255, 0, 0]);
+      port.close();
+    });
 
     it("does not take the keyboard when sandboxed and the user did not press the panel", async () => {
       const keyboard = new PanelKeyboard();
