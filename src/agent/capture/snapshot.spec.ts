@@ -1047,7 +1047,7 @@ describe("scrolled content", () => {
 describe("the top layer", () => {
   /**
    * The snapshot's root, with these elements in the top layer (jsdom has none)
-   * and these ::backdrop colors (jsdom gives the element's own for ::backdrop).
+   * and these ::backdrop colors or styles (jsdom gives the element's own for ::backdrop).
    */
   function snapshotWithTopLayer(
     open: Record<string, string>,
@@ -1055,10 +1055,15 @@ describe("the top layer", () => {
     backdrops: Record<string, string> = {},
   ): HTMLElement {
     const getComputedStyle = window.getComputedStyle.bind(window);
+    // A ::backdrop's style: a color, or declarations.
+    const backdrop = (value = "rgba(0, 0, 0, 0)") => {
+      const style = document.createElement("div").style;
+      if (value.includes(":")) style.cssText = value;
+      else style.backgroundColor = value;
+      return style;
+    };
     vi.spyOn(window, "getComputedStyle").mockImplementation((element, pseudo) =>
-      pseudo === "::backdrop"
-        ? ({ backgroundColor: backdrops[element.id] ?? "rgba(0, 0, 0, 0)" } as CSSStyleDeclaration)
-        : getComputedStyle(element, pseudo),
+      pseudo === "::backdrop" ? backdrop(backdrops[element.id]) : getComputedStyle(element, pseudo),
     );
     for (const [id, pseudoClass] of Object.entries(open)) {
       const element = document.getElementById(id)!;
@@ -1264,5 +1269,56 @@ describe("the top layer", () => {
     expect(drawn.some((element) => element.textContent === "a")).toBe(true);
     // The scroller's track or thumb, at its right edge.
     expect(drawn.some((element) => parseFloat(element.style.left) >= 100)).toBe(true);
+  });
+
+  it("stacks the top layer in the order it was opened, not the page's", () => {
+    document.body.innerHTML = `<div id="toast" popover>Saved</div><dialog id="ask">Sure?</dialog>`;
+    const opened: Record<string, number> = { ask: 1, toast: 2 };
+    const root = snapshotWithTopLayer(
+      { toast: ":popover-open", ask: ":modal" },
+      { openedAt: (element) => opened[element.id] ?? 0 },
+    );
+    const lifted = Array.from(root.querySelectorAll("[data-thp-lifted]")).map(
+      (element) => element.id,
+    );
+    expect(lifted).toEqual(["ask", "toast"]);
+  });
+
+  it("draws in the innermost one what is in a popover opened in another, whatever the order", () => {
+    document.body.innerHTML = `<div id="menu" popover><div id="sub" popover><p id="item">Item</p></div></div>`;
+    const opened: Record<string, number> = { sub: 1, menu: 2 };
+    const text = document.getElementById("item")!.firstChild as Text;
+    const root = snapshotWithTopLayer(
+      { menu: ":popover-open", sub: ":popover-open" },
+      {
+        openedAt: (element) => opened[element.id] ?? 0,
+        selection: [{ left: 1, top: 2, width: 3, height: 4, text }],
+      },
+    );
+    const children = Array.from(root.children);
+    const chainOf = (id: string) =>
+      children.findIndex((child) => child.querySelector(`#${id}[data-thp-lifted]`));
+    const box = children.findIndex((child) => (child as HTMLElement).style?.top === "2px");
+    expect(box).toBe(chainOf("sub") + 1);
+    expect(chainOf("menu")).toBeGreaterThan(box);
+  });
+
+  it("leaves one the browser does not draw (in a display: none box) where it is", () => {
+    document.body.innerHTML = `<section><div id="menu" popover>Menu</div></section>`;
+    document.getElementById("menu")!.checkVisibility = () => false;
+    const root = snapshotWithTopLayer({ menu: ":popover-open" });
+    expect(root.querySelector("#menu")!.parentElement!.localName).toBe("section");
+    expect(root.querySelector("[data-thp-lifted]")).toBeNull();
+  });
+
+  it("draws a ::backdrop's image as well as its color", () => {
+    document.body.innerHTML = `<dialog id="ask">Sure?</dialog>`;
+    const root = snapshotWithTopLayer(
+      { ask: ":modal" },
+      {},
+      { ask: "background-image: linear-gradient(red, blue)" },
+    );
+    const cover = root.lastElementChild!.previousElementSibling as HTMLElement;
+    expect(cover.style.backgroundImage).toBe("linear-gradient(red, blue)");
   });
 });

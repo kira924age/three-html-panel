@@ -25,6 +25,7 @@ import {
   selectedRange,
   selectionBoxes,
   selectionColorAt,
+  type SelectionBox,
   visibleBoxOf,
 } from "../input/selection";
 import type { Box, Caret, Frame, FrameWindow, PanelInput } from "../../types";
@@ -114,7 +115,10 @@ export class PageCapture {
    */
   #layoutVersion = 0;
   #textVersion = 0;
-  #selectionBoxesCache: { key: SelectionKey; boxes: Box[] } | null = null;
+  #selectionBoxesCache: { key: SelectionKey; boxes: SelectionBox[] } | null = null;
+  /** When each popover and dialog was opened, counted: the top layer is stacked in that order. */
+  readonly #openedAt = new WeakMap<Element, number>();
+  #openings = 0;
   #selectionTextCache: { key: SelectionKey; text: string } | null = null;
   #started = false;
   #disposed = false;
@@ -165,6 +169,10 @@ export class PageCapture {
           record.type !== "attributes" || !INTERACTION_ATTRIBUTES.has(record.attributeName!),
       );
       if (changes.length === 0) return;
+      // A dialog opened (browsers without a toggle event for dialogs).
+      for (const { attributeName, target } of changes)
+        if (attributeName === "open" && (target as Element).localName === "dialog")
+          this.#opened(target as Element);
       if (changes.some((record) => record.type !== "attributes")) this.#textVersion++;
       this.#changed();
     });
@@ -181,6 +189,7 @@ export class PageCapture {
     });
     // A transition ran (one in an inline style, say): the page has some.
     this.#window.addEventListener("transitionrun", this.#transitionRan, true);
+    this.#window.addEventListener("toggle", this.#toggled, true);
 
     this.#mutations.observe(document, {
       subtree: true,
@@ -261,6 +270,7 @@ export class PageCapture {
       this.#window.removeEventListener(type, this.#changed, true);
     this.#document.removeEventListener("load", this.#stylesheetsChanged, true);
     this.#window.removeEventListener("transitionrun", this.#transitionRan, true);
+    this.#window.removeEventListener("toggle", this.#toggled, true);
   }
 
   /** Runs a measurement that adds elements to the page, without it counting as a change. */
@@ -288,6 +298,17 @@ export class PageCapture {
     this.#inlineTransition = null;
     this.#invalidate();
   };
+
+  readonly #toggled = (event: Event) => {
+    const { newState } = event as Event & { newState?: string };
+    if (newState === "open" && event.target instanceof this.#window.Element)
+      this.#opened(event.target);
+  };
+
+  #opened(element: Element): void {
+    if ((element as HTMLElement & { open?: boolean }).open === false) return;
+    this.#openedAt.set(element, ++this.#openings);
+  }
 
   readonly #transitionRan = () => {
     this.#sawTransition = true;
@@ -402,6 +423,7 @@ export class PageCapture {
         selectPopup: this.#input.popupView,
         listBoxSelection: isListBox(focused) ? this.#listBoxRows(focused) : [],
         listBox: isListBox(focused) ? focused : null,
+        openedAt: (element) => this.#openedAt.get(element) ?? 0,
         inlineImage: (url) => this.#images.get(url),
       }),
     );
@@ -413,7 +435,7 @@ export class PageCapture {
   }
 
   /** The boxes of the page's selection, measured again only when it or the page changed. */
-  #selectionBoxes(range: Range): Box[] {
+  #selectionBoxes(range: Range): SelectionBox[] {
     const key = selectionKey(range, this.#layoutVersion);
     const cached = this.#selectionBoxesCache;
     if (cached && sameKey(cached.key, key)) return cached.boxes;

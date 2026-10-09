@@ -46,7 +46,7 @@ export interface SnapshotOptions {
   /** Returns a data URL for an image, or null if it is not available yet. */
   inlineImage: (url: string) => string | null;
   /** The selected text in the focused field, as measured by measureSelection(), or the page's (each box with its text). */
-  selection?: readonly SelectionBox[];
+  selection?: readonly (Box | SelectionBox)[];
   /** The field the selection is in, if it is a field's: drawn in its layer (see liftToTopLayer). */
   selectionIn?: Element | null;
   /** The page's ::selection background, if any; a default is used when it is transparent. */
@@ -77,6 +77,8 @@ export interface SnapshotOptions {
   listBoxSelection?: readonly ListBoxRow[];
   /** The list box listBoxSelection is of. */
   listBox?: Element | null;
+  /** When each open popover and dialog was opened (0 if not seen): the top layer is stacked in that order. */
+  openedAt?: (element: Element) => number;
 }
 
 /** A selected option of a focused list box: where it shows (cut by the box), where it is, and its label. */
@@ -1481,6 +1483,85 @@ function withDisplay<T extends Element>(element: T, display: "none" | "contents"
   return element;
 }
 
+/** What a ::backdrop draws (its background, and the filter it puts on the page under it), or null if nothing. */
+function backdropStyle(
+  style: CSSStyleDeclaration,
+  inlineImage: (url: string) => string | null,
+): string | null {
+  const image = inlineBackgroundImages(style.backgroundImage || "none", inlineImage);
+  const filter =
+    style.backdropFilter || style.getPropertyValue("-webkit-backdrop-filter") || "none";
+  const color = style.backgroundColor;
+  if ((!color || TRANSPARENT.test(color)) && image === "none" && filter === "none") return null;
+  const declarations = BACKGROUND_PROPERTIES.map((property) => {
+    const value = property === "background-image" ? image : style.getPropertyValue(property);
+    return value ? `${property}:${value}` : "";
+  });
+  if (filter !== "none")
+    declarations.push(`backdrop-filter:${filter}`, `-webkit-backdrop-filter:${filter}`);
+  if (style.opacity && style.opacity !== "1") declarations.push(`opacity:${style.opacity}`);
+  return declarations.filter(Boolean).join(";");
+}
+
+/**
+ * Where an element's box is laid out, before its transform: the copy keeps
+ * the transform (`transformed`), so that a rotated or scaled popover shows as
+ * it does. Found from where its transformed corners show; where the transform
+ * cannot be read as a matrix (a percentage, a 3D rotation axis, no DOMMatrix),
+ * where it shows, untransformed.
+ */
+function layoutBox(element: Element, style: CSSStyleDeclaration): Box & { transformed: boolean } {
+  const shown = element.getBoundingClientRect();
+  const { left, top, width, height } = shown;
+  const untransformed = { left, top, width, height, transformed: false };
+  const { transform, translate, rotate, scale } = style;
+  const none = (value: string) => !value || value === "none";
+  if (none(transform) && none(translate) && none(rotate) && none(scale)) return untransformed;
+  const html = element as HTMLElement;
+  const Matrix = element.ownerDocument.defaultView?.DOMMatrix;
+  if (!Matrix || html.offsetWidth === undefined) return untransformed;
+  // The individual properties apply before the transform property, in this order.
+  // A value's words as a function's 3 arguments, the missing ones filled in.
+  const args = (value: string, fill: (words: string[]) => string[]) => {
+    const words = value.trim().split(/\s+/);
+    return [...words, ...fill(words).slice(words.length)].join(",");
+  };
+  const parts = [
+    none(translate) ? "" : `translate3d(${args(translate, () => ["0px", "0px", "0px"])})`,
+    none(rotate) ? "" : `rotate(${rotate})`,
+    none(scale) ? "" : `scale3d(${args(scale, ([x]) => [x!, x!, "1"])})`,
+    none(transform) ? "" : transform,
+  ];
+  let matrix: DOMMatrix;
+  try {
+    matrix = new Matrix(parts.join(" ").trim());
+  } catch {
+    return untransformed;
+  }
+  const [originX = 0, originY = 0] = style.transformOrigin.split(/\s+/).map(parseFloat);
+  const layoutWidth = html.offsetWidth;
+  const layoutHeight = html.offsetHeight;
+  let cornerLeft = Infinity;
+  let cornerTop = Infinity;
+  for (const [x, y] of [
+    [0, 0],
+    [layoutWidth, 0],
+    [0, layoutHeight],
+    [layoutWidth, layoutHeight],
+  ] as const) {
+    const point = matrix.transformPoint({ x: x - originX, y: y - originY });
+    cornerLeft = Math.min(cornerLeft, point.x + originX);
+    cornerTop = Math.min(cornerTop, point.y + originY);
+  }
+  return {
+    left: left - cornerLeft,
+    top: top - cornerTop,
+    width: layoutWidth,
+    height: layoutHeight,
+    transformed: true,
+  };
+}
+
 /**
  * Browsers draw the top layer over the whole page, each element where it is
  * on screen whatever its parents (a transform, a filter or a clip in them
@@ -1501,21 +1582,22 @@ function liftToTopLayer(
   document: Document,
   root: HTMLElement,
   { live, copy }: { live: Element; copy: HTMLElement },
+  inlineImage: (url: string) => string | null,
 ): void {
   const view = document.defaultView!;
   const style = view.getComputedStyle(live);
-  const backdrop = view.getComputedStyle(live, "::backdrop").backgroundColor;
-  if (backdrop && !TRANSPARENT.test(backdrop)) {
+  const backdrop = backdropStyle(view.getComputedStyle(live, "::backdrop"), inlineImage);
+  if (backdrop) {
     const cover = root.ownerDocument.createElement("div");
     cover.setAttribute(
       "style",
-      `position:fixed;inset:0;margin:0;background:${backdrop};z-index:${TOP_Z_INDEX}`,
+      `position:fixed;inset:0;margin:0;z-index:${TOP_Z_INDEX};${backdrop}`,
     );
     root.appendChild(cover);
   }
   // A hidden stand-in takes its place (as the page has it); its parents' stand-ins are made from there.
   const placeholder = withDisplay(copy.cloneNode(false) as Element, "none");
-  const box = live.getBoundingClientRect();
+  const box = layoutBox(live, style);
   const place: Record<string, string> = {
     display: style.display,
     position: "fixed",
@@ -1530,14 +1612,13 @@ function liftToTopLayer(
     "max-height": "none",
     margin: "0",
     "box-sizing": "border-box",
-    // Placed already: not again by the page's anchor positioning, nor moved by a transform.
+    // Placed already: not again by the page's anchor positioning.
     "position-area": "none",
-    transform: "none",
-    translate: "none",
-    rotate: "none",
-    scale: "none",
     "z-index": `${TOP_Z_INDEX}`,
   };
+  // Where its transform could not be undone, it is placed where it shows, untransformed.
+  if (!box.transformed)
+    for (const name of ["transform", "translate", "rotate", "scale"]) place[name] = "none";
   for (const [name, value] of Object.entries(place))
     copy.style.setProperty(name, value, "important");
   copy.setAttribute(LIFTED_ATTRIBUTE, "");
@@ -1589,22 +1670,32 @@ export function snapshotDocument(document: Document, options: SnapshotOptions): 
       : `background:${SELECTION_COLOR}`;
   // What the agent draws over the page goes over the page, or over the top
   // layer element it is in: drawn after it, at the same z-index.
-  const layers = snapshotter.topLayer;
+  // In the order they were opened (those not seen opening first, in the
+  // page's order); none the browser does not draw (one in a display: none box).
+  const openedAt = options.openedAt ?? (() => 0);
+  const layers = snapshotter.topLayer
+    .filter(({ live }) => live.checkVisibility?.() ?? true)
+    .map((entry, index) => ({ entry, index, at: openedAt(entry.live) }))
+    .sort((a, b) => a.at - b.at || a.index - b.index)
+    .map(({ entry }) => entry);
+  // The innermost top layer element a node is in (a submenu's, not its menu's).
   const layerOf = (node: Node | null | undefined): number => {
-    if (!node) return -1;
-    for (let index = layers.length - 1; index >= 0; index--)
-      if (layers[index]!.live.contains(node)) return index;
-    return -1;
+    let found = -1;
+    if (!node) return found;
+    layers.forEach(({ live }, index) => {
+      if (live.contains(node) && (found < 0 || layers[found]!.live.contains(live))) found = index;
+    });
+    return found;
   };
   // A field's selection is in the field's layer; the page's, each box in its text's.
   const selectionLayers = (options.selection ?? []).map((box) =>
-    layerOf(box.text ?? options.selectionIn),
+    layerOf("text" in box ? box.text : options.selectionIn),
   );
   const compositionLayer = layerOf(options.composition?.field);
   const listBoxLayer = layerOf(options.listBox);
   const scrollbarLayers = snapshotter.scrollbars.map((bar) => layerOf(bar.element));
   for (let layer = -1; layer < layers.length; layer++) {
-    if (layer >= 0) liftToTopLayer(document, root, layers[layer]!);
+    if (layer >= 0) liftToTopLayer(document, root, layers[layer]!, options.inlineImage);
     options.selection?.forEach((box, index) => {
       if (selectionLayers[index] === layer) drawBox(root, box, css);
     });

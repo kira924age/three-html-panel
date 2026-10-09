@@ -295,3 +295,73 @@ test("draws an open popover over the page, where the page shows it, and not once
     await expect.poll(red).toBe(false);
   });
 });
+
+test("draws a modal dialog over its ::backdrop, and a popover opened after it over both", async () => {
+  // The toast comes first in the page, but is opened last: it is on top.
+  await panel.frame.evaluate(() => {
+    document.body.insertAdjacentHTML(
+      "afterbegin",
+      `<style>#ask::backdrop { background: rgb(0 160 0 / 60%) }</style>
+      <div id="toast" popover style="margin: 0; inset: auto; left: 40px; top: 40px; width: 120px; height: 60px; border: 0; background: rgb(20, 20, 220)"></div>
+      <dialog id="ask" style="margin: 0; inset: auto; left: 600px; top: 400px; width: 200px; height: 100px; padding: 0; border: 0; background: rgb(220, 20, 20)"></dialog>`,
+    );
+    document.querySelector<HTMLDialogElement>("#ask")!.showModal();
+  });
+  const color = async (x: number, y: number) => {
+    const [r, g, b] = await panel.pixel(x, y);
+    return r > 180 && g < 60 && b < 60
+      ? "red"
+      : b > 180 && r < 60 && g < 60
+        ? "blue"
+        : g > r + 40 && g > b + 40
+          ? "green"
+          : "other";
+  };
+  await panel.ifDrawn(async () => {
+    await expect.poll(() => color(700, 450)).toBe("red");
+    await expect.poll(() => color(300, 300)).toBe("green");
+    await panel.frame.evaluate(() => document.querySelector<HTMLElement>("#toast")!.showPopover());
+    await expect.poll(() => color(100, 70)).toBe("blue");
+  });
+});
+
+test("draws a rotated popover as the page does", async () => {
+  // Red on its left half, blue on its right: turned a quarter, red on top.
+  await panel.frame.evaluate(() => {
+    document.body.insertAdjacentHTML(
+      "beforeend",
+      `<div id="turned" popover style="margin: 0; inset: auto; left: 600px; top: 400px; width: 200px; height: 100px; border: 0; padding: 0; rotate: 90deg; background: linear-gradient(to right, rgb(220, 20, 20) 50%, rgb(20, 20, 220) 50%)"></div>`,
+    );
+    document.querySelector<HTMLElement>("#turned")!.showPopover();
+  });
+  await panel.ifDrawn(async () => {
+    await expect
+      .poll(async () => {
+        const [r, , b] = await panel.pixel(725, 380);
+        return r > 180 && b < 60;
+      })
+      .toBe(true);
+    const [r, , b] = await panel.pixel(725, 520);
+    expect(b > 180 && r < 60).toBe(true);
+  });
+});
+
+test("draws the selection of text in a popover over it, though the box the popover is in clips", async () => {
+  await panel.frame.evaluate(() => {
+    const box = document.createElement("div");
+    box.style.cssText =
+      "position: absolute; left: 0; top: 0; width: 10px; height: 10px; overflow: hidden; transform: translateX(1px)";
+    box.innerHTML = `<div id="pop" popover style="margin: 0; inset: auto; left: 500px; top: 400px; width: 400px; height: 120px; border: 0; padding: 0; background: white"><p id="words" style="margin: 0; font: 80px/1 monospace; color: white">MMMMMM</p></div>`;
+    document.body.append(box);
+    document.querySelector<HTMLElement>("#pop")!.showPopover();
+    getSelection()!.selectAllChildren(document.querySelector("#words")!);
+  });
+  await panel.ifDrawn(() =>
+    expect
+      .poll(async () => {
+        const [r, g, b] = await panel.pixel(560, 440);
+        return r < 235 && g < 235 && b < 245;
+      })
+      .toBe(true),
+  );
+});

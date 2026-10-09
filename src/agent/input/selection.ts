@@ -267,7 +267,7 @@ export function intersect(a: Box, b: Box): Box {
  */
 /** A box of the page's selection, and the text it is of (drawn over that text's top layer element, if any). */
 export interface SelectionBox extends Box {
-  text?: Text;
+  text: Text;
 }
 
 export function selectionBoxes(window: FrameWindow, range: Range): SelectionBox[] {
