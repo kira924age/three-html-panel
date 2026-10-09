@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-import { endOffsetOf, isSampledLive, snapshotDocument } from "./snapshot";
+import { buildFrameSvg, endOffsetOf, isSampledLive, snapshotDocument } from "./snapshot";
 
 afterEach(() => {
   document.body.innerHTML = "";
@@ -524,6 +524,35 @@ describe("scrolled content", () => {
     return new DOMParser().parseFromString(xhtml, "application/xhtml+xml");
   }
 
+  /**
+   * Gives elements (by id) generated boxes with these computed values (jsdom
+   * has no ::before or ::after styles).
+   */
+  function generate(
+    boxes: Record<string, Partial<Record<"::before" | "::after", Record<string, string>>>>,
+  ) {
+    const pageStyle = window.getComputedStyle.bind(window);
+    vi.spyOn(window, "getComputedStyle").mockImplementation((element, pseudo) => {
+      const own = pseudo ? boxes[(element as Element).id]?.[pseudo as "::before"] : undefined;
+      if (!own) return pageStyle(element, pseudo);
+      const values: Record<string, string> = {
+        content: '""',
+        position: "static",
+        display: "block",
+        ...own,
+      };
+      return {
+        ...values,
+        cssFloat: "none",
+        getPropertyValue: (property: string) => values[property] ?? "0px",
+      } as unknown as CSSStyleDeclaration;
+    });
+  }
+
+  /** The rules the copy has for generated boxes, without their layer. */
+  const generatedRules = (copy: Document) =>
+    copy.querySelector("style")!.textContent!.replace(/^@layer thp-scrolled\{(.*)\}$/s, "$1");
+
   afterEach(() => {
     delete (document as { scrollingElement?: Element }).scrollingElement;
     document.documentElement.removeAttribute("style");
@@ -709,20 +738,9 @@ describe("scrolled content", () => {
     document.body.innerHTML =
       `<div id="block" style="overflow: auto"><p id="a" style="margin-top: 8px"></p></div>` +
       `<div id="inline" style="overflow: auto"><p id="b"></p></div>`;
-    const generated: Record<string, Record<string, string>> = {
-      block: { display: "block", height: "40px", "margin-top": "10px" },
-      inline: { display: "inline", height: "auto" },
-    };
-    const pageStyle = window.getComputedStyle.bind(window);
-    vi.spyOn(window, "getComputedStyle").mockImplementation((element, pseudo) => {
-      const own = pseudo === "::before" ? generated[(element as Element).id] : undefined;
-      if (!own) return pageStyle(element, pseudo);
-      const values: Record<string, string> = { content: '"Results"', position: "static", ...own };
-      return {
-        ...values,
-        cssFloat: "none",
-        getPropertyValue: (property: string) => values[property] ?? "0px",
-      } as unknown as CSSStyleDeclaration;
+    generate({
+      block: { "::before": { height: "40px", "margin-top": "10px" } },
+      inline: { "::before": { display: "inline", height: "auto" } },
     });
     scroll(
       new Map([
@@ -734,12 +752,94 @@ describe("scrolled content", () => {
     const block = copy.getElementById("block")!;
     // The ::before box moves the flow (its 10px margin, 30px less); the first child goes with it.
     expect(copy.getElementById("a")!.style.getPropertyPriority("margin-top")).toBe("");
-    expect(copy.querySelector("style")!.textContent).toBe(
+    // In a layer of its own, declared first: over the page's important rules.
+    expect(copy.querySelector("style")!.textContent).toMatch(/^@layer thp-scrolled\{/);
+    expect(generatedRules(copy)).toBe(
       `[data-thp-scrolled="${block.getAttribute("data-thp-scrolled")}"]::before{margin-top:-20px !important}`,
+    );
+    expect(buildFrameSvg("", ".page{}", 10, 10)).toContain(
+      "<![CDATA[@layer thp-scrolled;\n.page{}",
     );
     // Lines first: moved by itself instead (the ::before, text, does not move).
     expect(copy.getElementById("b")!.style.top).toBe("-30px");
     expect(copy.getElementById("inline")!.hasAttribute("data-thp-scrolled")).toBe(false);
+  });
+
+  it("moves a flex container's ::after and an absolute ::before (from its positioned container) with the content", () => {
+    vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(20);
+    document.body.innerHTML =
+      `<div id="row" style="overflow: auto; display: flex"><p></p></div>` +
+      `<div id="box" style="overflow: auto; position: relative"><p></p></div>`;
+    generate({
+      row: { "::after": { "margin-top": "2px" } },
+      box: { "::before": { position: "absolute", top: "10px", bottom: "auto" } },
+    });
+    scroll(
+      new Map([
+        [document.querySelector("#row")!, { top: 30 }],
+        [document.querySelector("#box")!, { top: 30 }],
+      ]),
+    );
+    const copy = snapshot();
+    const id = (selector: string) =>
+      copy.querySelector(selector)!.getAttribute("data-thp-scrolled");
+    expect(generatedRules(copy)).toBe(
+      `[data-thp-scrolled="${id("#row")}"]::after{margin-top:-28px !important;margin-bottom:30px !important}\n` +
+        `[data-thp-scrolled="${id("#box")}"]::before{top:-20px !important}`,
+    );
+  });
+
+  it("stops the collapse chain at a box's own ::before, and moves a bordered empty one", () => {
+    vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(20);
+    document.body.innerHTML =
+      `<div id="box" style="overflow: auto">` +
+      `<section id="card" style="margin-top: 10px"><h2 style="margin-top: 20px">A</h2></section>` +
+      `</div>` +
+      `<div id="list" style="overflow: auto"><p id="item"></p></div>`;
+    generate({
+      card: { "::before": { height: "4px" } },
+      list: { "::before": { height: "0px", "border-top-width": "3px" } },
+    });
+    scroll(
+      new Map([
+        [document.querySelector("#box")!, { top: 30 }],
+        [document.querySelector("#list")!, { top: 30 }],
+      ]),
+    );
+    const copy = snapshot();
+    // 10px (the card's, with its ::before's 0px; not the heading's), 30px less.
+    expect(copy.getElementById("card")!.style.marginTop).toBe("-20px");
+    // Not empty: moved by its rule, not by the fallback.
+    expect(copy.getElementById("item")!.style.position).toBe("");
+    expect(generatedRules(copy)).toContain("::before{margin-top:-30px !important}");
+  });
+
+  it("pins an element from the values an animation ends on", () => {
+    document.body.innerHTML = `<div id="toast" style="position: absolute; top: 100px; left: 0px; width: 10%"></div>`;
+    const toast = document.querySelector("#toast")!;
+    document.getAnimations = () => [
+      animation(toast, [{ computedOffset: 1, top: "20px", width: "200px" }], {
+        fill: "forwards",
+        iterations: 1,
+      }),
+    ];
+    scroll(new Map([[document.documentElement, { top: 300 }]]));
+    document.body.getBoundingClientRect = () => new DOMRect(8, 8 - 300, 700, 2000);
+    const copy = snapshot().getElementById("toast")!;
+    delete (document as { getAnimations?: unknown }).getAnimations;
+    // 20px from the document's start; the body's box starts 8px below it.
+    expect(copy.style.top).toBe("12px");
+    expect(copy.style.width).toBe("200px");
+  });
+
+  it("adds to a translate with functions in it", () => {
+    document.body.innerHTML =
+      `<div id="box" style="overflow: auto">Text` +
+      `<h3 id="sticky" style="position: sticky; top: 0; translate: calc(10px + min(5%, 2vw)) 4px"></h3>` +
+      `</div>`;
+    scroll(new Map([[document.querySelector("#box")!, { top: 50 }]]));
+    const sticky = snapshot().getElementById("sticky")!;
+    expect(sticky.style.getPropertyValue("translate")).toBe("calc(10px + min(5%, 2vw)) -46px");
   });
 
   it("does not move a flow in columns, or in vertical writing", () => {

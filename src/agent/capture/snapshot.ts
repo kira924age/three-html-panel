@@ -257,8 +257,26 @@ function baseValue(
 /** A length plus `by` px: in px where it is in px (or auto, as 0), in calc() otherwise (a percentage). */
 function plus(value: string, by: number): string {
   if (value === "" || value === "auto" || value === "0") return `${by}px`;
+  if (by === 0) return value;
   if (/^-?[\d.]+(e-?\d+)?px$/.test(value)) return `${parseFloat(value) + by}px`;
   return `calc(${value} + ${by}px)`;
+}
+
+/** The values of a space-separated list ("x y z"), keeping the spaces in functions (calc(), min()…). */
+function splitValues(value: string): string[] {
+  const values: string[] = [];
+  let depth = 0;
+  let current = "";
+  for (const character of value.trim()) {
+    if (character === "(") depth++;
+    else if (character === ")") depth--;
+    if (depth === 0 && /\s/.test(character)) {
+      if (current) values.push(current);
+      current = "";
+    } else current += character;
+  }
+  if (current) values.push(current);
+  return values;
 }
 
 /** Moves a box by (dx, dy) with the individual `translate` property, added to the one it has. */
@@ -269,25 +287,26 @@ function addTranslate(
   dy: number,
 ): void {
   const base = baseValue(copy, style, "translate");
-  // "x", "x y" or "x y z"; a calc() has spaces of its own.
-  const [x = "0px", y = "0px", z] = isSet(base) ? base.trim().split(/\s+(?![^(]*\))/) : [];
+  const [x = "0px", y = "0px", z] = isSet(base) ? splitValues(base) : [];
   const moved = [plus(x, dx), plus(y, dy), ...(z ? [z] : [])].join(" ");
   copy.style.setProperty("translate", moved, "important");
 }
 
 /**
- * Moves a positioned box by its insets: (dx, dy) for an absolute or fixed one,
- * or its insets the other way for a sticky one ((dx, dy) being the scroll). An
- * absolute one with both insets of an axis auto (at its place in the flow) is
- * moved by its margin.
+ * The insets that move a positioned box, as [property, value]: by (dx, dy)
+ * for an absolute or fixed one, or the other way for a sticky one ((dx, dy)
+ * being the scroll). An absolute one with both insets of an axis auto (at its
+ * place in the flow) is moved by its margin, if `byMargin`. `value` gives the
+ * property values to move from.
  */
-function moveInsets(
-  copy: HTMLElement | SVGElement,
-  style: CSSStyleDeclaration,
+function insetMoves(
+  value: (property: string) => string,
+  position: string,
   dx: number,
   dy: number,
-  byMargin = true,
-): void {
+  byMargin: boolean,
+): [string, string][] {
+  const moves: [string, string][] = [];
   const axes = [
     ["top", "bottom", "margin-top", dy],
     ["left", "right", "margin-left", dx],
@@ -295,14 +314,47 @@ function moveInsets(
   const auto = (value: string) => value === "" || value === "auto";
   for (const [start, end, margin, by] of axes) {
     if (by === 0) continue;
-    const from = baseValue(copy, style, start);
-    const to = baseValue(copy, style, end);
-    if (!auto(from)) copy.style.setProperty(start, plus(from, by), "important");
-    if (!auto(to)) copy.style.setProperty(end, plus(to, -by), "important");
-    if (auto(from) && auto(to) && byMargin && style.position !== "sticky")
-      copy.style.setProperty(margin, plus(baseValue(copy, style, margin), by), "important");
+    const from = value(start);
+    const to = value(end);
+    if (!auto(from)) moves.push([start, plus(from, by)]);
+    if (!auto(to)) moves.push([end, plus(to, -by)]);
+    if (auto(from) && auto(to) && byMargin && position !== "sticky")
+      moves.push([margin, plus(value(margin), by)]);
   }
+  return moves;
 }
+
+/** Moves a positioned element's copy by its insets (see insetMoves), from the values the copy has. */
+function moveInsets(
+  copy: HTMLElement | SVGElement,
+  style: CSSStyleDeclaration,
+  dx: number,
+  dy: number,
+  byMargin = true,
+): void {
+  const value = (property: string) => baseValue(copy, style, property);
+  for (const [property, moved] of insetMoves(value, style.position, dx, dy, byMargin))
+    copy.style.setProperty(property, moved, "important");
+}
+
+/** Whether a box is the containing block of the absolute elements in it. */
+const containsAbsolute = (style: CSSStyleDeclaration) =>
+  style.position !== "static" || containsFixed(style);
+
+/** Whether a generated box (::before, ::after) is empty: margins collapse through it. */
+function isEmptyBox(style: CSSStyleDeclaration): boolean {
+  return [
+    "height",
+    "padding-top",
+    "padding-bottom",
+    "border-top-width",
+    "border-bottom-width",
+  ].every((property) => (parseFloat(style.getPropertyValue(property)) || 0) === 0);
+}
+
+/** Whether a ::before or ::after has a box. */
+const isGenerated = (style: CSSStyleDeclaration) =>
+  !/^(none|normal)?$/.test(style.content ?? "") && style.display !== "none";
 
 /**
  * The top margin for the first box of a flow that moves the flow up by `y`,
@@ -326,6 +378,12 @@ function marginMovingFlow(margins: number[], y: number): number | null {
 
 /** Marks a scrolled container's copy, for the rules that move its generated boxes. */
 const SCROLLED_ATTRIBUTE = "data-thp-scrolled";
+/**
+ * The cascade layer of those rules, declared before the page's CSS: important
+ * declarations of the first layer win over all others (unlayered ones too),
+ * whatever their specificity.
+ */
+const SCROLLED_LAYER = "thp-scrolled";
 
 /** Displays of a scroll container that lays out its children as blocks (in a flow of its own). */
 const BLOCK_CONTAINER = /^(block|inline-block|flow-root|list-item|table-cell|table-caption)$/;
@@ -419,7 +477,7 @@ class Snapshotter {
 
     const outer = [this.absoluteContainer, this.fixedContainer] as const;
     if (containsFixed(style)) this.absoluteContainer = this.fixedContainer = element;
-    else if (style.position !== "static") this.absoluteContainer = element;
+    else if (containsAbsolute(style)) this.absoluteContainer = element;
     const children = element.tagName === "TEXTAREA" ? [] : Array.from(element.childNodes);
     // Composed text between two children (an empty line of an editable, say).
     const composition = this.options.inlineComposition;
@@ -828,7 +886,21 @@ class Snapshotter {
         /^(normal)?$/.test(style.alignContent ?? "") &&
         (parseFloat(style.borderTopWidth) || 0) === 0 &&
         (parseFloat(style.paddingTop) || 0) === 0;
-      box = through ? this.firstBlock(box) : null;
+      if (!through) break;
+      // Its own ::before comes first: a block one's margin is the last that
+      // collapses (its boxes are its text); lines stop it.
+      const before = this.window.getComputedStyle(box, "::before");
+      if (
+        isGenerated(before) &&
+        !/^(absolute|fixed)$/.test(before.position) &&
+        (before.cssFloat || "none") === "none"
+      ) {
+        if (!BLOCK_LEVEL.test(before.display)) break;
+        if (isEmptyBox(before)) return null;
+        margins.push(parseFloat(before.getPropertyValue("margin-top")) || 0);
+        break;
+      }
+      box = this.firstBlock(box);
     }
     return marginMovingFlow(margins, y);
   }
@@ -845,7 +917,7 @@ class Snapshotter {
     items: boolean,
   ): CSSStyleDeclaration | null | false {
     const style = this.window.getComputedStyle(container, pseudo);
-    if (/^(none|normal)?$/.test(style.content ?? "") || style.display === "none") return null;
+    if (!isGenerated(style)) return null;
     if (style.position === "absolute" || style.position === "fixed") return style;
     if ((style.cssFloat || "none") !== "none") return false;
     return items || BLOCK_LEVEL.test(style.display) ? style : false;
@@ -868,21 +940,15 @@ class Snapshotter {
       declarations.push(`${property}:${value} !important`);
     const value = (property: string) => style.getPropertyValue(property);
     if (style.position === "absolute" || style.position === "fixed") {
-      // From the container (positioned, or with a transform) it scrolls with it; else it stays.
+      // From the container (its containing block) it scrolls with it; else it stays.
       const containerStyle = this.styles.get(container)!;
       const scrolls =
         style.position === "fixed"
           ? containsFixed(containerStyle)
-          : containerStyle.position !== "static" || containsFixed(containerStyle);
+          : containsAbsolute(containerStyle);
       if (!scrolls) return "";
-      for (const [side, by] of [
-        ["top", -y],
-        ["bottom", y],
-        ["left", -x],
-        ["right", x],
-      ] as const) {
-        if (by !== 0 && !/^(auto)?$/.test(value(side))) set(side, plus(value(side), by));
-      }
+      for (const [property, moved] of insetMoves(value, style.position, -x, -y, true))
+        set(property, moved);
       return declarations.join(";");
     }
     if (y !== 0 && items) {
@@ -892,7 +958,7 @@ class Snapshotter {
     if (y !== 0 && !items && first) {
       // The first box of the flow: its margin collapses with no other (its own
       // boxes are its text), unless it is empty.
-      if ((parseFloat(value("height")) || 0) === 0) return null;
+      if (isEmptyBox(style)) return null;
       const top = marginMovingFlow([parseFloat(value("margin-top")) || 0], y);
       if (top === null) return null;
       set("margin-top", `${top}px`);
@@ -1070,11 +1136,12 @@ class Snapshotter {
     };
     const from = origin(container);
     const to = origin(trap);
-    // Used values (in px) for a positioned element, but for insets that are
-    // over-constrained (both, and the size): those are as specified, maybe in
-    // percent. Then from where it is (its border box, less its margin).
+    // Used values (in px) for a positioned element (or as an animation ends),
+    // but for insets that are over-constrained (both, and the size): those are
+    // as specified, maybe in percent. Then from where it is (its border box,
+    // less its margin).
     const inset = (side: "top" | "left", from: number) => {
-      const value = style.getPropertyValue(side);
+      const value = baseValue(copy, style, side);
       if (/^-?[\d.]+px$/.test(value)) return parseFloat(value);
       const rect = live.getBoundingClientRect();
       const margin = parseFloat(style.getPropertyValue(`margin-${side}`)) || 0;
@@ -1091,7 +1158,7 @@ class Snapshotter {
     set("right", "auto");
     // Sizes and margins in percent, or auto, are from the containing block: as on the page.
     for (const property of PINNED_SIZES) {
-      const value = style.getPropertyValue(property);
+      const value = baseValue(copy, style, property);
       if (value) set(property, value);
     }
   }
@@ -1337,7 +1404,7 @@ export function snapshotDocument(document: Document, options: SnapshotOptions): 
   snapshotter.pinPositioned();
   if (snapshotter.generatedRules.length > 0) {
     const rules = root.ownerDocument.createElement("style");
-    rules.textContent = snapshotter.generatedRules.join("\n");
+    rules.textContent = `@layer ${SCROLLED_LAYER}{${snapshotter.generatedRules.join("\n")}}`;
     root.appendChild(rules);
   }
   root.style.setProperty("width", `${document.documentElement.clientWidth}px`);
@@ -1383,7 +1450,8 @@ export function snapshotDocument(document: Document, options: SnapshotOptions): 
 /** Wraps the page's XHTML and CSS in an SVG document of the given size. */
 export function buildFrameSvg(xhtml: string, css: string, width: number, height: number): string {
   // "]]>" inside CSS would end the CDATA section early.
-  const safeCss = css.replace(/]]>/g, "]]]]><![CDATA[>");
+  // The agent's layer first (see SCROLLED_LAYER), before the page's.
+  const safeCss = `@layer ${SCROLLED_LAYER};\n${css}`.replace(/]]>/g, "]]]]><![CDATA[>");
   return (
     `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">` +
     `<style><![CDATA[${safeCss}]]></style>` +

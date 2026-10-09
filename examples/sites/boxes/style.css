@@ -134,3 +134,7 @@ h1 {
   translate: 0 4px;
   background: rgb(60, 60, 200);
 }
+/* A rule of the page's own for it, important: the copy's moving it wins all the same. */
+.grid .generated::before {
+  margin-top: 0 !important;
+}
