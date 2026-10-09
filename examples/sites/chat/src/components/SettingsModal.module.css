@@ -1,0 +1,15 @@
+.panel {
+  min-height: 260px;
+}
+
+.dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.swatch {
+  cursor: pointer;
+  width: 30px;
+  height: 30px;
+}

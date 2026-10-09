@@ -1,0 +1,16 @@
+.root {
+  margin-top: 4px;
+}
+
+.editor {
+  border-radius: var(--mantine-radius-md);
+
+  &:focus-within {
+    border-color: var(--mantine-primary-color-filled);
+  }
+}
+
+.prose {
+  padding: 6px 10px !important;
+  font-size: var(--mantine-font-size-sm);
+}

@@ -47,13 +47,16 @@
   },
   "scripts": {
     "dev": "vp dev",
+    "dev:all": "pnpm --parallel -r --include-workspace-root dev",
     "build": "vp build",
     "preview": "vp preview",
     "typecheck": "tsc --noEmit",
     "test": "vp test run",
     "e2e": "playwright test",
     "pack:lib": "vp pack",
-    "prepublishOnly": "vp check && vp test run && vp pack"
+    "prepublishOnly": "vp check && vp test run && vp pack",
+    "dev:sites": "pnpm --parallel --filter \"./examples/sites/*\" dev",
+    "build:sites": "pnpm --filter \"./examples/sites/*\" build"
   },
   "devDependencies": {
     "@playwright/test": "1.63.0",
