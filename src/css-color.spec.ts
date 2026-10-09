@@ -11,6 +11,7 @@ const bytes = (css: string) => {
 
 describe("parseCssColor", () => {
   it("reads rgb() in the legacy and the modern syntax", () => {
+    expect(bytes("rgb(100%, 50%, 0%, 50%)")).toEqual([255, 128, 0, 0.5]);
     expect(bytes("rgb(1, 2, 3)")).toEqual([1, 2, 3, 1]);
     expect(bytes("rgba(0, 0, 0, 0)")).toEqual([0, 0, 0, 0]);
     expect(bytes("rgba(10, 20, 30, 0.25)")).toEqual([10, 20, 30, 0.25]);
@@ -51,15 +52,29 @@ describe("parseCssColor", () => {
     expect(bytes("color(srgb 2 -1 0.5 / 3)")).toEqual([255, 0, 128, 1]);
   });
 
-  it("reads the sRGB syntaxes a page could send too", () => {
-    expect(bytes("#ff0000")).toEqual([255, 0, 0, 1]);
-    expect(bytes("#0f08")).toEqual([0, 255, 0, 0x88 / 255]);
-    expect(bytes("red")).toEqual([255, 0, 0, 1]);
-    expect(bytes("hsl(120, 100%, 25%)")).toEqual([0, 128, 0, 1]);
-    expect(bytes("hsl(120deg 100 25 / 0.5)")).toEqual([0, 128, 0, 0.5]);
-    expect(bytes("hsl(-240 100% 25%)")).toEqual([0, 128, 0, 1]);
-    expect(bytes("hwb(0 0% 0%)")).toEqual([255, 0, 0, 1]);
-    expect(bytes("hwb(0 60% 60%)")).toEqual([128, 128, 128, 1]);
+  it("reads hsl() and hwb() with none, as WebKit keeps them", () => {
+    expect(bytes("hsl(none 100 50)")).toEqual([255, 0, 0, 1]);
+    expect(bytes("hsl(120 none 50)")).toEqual([128, 128, 128, 1]);
+    expect(bytes("hsl(120 100 25 / none)")).toEqual([0, 128, 0, 0]);
+    expect(bytes("hsl(-240deg 100% 25%)")).toEqual([0, 128, 0, 1]);
+    expect(bytes("hwb(none 20 10)")).toEqual([230, 51, 51, 1]);
+    expect(bytes("hwb(30 20 10 / 0.5)")).toEqual([230, 140, 51, 0.5]);
+    expect(bytes("hwb(0 60 60)")).toEqual([128, 128, 128, 1]);
+  });
+
+  it("clamps lightness, chroma and saturation as browsers do, but not whiteness or blackness", () => {
+    expect(bytes("hsl(0 -50 50)")).toEqual([128, 128, 128, 1]);
+    expect(bytes("lab(150 20 30)")).toEqual(bytes("lab(100 20 30)"));
+    expect(bytes("lch(50 -30 250)")).toEqual(bytes("lch(50 0 250)"));
+    expect(bytes("oklab(-0.5 0.1 0.1)")).toEqual(bytes("oklab(0 0.1 0.1)"));
+    expect(bytes("oklch(0.7 -0.1 150)")).toEqual(bytes("oklch(0.7 0 150)"));
+    expect(bytes("oklch(150% 0.1 150)")).toEqual(bytes("oklch(1 0.1 150)"));
+    // Not above 100%, as only Firefox does: hsl(0 150 25) is rgb(159, 0, 0) in WebKit.
+    expect(bytes("hsl(none 150 25)")).toEqual([159, 0, 0, 1]);
+    // As WebKit, the browser that sends hwb(), draws it: rgb(230, 89, 0), not rgb(230, 115, 0).
+    expect(bytes("hwb(30 -20 10)")?.[1]).toBe(89);
+    expect(bytes("hwb(none 120 10)")).toEqual([235, 235, 235, 1]);
+    expect(bytes("lab(1e300 0 0)")).toEqual([255, 255, 255, 1]);
   });
 
   it("reads transparent as a zero alpha", () => {
@@ -72,13 +87,18 @@ describe("parseCssColor", () => {
       "",
       "currentcolor",
       "notacolor",
-      "#ff00f",
+      "#ff0000",
+      "red",
+      "hsl(120, 100%, 25%)",
+      "hwb(none, 20%, 10%)",
+      "rgb(1. 2 3)",
       "rgb()",
       "rgb(1 2)",
       "rgb(1 2 3 4)",
       "rgb(1 2 3 / 0.5 / 1)",
       "rgb(1deg 2 3)",
-      "hsl(10% 50% 50%)",
+      "oklch(0.5 0.1 10%)",
+      "rgb(1 2 3deg)",
       "color(srgb, 1, 0, 0)",
       "color(unknown 1 0 0)",
       "color(srgb 1 0)",
@@ -86,6 +106,17 @@ describe("parseCssColor", () => {
       "color-mix(in srgb, red, blue)",
       "light-dark(red, blue)",
       "rgb(calc(1) 2 3)",
+      // The comma separated syntax is rgb()'s alone, with no none and no mixed units.
+      "lab(50, 20, -30)",
+      "oklch(0.5, 0.1, 200)",
+      "rgb(1, none, 3)",
+      "rgba(1, 2, 3, none)",
+      "rgb(100%, 2, 3)",
+      "rgb(1, 2, 3 / 0.5)",
+      // Components that overflow.
+      "oklch(0.5 0.1 1e400)",
+      "rgb(1e400 0 0)",
+      "lab(50 1e300 0)",
       "constructor",
       "constructor(1 2 3)",
       "color(__proto__ 1 2 3)",

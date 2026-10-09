@@ -9,8 +9,15 @@ import {
   type WebGLRenderer,
 } from "three";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vite-plus/test";
+import { parseCssColor } from "./css-color";
 import { FAR_PACE_MS, HtmlPanel, PANEL_SANDBOX, defaultPixelRatio } from "./html-panel";
 import { PanelKeyboard } from "./panel-keyboard";
+
+// To count how often the panel reads its caret's color.
+vi.mock("./css-color", async (importOriginal) => {
+  const original = await importOriginal<typeof import("./css-color")>();
+  return { ...original, parseCssColor: vi.fn(original.parseCssColor) };
+});
 
 describe("defaultPixelRatio", () => {
   it("is 1 on phones (coarse pointer, small screen) and 2 elsewhere", () => {
@@ -169,6 +176,28 @@ describe("the panel's iframe", () => {
       await show("not a color");
       expect(caret.userData.hasCaret).toBe(true);
       expect(rgb()).toEqual([255, 0, 0]);
+      port.close();
+    });
+
+    it("reads the caret's color again only when the page sends another", async () => {
+      const panel = open(false);
+      const port = connect(panel);
+      const parse = vi.mocked(parseCssColor);
+      const show = async (color: string) => {
+        port.postMessage({ ...editing, caret: { ...editing.caret, color } });
+        await delivered();
+      };
+      parse.mockClear();
+      await show("oklch(0.7 0.1 150)");
+      await show("oklch(0.7 0.1 150)");
+      await show("not a color");
+      await show("not a color");
+      await show("oklch(0.7 0.1 150)");
+      expect(parse.mock.calls).toEqual([
+        ["oklch(0.7 0.1 150)"],
+        ["not a color"],
+        ["oklch(0.7 0.1 150)"],
+      ]);
       port.close();
     });
 
