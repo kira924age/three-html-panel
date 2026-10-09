@@ -74,6 +74,18 @@ describe("nested rules", () => {
   });
 });
 
+describe("recollecting", () => {
+  it("notices rules inserted in a block, not only in a sheet", () => {
+    vi.stubGlobal("matchMedia", () => ({ matches: true }));
+    document.head.innerHTML = "<style>@layer components { .a { color: red } }</style>";
+    const css = new DocumentCss(document, () => null);
+    expect(css.get()[1]).not.toContain(".b");
+    const layer = document.styleSheets[0]!.cssRules[0] as CSSLayerBlockRule;
+    layer.insertRule(".b { color: blue }", 1);
+    expect(css.get()[1]).toContain(".b{color: blue;}");
+  });
+});
+
 describe("@import rules", () => {
   it("put the imported sheet in the layer it is imported into, @namespace rules outside it", () => {
     vi.stubGlobal("matchMedia", () => ({ matches: true }));

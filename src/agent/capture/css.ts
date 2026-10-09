@@ -108,12 +108,19 @@ function ruleCount(sheet: CSSStyleSheet): number {
 
 /**
  * Collects a document's CSS, recollecting only when the set of stylesheets or
- * the number of rules in them changes. Editing an existing rule in place
- * (CSSStyleRule.style) is not noticed; call invalidate() for that.
+ * the number of rules in them (or in the blocks and imported sheets in them)
+ * changes. Editing an existing rule in place (CSSStyleRule.style) is not
+ * noticed; call invalidate() for that.
  */
 export class DocumentCss {
   private signature = "";
   private css: readonly string[] = [];
+  /**
+   * The lists of rules inside the sheets (of blocks, nested rules, imported
+   * sheets) as they were collected, with how many rules each had: rules
+   * inserted there change no sheet's own count.
+   */
+  private inner: { rules: CSSRuleList; length: number }[] = [];
   /**
    * Cross-origin stylesheets (a web font service, say) hide their rules from
    * script unless they were loaded with CORS. They are fetched again with CORS
@@ -144,7 +151,9 @@ export class DocumentCss {
     const signature = sheets
       .map((sheet) => `${sheet.href ?? "inline"}:${ruleCount(sheet)}`)
       .join("|");
-    if (signature !== this.signature) {
+    const changedInside = this.inner.some(({ rules, length }) => rules.length !== length);
+    if (signature !== this.signature || changedInside) {
+      this.inner = [];
       const out: string[][] = [[DEFAULT_FOCUS_RING_CSS]];
       for (const sheet of sheets) this.serializeSheet(sheet, out);
       out.push([FREEZE_ANIMATIONS_CSS]);
@@ -217,6 +226,10 @@ export class DocumentCss {
       CSS,
     } = this.window;
     for (const rule of Array.from(rules)) {
+      // Rules inserted in a block later are noticed (see get()); not in every
+      // style rule (each has a list, empty but for nested rules: too many).
+      const block = (rule as Partial<CSSGroupingRule>).cssRules;
+      if (block && (block.length > 0 || !(rule instanceof CSSStyleRule))) this.watch(block);
       if (rule instanceof CSSStyleRule) {
         if (rule.cssRules.length === 0) {
           out.push(`${rewriteSelector(rule.selectorText)}{${rule.style.cssText}}`);
@@ -239,6 +252,10 @@ export class DocumentCss {
         // Its conditions: media, and supports() (newer browsers).
         const supports = (rule as { supportsText?: string | null }).supportsText;
         const layer = (rule as { layerName?: string | null }).layerName;
+        if (sheet) {
+          const readable = this.readable(sheet);
+          if (readable) this.watch(readable.cssRules);
+        }
         if (
           sheet &&
           this.window.matchMedia(rule.media.mediaText || "all").matches &&
@@ -263,6 +280,10 @@ export class DocumentCss {
         out.push(rule.cssText);
       }
     }
+  }
+
+  private watch(rules: CSSRuleList): void {
+    this.inner.push({ rules, length: rules.length });
   }
 
   private readable(sheet: CSSStyleSheet): CSSStyleSheet | null {

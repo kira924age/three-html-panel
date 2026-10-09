@@ -129,6 +129,7 @@ These rely on the scene being rendered every frame. Without WebGL (a panel that 
 - The page has to load the agent.
 - Only what the DOM and CSS describe is drawn: no cross-origin iframes inside the page, no native widgets other than `<select>`'s list (no date pickers or video controls). CSS transitions jump to their end.
 - A cross-origin video without CORS shows only its poster.
+- Scrolled content is drawn by moving it in the copy of the page. A scroll container whose content starts with bare text (or other inline content), floats, multiple columns or vertical writing has its children moved one by one instead: bare text directly in it does not move, absolutely positioned elements placed from outside it are cut off at its edges, and its sticky elements are drawn over the rest of its content (`z-index: 1`). Wrapping the text in an element avoids this.
 - contenteditable editing relies on `document.execCommand()`; editors that handle input in other ways may not work.
 - No IME in VR. Touch and VR were tested in emulation, not on devices.
 - A same-site page shares the host's main thread; a heavy one slows the scene. Prefer another site for panel pages.
@@ -147,7 +148,7 @@ vp check        # format, lint and types
 
 `E2E_NO_WEBGL=1 pnpm e2e` runs the end-to-end tests without WebGL, as headless Firefox on Linux does.
 
-The library is `src/` (the agent, which runs in panel pages, is `src/agent/`). The demo is in `examples/`: `examples/showcase/` is the 3D scene (`index.html` loads it), and `examples/sites/` holds the pages it shows as panels, served from the other origin. The end-to-end tests drive those pages in `e2e/harness/`, a scene with one flat panel.
+The library is `src/` (the agent, which runs in panel pages, is `src/agent/`). The demo is in `examples/`: `examples/showcase/` is the 3D scene (`index.html` loads it), and `examples/sites/` holds the pages it shows as panels, served from the other origin, with two more: `article/`, a long page with sticky and fixed elements, and `boxes/`, a page for the end-to-end tests only (not in the build). The end-to-end tests drive those pages in `e2e/harness/`, a scene with one flat panel.
 
 ## License
 
