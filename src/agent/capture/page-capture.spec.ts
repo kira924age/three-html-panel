@@ -187,6 +187,33 @@ describe("interaction states in the live page", () => {
     expect(frames.at(-1)).toMatch(/class="row" data-thp-focus-within=""/);
   });
 
+  it("lets the page's click handler see the press ended, and its focus handler the new focus", () => {
+    const button = document.querySelector("button")!;
+    const seen: string[] = [];
+    button.addEventListener("focus", () =>
+      seen.push(`focus: ${getComputedStyle(document.querySelector(".tools")!).display}`),
+    );
+    button.addEventListener("click", () =>
+      seen.push(`click: ${button.hasAttribute("data-thp-active")}`),
+    );
+    capture.start();
+    move();
+    press();
+    expect(seen).toEqual(["focus: grid", "click: false"]);
+  });
+
+  it("follows the page moving the focused element elsewhere, on the next capture", async () => {
+    capture.start();
+    const button = document.querySelector("button")!;
+    button.focus();
+    const other = document.createElement("div");
+    document.body.append(other);
+    other.append(button);
+    await settle();
+    expect(other.hasAttribute("data-thp-focus-within")).toBe(true);
+    expect(document.querySelector(".row")!.hasAttribute("data-thp-focus-within")).toBe(false);
+  });
+
   it("does not count its marks as changes of the page", async () => {
     capture.start();
     await settle();

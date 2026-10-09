@@ -134,6 +134,8 @@ export class VirtualFocus {
   constructor(
     private readonly document: Document,
     private readonly onChange: () => void,
+    /** Focus moved: called before the focus events, which the page handles with the new focus in place. */
+    private readonly onMove: () => void = () => {},
   ) {
     this.window = document.defaultView as FrameWindow;
     const proto = this.window.HTMLElement.prototype;
@@ -200,6 +202,7 @@ export class VirtualFocus {
     const previous = this.current;
     if (previous === element) return;
     this.element = element;
+    this.onMove();
     const { FocusEvent } = this.window;
     if (previous) {
       previous.dispatchEvent(new FocusEvent("blur", { relatedTarget: element }));
@@ -359,10 +362,7 @@ export class InputSynthesizer {
   ) {
     this.window = document.defaultView as FrameWindow;
     this.patchPointerCapture();
-    this.focus = new VirtualFocus(document, () => {
-      this.syncMarks();
-      options.onChange();
-    });
+    this.focus = new VirtualFocus(document, options.onChange, () => this.syncMarks());
     // Added before the page's scripts run, so it comes before their listeners.
     this.window.addEventListener(
       "beforeinput",
@@ -457,7 +457,6 @@ export class InputSynthesizer {
     // The list closes when its <select> loses focus (or leaves the page).
     if (this.popup && (this.focused !== this.popup.select || !this.popup.select.isConnected))
       this.popup = null;
-    this.syncMarks();
     // Always dispatch the page's events. DOM mutations and capture's event
     // listeners still invalidate; only skip this blanket notification when
     // the pointer stayed over the same element and scrollbar. Canvas/CSSOM
@@ -585,11 +584,19 @@ export class InputSynthesizer {
 
   /**
    * Puts the hover, press and focus on the page's elements, for its CSS to
-   * match: right when they change, so that the next hit test finds what they
-   * show (a button shown only while its row is hovered, say).
+   * match: right when they change, so that the next hit test (and the page's
+   * handlers) find what they show, a button shown only while its row is
+   * hovered, say. Also before a capture, for what changed without input (the
+   * page moving the focused element elsewhere).
    */
-  private syncMarks(): void {
+  syncMarks(): void {
     this.marks.update({ hovered: this.hovered, active: this.active, focused: this.focus.current });
+  }
+
+  /** Not pressed anymore: no longer :active. */
+  private clearActive(): void {
+    this.active.clear();
+    this.syncMarks();
   }
 
   /** Whether a point is on a character of the page's text (not only inside an element with text). */
@@ -1095,7 +1102,7 @@ export class InputSynthesizer {
     // A drag that scrolled already ended for the page (pointercancel): no pointerup, no click.
     if (pan?.active) {
       this.press = null;
-      this.active.clear();
+      this.clearActive();
       this.updateHover(this.hitTest(x, y), x, y);
       return;
     }
@@ -1103,7 +1110,7 @@ export class InputSynthesizer {
     // Pressed on a <select> and released over its list: the release is the list's.
     if (this.popup && press?.openedPopup && this.popup.contains(x, y)) {
       this.press = null;
-      this.active.clear();
+      this.clearActive();
       // Dragged from the select to an option: that option is chosen, as in browsers.
       this.chooseAt(x, y);
       return;
@@ -1136,7 +1143,8 @@ export class InputSynthesizer {
       this.captureTarget = null;
     }
     this.press = null;
-    this.active.clear();
+    // Released: no longer :active, before the click.
+    this.clearActive();
     this.updateHover(target, x, y);
 
     if (!press || press.moved) return;

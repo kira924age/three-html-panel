@@ -26,6 +26,11 @@ test("archives a message with a button that shows only while it is hovered", asy
     await expect
       .poll(() => panel.pixel(message.left + 20, message.top + 4))
       .toEqual([0xee, 0xf3, 0xff]);
+    // And the button, white inside its border (where the page lays it out).
+    const archive = await panel.box(`${MESSAGE} .archive`);
+    await expect
+      .poll(() => panel.pixel(archive.left + 4, archive.top + archive.height / 2))
+      .toEqual([0xff, 0xff, 0xff]);
   });
   await panel.click(await panel.at(`${MESSAGE} .archive`));
   await expect.poll(status).toBe("Archived: Quarterly report");

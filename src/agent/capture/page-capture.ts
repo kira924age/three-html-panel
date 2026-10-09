@@ -138,7 +138,7 @@ export class PageCapture {
       (url) => this.images.get(url),
       () => {
         // A cross-origin stylesheet's copy arrived: its interaction rules apply to the live page too.
-        this.liveCss.invalidate();
+        this.liveCss.reset();
         this.changed();
       },
     );
@@ -166,6 +166,8 @@ export class PageCapture {
       characterData: true,
     });
     for (const type of INVALIDATING_EVENTS) this.window.addEventListener(type, this.changed, true);
+    // A <link>'s stylesheet loaded. Load events of elements do not reach the window.
+    document.addEventListener("load", this.stylesheetsChanged, true);
     void document.fonts?.ready.then(() => {
       this.css.invalidate();
       this.changed();
@@ -232,6 +234,7 @@ export class PageCapture {
     this.mutations.disconnect();
     for (const type of INVALIDATING_EVENTS)
       this.window.removeEventListener(type, this.changed, true);
+    this.document.removeEventListener("load", this.stylesheetsChanged, true);
   }
 
   /** Runs a measurement that adds elements to the page, without it counting as a change. */
@@ -248,10 +251,19 @@ export class PageCapture {
     this.schedule();
   };
 
-  /** The page may look different: capture it again, and measure its selection again. */
+  /**
+   * The page may look different: capture it again, and measure its selection
+   * again. Its stylesheets may have changed too (the DOM did, or input made
+   * the page render).
+   */
   private readonly changed = () => {
     this.layoutVersion++;
+    this.liveCss.invalidate();
     this.invalidate();
+  };
+
+  private readonly stylesheetsChanged = (event: Event) => {
+    if (event.target instanceof this.window.HTMLLinkElement) this.changed();
   };
 
   // A plain timer, not requestAnimationFrame: browsers may hold back rAF in an
@@ -280,8 +292,10 @@ export class PageCapture {
   private render(): void {
     if (this.disposed || !this.dirty) return;
     this.dirty = false;
-    // Before measuring anything: the page may have added rules since the last input.
+    // Before measuring anything: the page may have added rules since the last
+    // input, or moved the focused element (its ancestors are :focus-within).
     this.liveCss.sync();
+    this.input.syncMarks();
     const started = performance.now();
     try {
       // The viewport, including any scrollbar: exactly the iframe's size.

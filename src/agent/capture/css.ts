@@ -21,26 +21,6 @@ export const ACTIVE_ATTRIBUTE = "data-thp-active";
 export const FOCUS_ATTRIBUTE = "data-thp-focus";
 export const FOCUS_WITHIN_ATTRIBUTE = "data-thp-focus-within";
 
-// A pseudo-class followed by something other than a name character, so that
-// :focus does not also match :focus-visible.
-const pseudoClass = (name: string) => new RegExp(`:${name}(?![-\\w])`, "g");
-
-const SELECTOR_REWRITES: [RegExp, string][] = [
-  [pseudoClass("root"), "html"],
-  [pseudoClass("hover"), `[${HOVER_ATTRIBUTE}]`],
-  [pseudoClass("active"), `[${ACTIVE_ATTRIBUTE}]`],
-  [pseudoClass("focus-visible"), `[${FOCUS_ATTRIBUTE}]`],
-  [pseudoClass("focus-within"), `[${FOCUS_WITHIN_ATTRIBUTE}]`],
-  [pseudoClass("focus"), `[${FOCUS_ATTRIBUTE}]`],
-];
-
-export function rewriteSelector(selector: string): string {
-  return SELECTOR_REWRITES.reduce(
-    (text, [pattern, replacement]) => text.replace(pattern, replacement),
-    selector,
-  );
-}
-
 const INTERACTION_ATTRIBUTE_OF: Record<string, string> = {
   hover: HOVER_ATTRIBUTE,
   active: ACTIVE_ATTRIBUTE,
@@ -53,19 +33,65 @@ export const INTERACTION_ATTRIBUTES: ReadonlySet<string> = new Set(
   Object.values(INTERACTION_ATTRIBUTE_OF),
 );
 
+// A pseudo-class followed by something other than a name character, so that
+// :focus does not also match :focus-visible.
 const INTERACTION_PSEUDO_CLASS = /:(hover|active|focus-visible|focus-within|focus)(?![-\w])/g;
+const ROOT_PSEUDO_CLASS = /:root(?![-\w])/g;
 
 /**
- * The selector for the live page: each interaction pseudo-class also matches
- * its attribute, `:hover` becoming `:is(:hover,[data-thp-hover])`. The
- * specificity stays the same, and so does the rule's place in the cascade.
- * Null if the selector has none, or was rewritten already.
+ * Whether the compound selector that ends at `end` has a pseudo-element in it
+ * (`::-webkit-scrollbar-thumb:hover`, `::part(x):hover`). Only a few
+ * pseudo-classes may follow one, not an attribute: rewritten for the image,
+ * the whole selector list would be invalid, and the rule lost with the other
+ * selectors in it. Left alone for the live page too.
+ */
+function followsPseudoElement(selector: string, end: number): boolean {
+  let depth = 0;
+  for (let i = end - 1; i >= 0; i--) {
+    const char = selector[i]!;
+    if (char === ")" || char === "]") depth++;
+    else if (char === "(" || char === "[") {
+      if (depth === 0) return false;
+      depth--;
+    } else if (depth === 0) {
+      if (char === ":" && selector[i - 1] === ":") return true;
+      if (/[\s>+~,]/.test(char)) return false;
+    }
+  }
+  return false;
+}
+
+/** Replaces the interaction pseudo-classes, but those that follow a pseudo-element. */
+function replaceInteractionPseudoClasses(
+  selector: string,
+  replace: (match: string, attribute: string) => string,
+): string {
+  return selector.replace(INTERACTION_PSEUDO_CLASS, (match, name: string, offset: number) =>
+    followsPseudoElement(selector, offset)
+      ? match
+      : replace(match, INTERACTION_ATTRIBUTE_OF[name]!),
+  );
+}
+
+/** The selector for the image: interaction pseudo-classes become their attributes, :root html. */
+export function rewriteSelector(selector: string): string {
+  return replaceInteractionPseudoClasses(
+    selector.replace(ROOT_PSEUDO_CLASS, "html"),
+    (_match, attribute) => `[${attribute}]`,
+  );
+}
+
+/**
+ * The selector (or a rule's text) for the live page: each interaction
+ * pseudo-class also matches its attribute, `:hover` becoming
+ * `:is(:hover,[data-thp-hover])`. The specificity stays the same, and so does
+ * the rule's place in the cascade. Null if it has none, or was rewritten already.
  */
 export function liveSelector(selector: string): string | null {
   if (selector.includes("[data-thp-")) return null;
-  const rewritten = selector.replace(
-    INTERACTION_PSEUDO_CLASS,
-    (match, name: string) => `:is(${match},[${INTERACTION_ATTRIBUTE_OF[name]}])`,
+  const rewritten = replaceInteractionPseudoClasses(
+    selector,
+    (match, attribute) => `:is(${match},[${attribute}])`,
   );
   return rewritten === selector ? null : rewritten;
 }
@@ -102,7 +128,7 @@ export function inlineCssUrls(
 }
 
 /** Makes relative url() in a linked stylesheet absolute (they are relative to the stylesheet). */
-function absolutizeUrls(css: string, sheetUrl: string): string {
+export function absolutizeUrls(css: string, sheetUrl: string): string {
   return css.replace(URL_PATTERN, (match, _quote: string, raw: string) => {
     if (raw.startsWith("data:")) return match;
     try {
@@ -113,17 +139,47 @@ function absolutizeUrls(css: string, sheetUrl: string): string {
   });
 }
 
-function ruleCount(sheet: CSSStyleSheet): number {
+/**
+ * Stylesheets whose rules the page's script may not read (cross-origin,
+ * without CORS). That does not change, and finding out throws: checked once.
+ * A sheet still loading throws too (InvalidAccessError), but not for good.
+ */
+const unreadable = new WeakSet<CSSStyleSheet>();
+
+/** How many rules a stylesheet has, or -1 if they cannot be read. */
+export function ruleCount(sheet: CSSStyleSheet): number {
+  if (unreadable.has(sheet)) return -1;
   try {
     return sheet.cssRules.length;
-  } catch {
+  } catch (error) {
+    if ((error as Error).name === "SecurityError") unreadable.add(sheet);
     return -1;
   }
 }
 
+const sheetIds = new WeakMap<CSSStyleSheet, number>();
+let nextSheetId = 0;
+
+/**
+ * What a document's stylesheets are: which (a <style> whose text is replaced
+ * has a new sheet, with as many rules maybe) and how many rules each has.
+ */
+export function stylesheetsSignature(sheets: CSSStyleSheet[]): string {
+  return sheets
+    .map((sheet) => {
+      let id = sheetIds.get(sheet);
+      if (id === undefined) {
+        id = nextSheetId++;
+        sheetIds.set(sheet, id);
+      }
+      return `${id}:${ruleCount(sheet)}`;
+    })
+    .join("|");
+}
+
 /**
  * Collects a document's CSS, recollecting only when the set of stylesheets or
- * the number of rules in them changes. Editing an existing rule in place
+ * the number of rules in them changes (see stylesheetsSignature). Editing an existing rule in place
  * (CSSStyleRule.style) is not noticed; call invalidate() for that.
  */
 export class DocumentCss {
@@ -151,9 +207,7 @@ export class DocumentCss {
 
   get(): string {
     const sheets = Array.from(this.document.styleSheets);
-    const signature = sheets
-      .map((sheet) => `${sheet.href ?? "inline"}:${ruleCount(sheet)}`)
-      .join("|");
+    const signature = stylesheetsSignature(sheets);
     if (signature !== this.signature) {
       const parts: string[] = [DEFAULT_FOCUS_RING_CSS];
       for (const sheet of sheets) this.serializeSheet(sheet, parts);
@@ -208,12 +262,8 @@ export class DocumentCss {
    * CORS once it has loaded (null until then, or if it cannot be fetched).
    */
   readable(sheet: CSSStyleSheet): CSSStyleSheet | null {
-    try {
-      void sheet.cssRules;
-      return sheet;
-    } catch {
-      if (!sheet.href) return null;
-    }
+    if (ruleCount(sheet) >= 0) return sheet;
+    if (!sheet.href) return null;
     const href = sheet.href;
     const fetched = this.fetched.get(href);
     if (fetched instanceof this.window.CSSStyleSheet) return fetched;

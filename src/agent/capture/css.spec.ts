@@ -34,6 +34,18 @@ describe("liveSelector", () => {
     expect(liveSelector("li:not(:hover)")).toBe("li:not(:is(:hover,[data-thp-hover]))");
   });
 
+  it("leaves an interaction after a pseudo-element, which neither :is() nor an attribute may follow", () => {
+    expect(liveSelector(".row:hover .tools, .bar::-webkit-scrollbar-thumb:hover")).toBe(
+      ".row:is(:hover,[data-thp-hover]) .tools, .bar::-webkit-scrollbar-thumb:hover",
+    );
+    expect(liveSelector("x-menu::part(item):hover")).toBeNull();
+    // Not a pseudo-element: inside an attribute's value, or an argument.
+    expect(liveSelector('[title="a::b"]:hover')).toBe('[title="a::b"]:is(:hover,[data-thp-hover])');
+    expect(rewriteSelector(".bar::-webkit-scrollbar-thumb:hover, a:hover")).toBe(
+      ".bar::-webkit-scrollbar-thumb:hover, a[data-thp-hover]",
+    );
+  });
+
   it("is null for selectors without them, or rewritten already", () => {
     expect(liveSelector("li:hover-like, p:first-child")).toBeNull();
     expect(liveSelector(".row:is(:hover, [data-thp-hover])")).toBeNull();

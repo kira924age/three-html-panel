@@ -14,30 +14,30 @@
 // The rules themselves, their number and order, stay as they were (CSS-in-JS
 // libraries address rules by index).
 //
-// Rules the page's script cannot read (a cross-origin stylesheet without CORS)
-// cannot be edited. Their interaction rules, from the copy DocumentCss
-// fetches, go into a sheet of the agent's own (adoptedStyleSheets), after the
-// page's: there they win ties with the page's rules of the same specificity
-// that come later.
+// Rules the page's script cannot read (a cross-origin stylesheet without CORS,
+// linked or imported) cannot be edited. Their interaction rules, from the copy
+// DocumentCss fetches, go into a sheet of the agent's own (adoptedStyleSheets),
+// after the page's: there they win ties with the page's rules of the same
+// specificity that come later.
+//
+// An interaction pseudo-class after a pseudo-element
+// (::-webkit-scrollbar-thumb:hover) is left alone, as css.ts does for the image.
 
 import type { FrameWindow } from "../../types";
-import { liveSelector } from "./css";
-
-function ruleCount(sheet: CSSStyleSheet): number {
-  try {
-    return sheet.cssRules.length;
-  } catch {
-    return -1;
-  }
-}
+import { absolutizeUrls, liveSelector, ruleCount, stylesheetsSignature } from "./css";
 
 export class LiveInteractionCss {
   private signature = "";
-  /** Each stylesheet seen, by number: a <style> whose text is replaced has a new sheet, with as many rules maybe. */
-  private readonly sheetIds = new WeakMap<CSSStyleSheet, number>();
-  private nextSheetId = 0;
+  /**
+   * The stylesheets may have changed since the last sync. Reading them all
+   * on every pointer move would be wasted work: the page says when (see
+   * invalidate()).
+   */
+  private stale = true;
   /** The selectors rewritten, as the page wrote them (restored on dispose). */
   private readonly originals = new Map<CSSStyleRule, string>();
+  /** Rules whose rewritten selector the browser did not take: not tried again. */
+  private readonly rejected = new WeakSet<CSSStyleRule>();
   /** The interaction rules of stylesheets that could not be edited. */
   private adopted: CSSStyleSheet | null = null;
   private readonly window: FrameWindow;
@@ -51,26 +51,38 @@ export class LiveInteractionCss {
     this.window = document.defaultView as FrameWindow;
   }
 
-  /** Rewrites everything again on the next sync (a copy of a cross-origin sheet arrived, say). */
+  /**
+   * The stylesheets may have changed: the DOM did (a <style> or <link> added,
+   * or a framework rendering, which is when CSS-in-JS inserts its rules).
+   */
   invalidate(): void {
+    this.stale = true;
+  }
+
+  /** Rewrites everything again on the next sync (a copy of a cross-origin sheet arrived, say). */
+  reset(): void {
+    this.stale = true;
     this.signature = "";
   }
 
   /**
-   * Rewrites the rules added since the last call. As DocumentCss, it notices
-   * stylesheets added or removed and rules added to or removed from them, not
-   * rules added inside an @media block or edited in place.
+   * Rewrites the rules added since the last call, if the page said they may
+   * have changed. As DocumentCss, it notices stylesheets added, removed or
+   * replaced, and rules added to or removed from them, not rules added inside
+   * an @media block or edited in place.
    */
   sync(): void {
+    if (!this.stale) return;
+    this.stale = false;
     const sheets = Array.from(this.document.styleSheets);
-    const signature = sheets.map((sheet) => `${this.sheetId(sheet)}:${ruleCount(sheet)}`).join("|");
+    const signature = stylesheetsSignature(sheets);
     if (signature === this.signature) return;
     this.signature = signature;
     // Rules the page removed are not restored.
     for (const rule of this.originals.keys())
       if (!rule.parentStyleSheet) this.originals.delete(rule);
     const copied: string[] = [];
-    for (const sheet of sheets) this.syncSheet(sheet, copied);
+    for (const sheet of sheets) this.syncSheet(sheet, sheet.media.mediaText, copied);
     this.adopt(copied.join("\n"));
   }
 
@@ -80,55 +92,67 @@ export class LiveInteractionCss {
     this.originals.clear();
     this.adopt("");
     this.signature = "";
+    this.stale = true;
   }
 
-  private sheetId(sheet: CSSStyleSheet): number {
-    let id = this.sheetIds.get(sheet);
-    if (id === undefined) {
-      id = this.nextSheetId++;
-      this.sheetIds.set(sheet, id);
-    }
-    return id;
-  }
-
-  private syncSheet(source: CSSStyleSheet, copied: string[]): void {
+  /** Rewrites a sheet in place, or, if the page cannot edit it, copies its interaction rules out. */
+  private syncSheet(source: CSSStyleSheet, media: string, copied: string[]): void {
+    if (source.disabled) return;
     const sheet = this.readable(source);
     if (!sheet) return;
-    if (sheet === source) this.rewrite(sheet.cssRules);
-    else copied.push(...this.interactionRules(sheet.cssRules));
+    if (sheet === source) {
+      this.rewrite(sheet.cssRules, copied);
+      return;
+    }
+    let css = this.interactionRules(sheet.cssRules).join("\n");
+    if (!css) return;
+    // In the agent's sheet, url() would be relative to the document.
+    if (source.href) css = absolutizeUrls(css, source.href);
+    copied.push(media && media !== "all" ? `@media ${media}{${css}}` : css);
   }
 
-  private rewrite(rules: CSSRuleList): void {
+  private rewrite(rules: CSSRuleList, copied: string[]): void {
     const { CSSStyleRule, CSSImportRule } = this.window;
     for (const rule of Array.from(rules)) {
-      if (rule instanceof CSSStyleRule) {
-        const selector = liveSelector(rule.selectorText);
-        if (selector !== null) {
-          if (!this.originals.has(rule)) this.originals.set(rule, rule.selectorText);
-          rule.selectorText = selector;
-        }
-      }
+      if (rule instanceof CSSStyleRule) this.rewriteRule(rule);
       if (rule instanceof CSSImportRule) {
-        if (rule.styleSheet && ruleCount(rule.styleSheet) >= 0)
-          this.rewrite(rule.styleSheet.cssRules);
+        if (rule.styleSheet) this.syncSheet(rule.styleSheet, rule.media.mediaText, copied);
       } else if ("cssRules" in rule) {
         // @media, @supports, @layer, @container blocks, and nested style rules.
-        this.rewrite(rule.cssRules as CSSRuleList);
+        this.rewrite(rule.cssRules as CSSRuleList, copied);
       }
     }
   }
 
-  /** The interaction rules of a copy, rewritten, in their @media and @supports blocks. */
+  private rewriteRule(rule: CSSStyleRule): void {
+    if (this.rejected.has(rule)) return;
+    const original = rule.selectorText;
+    const selector = liveSelector(original);
+    if (selector === null) return;
+    rule.selectorText = selector;
+    // An invalid selector is ignored, the rule left as it was.
+    if (!rule.selectorText.includes("[data-thp-")) {
+      this.rejected.add(rule);
+      return;
+    }
+    if (!this.originals.has(rule)) this.originals.set(rule, original);
+  }
+
+  /**
+   * The interaction rules of a copy, rewritten, in their @media and @supports
+   * blocks. The copy is DocumentCss's: only its text is taken.
+   */
   private interactionRules(rules: CSSRuleList): string[] {
     const { CSSStyleRule, CSSMediaRule, CSSSupportsRule } = this.window;
     const out: string[] = [];
     for (const rule of Array.from(rules)) {
       if (rule instanceof CSSStyleRule) {
-        // The copy is the agent's own: rewrite it there (once), and take its text.
-        const selector = liveSelector(rule.selectorText);
-        if (selector !== null) rule.selectorText = selector;
-        else if (!rule.selectorText.includes("[data-thp-")) continue;
-        out.push(rule.cssText);
+        // Nested rules (CSS nesting) are in the text, the interaction may be in one of them.
+        const text =
+          rule.cssRules.length > 0
+            ? liveSelector(rule.cssText)
+            : liveSelector(rule.selectorText)?.concat(`{${rule.style.cssText}}`);
+        if (text) out.push(text);
       } else if (rule instanceof CSSMediaRule || rule instanceof CSSSupportsRule) {
         const inner = this.interactionRules(rule.cssRules);
         const keyword = rule instanceof CSSMediaRule ? "@media" : "@supports";
