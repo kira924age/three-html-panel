@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Scrolling boxes</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <h1>Scrolling boxes</h1>
+    <div class="grid">
+      <section class="box" id="toolbar-box">
+        <div class="spacer"></div>
+        <header class="toolbar" id="toolbar">
+          Toolbar
+          <span class="menu" id="menu">Menu</span>
+        </header>
+        <div class="page"></div>
+      </section>
+      <section class="box" id="layer-box">
+        <div class="pinned" id="pinned">Pinned</div>
+        <div class="page"></div>
+      </section>
+      <section class="box" id="badge-box">
+        <span class="badge" id="badge">New</span>
+        <div class="page"></div>
+      </section>
+      <section class="box" id="note-box">
+        <div class="page"><span class="note" id="note">Note</span></div>
+      </section>
+      <section class="box" id="text-box">
+        Some text first, then a heading that sticks.
+        <h2 class="heading" id="text-heading">
+          Heading
+          <span class="popup" id="popup">Popup</span>
+        </h2>
+        <div class="page"></div>
+      </section>
+      <section class="box column" id="column-box">
+        <div class="page short"></div>
+        <h2 class="heading" id="column-heading">Column</h2>
+        <div class="page"></div>
+      </section>
+    </div>
+  </body>
+</html>

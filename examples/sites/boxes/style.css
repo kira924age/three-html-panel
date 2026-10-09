@@ -1,0 +1,111 @@
+/* Boxes that scroll, with what is positioned in them: each element with a
+   color of its own, for the e2e tests (e2e/boxes.spec.ts) to find it drawn. */
+body {
+  margin: 0;
+  padding: 16px;
+  background: #fff;
+  color: #23262d;
+  font:
+    14px/1.4 system-ui,
+    sans-serif;
+}
+h1 {
+  margin: 0 0 12px;
+  font-size: 20px;
+}
+.grid {
+  display: grid;
+  grid-template-columns: repeat(2, 300px);
+  gap: 12px;
+}
+.box {
+  height: 150px;
+  overflow: auto;
+  border: 1px solid #ccc;
+}
+.page {
+  height: 600px;
+  background: linear-gradient(#fff, #e8e8e8);
+}
+.page.short {
+  height: 20px;
+}
+.spacer {
+  height: 20px;
+}
+/* A sticky toolbar with a menu fixed to the viewport. */
+.toolbar {
+  position: sticky;
+  top: 0;
+  height: 30px;
+  margin-top: 6px;
+  background: rgb(250, 160, 0);
+}
+.menu {
+  position: fixed;
+  top: 40px;
+  left: 660px;
+  width: 50px;
+  height: 40px;
+  background: rgb(220, 30, 30);
+}
+/* A box on a layer of its own: the containing block of its fixed child, which scrolls with it. */
+#layer-box {
+  transform: translateZ(0);
+}
+.pinned {
+  position: fixed;
+  top: 100px;
+  left: 10px;
+  width: 60px;
+  height: 40px;
+  background: rgb(30, 30, 220);
+  color: #fff;
+}
+/* Positioned from the box. */
+#badge-box {
+  position: relative;
+}
+.badge {
+  position: absolute;
+  top: 100px;
+  left: 100px;
+  width: 50px;
+  height: 40px;
+  background: rgb(30, 180, 30);
+}
+/* Positioned from the page, not from the box: not clipped by it, not scrolled with it. */
+.note {
+  position: absolute;
+  top: 520px;
+  left: 660px;
+  width: 50px;
+  height: 40px;
+  background: rgb(200, 0, 200);
+}
+.heading {
+  position: sticky;
+  top: 0;
+  height: 30px;
+  margin: 0;
+  font-size: 16px;
+  background: rgb(0, 160, 160);
+}
+.popup {
+  position: fixed;
+  top: 600px;
+  left: 660px;
+  width: 50px;
+  height: 40px;
+  background: rgb(250, 120, 200);
+}
+.column {
+  display: flex;
+  flex-direction: column;
+}
+.column .page {
+  flex: none;
+}
+#column-heading {
+  background: rgb(120, 80, 0);
+}

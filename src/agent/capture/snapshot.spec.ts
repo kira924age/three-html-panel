@@ -553,9 +553,10 @@ describe("scrolled content", () => {
     expect(body.style.left).toBe("0px");
   });
 
-  it("moves a scroll container's children by how they are positioned, and a sticky one's insets the other way", () => {
+  it("moves a scroll container's children by how they are positioned where its flow cannot be moved, and a sticky one's insets the other way", () => {
+    // Text: lines, which margins do not move.
     document.body.innerHTML =
-      `<div id="box" style="overflow: auto">` +
+      `<div id="box" style="overflow: auto">Text` +
       `<table id="table"></table>` +
       `<h3 id="heading" style="position: sticky; top: 4px"></h3>` +
       `<div id="absolute" style="position: absolute"></div>` +
@@ -570,10 +571,146 @@ describe("scrolled content", () => {
     expect(style("heading").getPropertyValue("translate")).toBe("0px -50px");
     // calc(4px + 50px), however it is serialized.
     expect(style("heading").top).toMatch(/^calc\((4px \+ 50px|54px)\)$/);
-    expect(style("absolute").getPropertyValue("translate")).toBe("0px -50px");
-    // Not scrolled with the box.
-    expect(style("fixed").getPropertyValue("translate")).toBe("");
-    expect(style("fixed").top).toBe("");
+    // Over its siblings, positioned now, as the page paints it over them.
+    expect(style("heading").zIndex).toBe("1");
+    // Not scrolled with the box: their containing blocks are outside it.
+    expect(copy.getElementById("absolute")!.getAttribute("style")).toBe("position: absolute");
+    expect(copy.getElementById("fixed")!.getAttribute("style")).toBe("position: fixed");
+  });
+
+  it("keeps the page's z-index on a static box ignored, but not on a flex item's", () => {
+    document.body.innerHTML =
+      `<div id="box" style="overflow: auto">Text<p id="block" style="z-index: -1"></p></div>` +
+      `<div id="row" style="overflow: auto; display: flex">Text<p id="item" style="z-index: -1"></p></div>`;
+    scroll(
+      new Map([
+        [document.querySelector("#box")!, { top: 50 }],
+        [document.querySelector("#row")!, { left: 30 }],
+      ]),
+    );
+    const copy = snapshot();
+    expect(copy.getElementById("block")!.style.zIndex).toBe("auto");
+    expect(copy.getElementById("item")!.style.zIndex).toBe("-1");
+    expect(copy.getElementById("item")!.style.top).toBe("0px");
+  });
+
+  it("moves absolute and fixed children by their insets when the box is their containing block", () => {
+    document.body.innerHTML =
+      `<div id="box" style="overflow: auto; position: relative">` +
+      `<div id="badge" style="position: absolute; top: 10px"></div>` +
+      `<div id="flow" style="position: absolute"></div>` +
+      `</div>` +
+      `<div id="layer" style="overflow: auto; transform: translateZ(0px)">` +
+      `<div id="fixed" style="position: fixed; bottom: 5px"></div>` +
+      `</div>`;
+    scroll(
+      new Map([
+        [document.querySelector("#box")!, { top: 50 }],
+        [document.querySelector("#layer")!, { top: 20 }],
+      ]),
+    );
+    const copy = snapshot();
+    const style = (id: string) => copy.getElementById(id)!.style;
+    expect(style("badge").top).toMatch(/^calc\((10px \+ -50px|-40px)\)$/);
+    expect(style("badge").getPropertyValue("translate")).toBe("");
+    // At its place in the flow, which moves (nothing else is in it).
+    expect(style("flow").marginTop).toBe("");
+    expect(style("fixed").bottom).toMatch(/^calc\((5px - -20px|25px)\)$/);
+  });
+
+  it("holds a sticky element with fixed ones in it by its insets, not translated (they would be clipped to the box)", () => {
+    document.body.innerHTML =
+      `<div id="box" style="overflow: auto">Text` +
+      `<header id="toolbar" style="position: sticky; top: 0"><div id="menu" style="position: fixed; top: 100px"></div></header>` +
+      `</div>`;
+    const box = document.querySelector("#box")!;
+    scroll(new Map([[box, { top: 50 }]]));
+    box.getBoundingClientRect = () => new DOMRect(10, 30, 300, 200);
+    Object.defineProperty(box, "clientHeight", { value: 200 });
+    document.querySelector("#toolbar")!.getBoundingClientRect = () => new DOMRect(10, 30, 300, 40);
+    const copy = snapshot();
+    const toolbar = copy.getElementById("toolbar")!;
+    // Its box in the container's is its sticky view rectangle.
+    expect(toolbar.style.top).toBe("0px");
+    expect(toolbar.style.bottom).toBe("160px");
+    expect(toolbar.style.getPropertyValue("translate")).toBe("");
+    expect(copy.getElementById("menu")!.getAttribute("style")).toBe("position: fixed; top: 100px");
+  });
+
+  it("moves a block container's flow by its first box's margin, which collapses with those in it", () => {
+    vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(20);
+    document.body.innerHTML =
+      `<div id="box" style="overflow: auto">` +
+      `<section id="first" style="margin-top: 10px"><h2 style="margin-top: 20px">A</h2></section>` +
+      `<h2 id="sticky" style="position: sticky; top: 0">B</h2>` +
+      `<p id="last" style="margin-left: 5px">C</p>` +
+      `</div>`;
+    scroll(new Map([[document.querySelector("#box")!, { left: 4, top: 50 }]]));
+    const copy = snapshot();
+    const style = (id: string) => copy.getElementById(id)!.style;
+    // 20px together, 50px less: -30px, with the 20px of the heading in it.
+    expect(style("first").marginTop).toBe("-50px");
+    expect(style("last").marginTop).toBe("");
+    // Sideways, each box; its width kept by the other margin.
+    expect(style("last").marginLeft).toBe("1px");
+    expect(style("last").marginRight).toBe("4px");
+    // Nothing positioned, nor translated: sticky ones stick as on the page.
+    expect(style("first").position).toBe("");
+    expect(style("sticky").top).toBe("0px");
+    expect(style("sticky").getPropertyValue("translate")).toBe("");
+  });
+
+  it("moves each flex or grid item by its margins", () => {
+    document.body.innerHTML = `<div id="box" style="overflow: auto; display: flex"><p id="a" style="margin: 2px"></p><p id="b"></p></div>`;
+    scroll(new Map([[document.querySelector("#box")!, { top: 30 }]]));
+    const copy = snapshot();
+    expect(copy.getElementById("a")!.style.marginTop).toBe("-28px");
+    expect(copy.getElementById("a")!.style.marginBottom).toBe("32px");
+    expect(copy.getElementById("b")!.style.marginTop).toBe("-30px");
+    expect(copy.getElementById("b")!.style.position).toBe("");
+  });
+
+  it("places an absolute element of the document (not in any positioned box) from the moved body", () => {
+    document.body.innerHTML = `<div id="tip" style="position: absolute; top: 400px; left: 0px"></div>`;
+    scroll(new Map([[document.documentElement, { top: 300 }]]));
+    // The body's box, on the page (scrolled), 8px from the document's start.
+    document.body.getBoundingClientRect = () => new DOMRect(8, 8 - 300, 700, 2000);
+    const tip = snapshot().getElementById("tip")!;
+    expect(tip.style.top).toBe("392px");
+    expect(tip.style.left).toBe("-8px");
+  });
+
+  it("shows a body that scrolls itself, and the document's scroll in quirks mode", () => {
+    document.body.innerHTML = `<main id="main"></main>`;
+    scroll(new Map([[document.body, { top: 120 }]]));
+    expect(snapshot().getElementById("main")!.style.top).toBe("-120px");
+
+    // In quirks mode, <body> is what scrolls the viewport.
+    Object.defineProperty(document, "scrollingElement", {
+      configurable: true,
+      get: () => document.body,
+    });
+    const body = snapshot().querySelector("body")!;
+    expect(body.style.top).toBe("-120px");
+    expect(snapshot().getElementById("main")!.style.top).toBe("");
+  });
+
+  it("moves composed text in a scrolled box with the rest", () => {
+    document.body.innerHTML = `<div id="box" style="overflow: auto" contenteditable=""><p>a</p></div>`;
+    const box = document.querySelector("#box")!;
+    scroll(new Map([[box, { top: 40 }]]));
+    const xhtml = snapshotDocument(document, {
+      hovered: new Set(),
+      active: new Set(),
+      focused: null,
+      inlineImage: () => null,
+      inlineComposition: { node: box, offset: 1, endOffset: 1, text: "にほん" },
+    });
+    const copy = new DOMParser().parseFromString(xhtml, "application/xhtml+xml");
+    const span = copy.getElementById("box")!.lastElementChild as HTMLElement;
+    expect(span.textContent).toBe("にほん");
+    expect(span.style.position).toBe("relative");
+    expect(span.style.top).toBe("-40px");
   });
 
   it("leaves the body visible when its overflow is the viewport's, as browsers do", () => {

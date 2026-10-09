@@ -211,6 +211,89 @@ function collectAnimatedValues(document: Document): Map<Element, Map<string, str
   return result;
 }
 
+/** An absolute or fixed element's copy, and its containing block on the page (see Snapshotter.absoluteContainer). */
+interface Positioned {
+  copy: Element;
+  fixed: boolean;
+  container: Element | null;
+}
+
+const isStyled = (element: Element): element is HTMLElement | SVGElement =>
+  element instanceof HTMLElement || element instanceof SVGElement;
+
+const isSet = (value: string | undefined) => !!value && value !== "none";
+
+/** Whether a box is the containing block of the fixed elements in it (and so of absolute ones). */
+function containsFixed(style: CSSStyleDeclaration): boolean {
+  return (
+    isSet(style.transform) ||
+    isSet(style.translate) ||
+    isSet(style.rotate) ||
+    isSet(style.scale) ||
+    isSet(style.perspective) ||
+    isSet(style.filter) ||
+    isSet(style.backdropFilter) ||
+    /paint|layout|strict|content/.test(style.contain ?? "") ||
+    /transform|translate|rotate|scale|perspective|filter/.test(style.willChange ?? "") ||
+    (isSet(style.containerType) && style.containerType !== "normal") ||
+    style.contentVisibility === "auto"
+  );
+}
+
+/**
+ * Moves a positioned box by its insets: (dx, dy) for an absolute or fixed one,
+ * or its insets the other way for a sticky one ((dx, dy) being the scroll). An
+ * absolute one with both insets of an axis auto (at its place in the flow) is
+ * moved by its margin.
+ */
+function moveInsets(
+  copy: HTMLElement | SVGElement,
+  style: CSSStyleDeclaration,
+  dx: number,
+  dy: number,
+  byMargin = true,
+): void {
+  const axes = [
+    ["top", "bottom", "margin-top", dy],
+    ["left", "right", "margin-left", dx],
+  ] as const;
+  for (const [start, end, margin, by] of axes) {
+    if (by === 0) continue;
+    // A bare 0 (as jsdom gives it) is not a length inside calc().
+    const value = (property: string) => {
+      const value = style.getPropertyValue(property);
+      return value === "0" ? "0px" : value;
+    };
+    const auto = (value: string) => value === "" || value === "auto";
+    const from = value(start);
+    const to = value(end);
+    if (!auto(from)) copy.style.setProperty(start, `calc(${from} + ${by}px)`, "important");
+    if (!auto(to)) copy.style.setProperty(end, `calc(${to} - ${by}px)`, "important");
+    if (auto(from) && auto(to) && byMargin && style.position !== "sticky") {
+      // A used margin, in px.
+      const used = parseFloat(style.getPropertyValue(margin)) || 0;
+      copy.style.setProperty(margin, `${used + by}px`, "important");
+    }
+  }
+}
+
+/** Block-level displays: boxes of a block container's flow, not in lines. */
+const BLOCK_LEVEL = /^(block|list-item|table|flex|grid|flow-root|-webkit-box)$/;
+
+/** What a pinned element keeps as the page has it, from its own containing block there. */
+const PINNED_SIZES = [
+  "width",
+  "height",
+  "margin-top",
+  "margin-right",
+  "margin-bottom",
+  "margin-left",
+  "padding-top",
+  "padding-right",
+  "padding-bottom",
+  "padding-left",
+];
+
 class Snapshotter {
   // A separate document without a browsing context, so the copies never load anything.
   private readonly inert = globalThis.document.implementation.createHTMLDocument("");
@@ -219,6 +302,23 @@ class Snapshotter {
   private readonly focusWithin = new Set<Element>();
   /** The page's element each copy is of. */
   private readonly liveOf = new WeakMap<Element, Element>();
+  /** And the other way. */
+  private readonly copies = new WeakMap<Element, Element>();
+  /** The computed style of each element copied, read once. */
+  private readonly styles = new Map<Element, CSSStyleDeclaration>();
+  /** The absolute and fixed elements copied, by the page's element. */
+  private readonly positioned = new Map<Element, Positioned>();
+  /**
+   * Copies moved for a scroll, and how: positioned relatively (the containing
+   * block of absolute elements in them, now) or translated (of fixed ones too).
+   */
+  private readonly moved = new Map<Element, "relative" | "translated">();
+  /**
+   * The page's containing blocks of absolute and fixed elements where the copy
+   * is now; null for the initial containing block (absolute) or the viewport (fixed).
+   */
+  private absoluteContainer: Element | null = null;
+  private fixedContainer: Element | null = null;
   /** Scrollbars to draw over the copy. */
   readonly scrollbars: Scrollbar[] = [];
 
@@ -241,13 +341,15 @@ class Snapshotter {
     if (live.nodeType !== Node.ELEMENT_NODE) return null;
     const element = live as Element;
     if (SKIPPED_ELEMENTS.has(element.tagName) || this.options.ignored?.has(element)) return null;
+    const style = this.window.getComputedStyle(element);
+    this.styles.set(element, style);
 
     if (element instanceof this.window.HTMLCanvasElement)
-      return this.remember(element, this.copyCanvas(element));
+      return this.remember(element, style, this.copyCanvas(element));
     if (element instanceof this.window.HTMLVideoElement)
-      return this.remember(element, this.copyVideo(element));
+      return this.remember(element, style, this.copyVideo(element));
 
-    const copy = this.remember(element, this.inert.importNode(element, false) as Element);
+    const copy = this.remember(element, style, this.inert.importNode(element, false) as Element);
     this.copyFormState(element, copy);
     this.copyImage(element, copy);
     this.copyInteractionState(element, copy);
@@ -256,6 +358,9 @@ class Snapshotter {
     // <head> carries no visible content, but keep the element so the structure stays valid.
     if (element.tagName === "HEAD") return copy;
 
+    const outer = [this.absoluteContainer, this.fixedContainer] as const;
+    if (containsFixed(style)) this.absoluteContainer = this.fixedContainer = element;
+    else if (style.position !== "static") this.absoluteContainer = element;
     const children = element.tagName === "TEXTAREA" ? [] : Array.from(element.childNodes);
     // Composed text between two children (an empty line of an editable, say).
     const composition = this.options.inlineComposition;
@@ -266,13 +371,22 @@ class Snapshotter {
       if (childCopy) copy.appendChild(childCopy);
     });
     if (composedAt === children.length) copy.appendChild(this.composedSpan(composition!.text));
+    [this.absoluteContainer, this.fixedContainer] = outer;
     this.copyScroll(element, copy);
-    this.hideScrollbars(element, copy);
+    this.hideScrollbars(element, copy, style);
     return copy;
   }
 
-  private remember<T extends Node | null>(live: Element, copy: T): T {
-    if (copy instanceof Element) this.liveOf.set(copy, live);
+  /** Notes what a copy is of, and where it is positioned from if it is absolute or fixed. */
+  private remember<T extends Node | null>(live: Element, style: CSSStyleDeclaration, copy: T): T {
+    if (!(copy instanceof Element)) return copy;
+    this.liveOf.set(copy, live);
+    this.copies.set(live, copy);
+    const fixed = style.position === "fixed";
+    if (fixed || style.position === "absolute") {
+      const container = fixed ? this.fixedContainer : this.absoluteContainer;
+      this.positioned.set(live, { copy, fixed, container });
+    }
     return copy;
   }
 
@@ -447,77 +561,322 @@ class Snapshotter {
   }
 
   private copyScroll(element: Element, copy: Element): void {
-    const scrollingElement = this.document.scrollingElement;
     // The document's own scroll is applied to <body>; <html> must not move.
-    if (element === scrollingElement) return;
-    const isBody = element === this.document.body;
-    const { scrollLeft, scrollTop } = isBody && scrollingElement ? scrollingElement : element;
+    if (element === this.document.documentElement) return;
+    const viewport = this.document.scrollingElement;
+    if (element === this.document.body && viewport) {
+      const { scrollLeft, scrollTop } = viewport;
+      if ((scrollLeft !== 0 || scrollTop !== 0) && isStyled(copy))
+        this.moveScrolled(element, copy, scrollLeft, scrollTop, null);
+      // In quirks mode, <body> scrolls the viewport; otherwise it may scroll itself too.
+      if (element === viewport) return;
+    }
+    const { scrollLeft, scrollTop } = element;
     if (scrollLeft === 0 && scrollTop === 0) return;
     if (element instanceof this.window.HTMLSelectElement) {
       this.copyListBoxScroll(element, copy);
       return;
     }
-    if (isBody) {
-      if (copy instanceof HTMLElement) this.shift(element, copy, scrollLeft, scrollTop);
-      return;
-    }
-    // foreignObject renders every scroll container at its origin. Shift the
-    // children instead. Bare text directly inside a scroll container does not
+    // foreignObject renders every scroll container at its origin. Move the
+    // content instead: by its flow where it can be (see shiftFlow), otherwise
+    // each child. Bare text directly inside a scroll container then does not
     // move (a known limitation).
+    const flow = this.shiftFlow(element, scrollLeft, scrollTop);
     for (const child of Array.from(copy.children)) {
-      if (!(child instanceof HTMLElement || child instanceof SVGElement)) continue;
-      const live = this.liveOf.get(child);
-      if (live) this.shift(live, child, scrollLeft, scrollTop);
-      // Composed text the agent added: in the flow, as text.
-      else child.style.setProperty("translate", `${-scrollLeft}px ${-scrollTop}px`);
+      if (isStyled(child)) {
+        const live = this.liveOf.get(child) ?? null;
+        this.moveScrolled(live, child, scrollLeft, scrollTop, element, flow);
+      }
     }
   }
 
   /**
+   * Moves the content of a scroll container (a block, flex or grid one) up and
+   * left by the scroll with margins, which move it as scrolling does: its flow
+   * up and left, the boxes in it not positioned (or translated). So they paint
+   * in the same order, the absolute elements in them keep their containing
+   * blocks (and are not clipped by the container when theirs is outside it),
+   * and the sticky ones are where the page has them.
+   *
+   * In a block container, the first box's top margin moves everything after it
+   * (as it collapses with those of the first boxes in it, all are counted), and
+   * each box's side margins move it sideways, its width kept by the other one.
+   * A flex or grid item is moved by its own margins, each side's opposite one
+   * keeping its margin box. False, with nothing done, where the content cannot
+   * be moved this way: text or inline boxes in a block container (line boxes),
+   * floats, `display: contents`, an empty box that margins collapse through.
+   */
+  private shiftFlow(container: Element, x: number, y: number): boolean {
+    const style = this.styles.get(container);
+    if (!style || this.options.inlineComposition?.node === container) return false;
+    const items = /^(inline-)?(flex|grid)$/.test(style.display);
+    if (!items && !/^(block|flow-root|list-item)$/.test(style.display)) return false;
+    const boxes = this.inFlowChildren(container, items);
+    if (!boxes) return false;
+    const margins: [Element, string, number][] = [];
+    const used = (element: Element, side: string) =>
+      parseFloat(this.styles.get(element)!.getPropertyValue(side)) || 0;
+    for (const box of boxes) {
+      if (y !== 0 && items) {
+        margins.push([box, "margin-top", used(box, "margin-top") - y]);
+        margins.push([box, "margin-bottom", used(box, "margin-bottom") + y]);
+      }
+      if (x !== 0) {
+        margins.push([box, "margin-left", used(box, "margin-left") - x]);
+        margins.push([box, "margin-right", used(box, "margin-right") + x]);
+      }
+    }
+    if (y !== 0 && !items && boxes[0]) {
+      const top = this.marginToMoveFlow(boxes[0], y);
+      if (top === null) return false;
+      margins.push([boxes[0], "margin-top", top]);
+    }
+    for (const [box, side, value] of margins) {
+      const copy = this.copies.get(box);
+      if (copy && isStyled(copy)) copy.style.setProperty(side, `${value}px`, "important");
+    }
+    return true;
+  }
+
+  /**
+   * The boxes of a container's flow (its in-flow element children), or null
+   * if anything else is in it that its flow would not move as it moves them.
+   */
+  private inFlowChildren(container: Element, items: boolean): Element[] | null {
+    const boxes: Element[] = [];
+    for (const node of Array.from(container.childNodes)) {
+      if (node.nodeType === Node.TEXT_NODE) {
+        if (/\S/.test((node as Text).data)) return null;
+        continue;
+      }
+      const style = node.nodeType === Node.ELEMENT_NODE && this.styles.get(node as Element);
+      if (!style || style.display === "none") continue;
+      if (style.position === "absolute" || style.position === "fixed") continue;
+      if (style.display === "contents" || (style.cssFloat || "none") !== "none") return null;
+      if (!items && !BLOCK_LEVEL.test(style.display)) return null;
+      boxes.push(node as Element);
+    }
+    return boxes;
+  }
+
+  /**
+   * The top margin for a block container's first box that moves its flow up
+   * by `y`: its margin collapses with those of the first boxes in it (when
+   * nothing separates them), and the margin they make together must be `y`
+   * less. Null where it cannot be worked out.
+   */
+  private marginToMoveFlow(first: Element, y: number): number | null {
+    const margins: number[] = [];
+    for (let box: Element | null = first; box;) {
+      const style: CSSStyleDeclaration = this.styles.get(box)!;
+      // An empty box: margins collapse through it, with those after it.
+      if ((box as HTMLElement).offsetHeight === 0) return null;
+      margins.push(parseFloat(style.marginTop) || 0);
+      const through: boolean =
+        /^(block|list-item)$/.test(style.display) &&
+        /^(visible|clip)$/.test(style.overflowY) &&
+        /^(visible|clip)$/.test(style.overflowX) &&
+        !containsFixed(style) &&
+        (parseFloat(style.borderTopWidth) || 0) === 0 &&
+        (parseFloat(style.paddingTop) || 0) === 0;
+      box = through ? (this.inFlowChildren(box, false)?.[0] ?? null) : null;
+    }
+    const most = (list: number[]) => Math.max(0, ...list);
+    const least = (list: number[]) => Math.min(0, ...list);
+    const together = most(margins) + least(margins);
+    const rest = margins.slice(1);
+    const positive = most(rest);
+    const negative = least(rest);
+    const target = together - y;
+    // Negative (the most negative of them), or positive (the most positive).
+    if (target - positive <= negative) return target - positive;
+    if (target - negative >= positive) return target - negative;
+    return null;
+  }
+
+  /**
    * Moves the copy of something scrolled up and left by the scroll, by how it
-   * is positioned on the page.
+   * is positioned on the page. `container` is what scrolls (null for the
+   * document); `live` is null for what the agent added (composed text); `flow`
+   * says the container's flow was moved already (shiftFlow), and what is in
+   * it with it.
    *
    * In the flow (or relatively positioned), it is positioned relatively, not
    * translated: a transform would make it the containing block of the fixed
    * elements in it, which would then scroll away with it. And browsers place
    * sticky elements from where the boxes are laid out, which takes relative
    * offsets into account but not transforms: moved this way, the copy's sticky
-   * elements stick where the page's do, as if it were scrolled.
+   * elements stick where the page's do, as if it were scrolled. The page's
+   * z-index on a static box is ignored, and stays so. The absolute elements in
+   * it whose containing block is outside it are placed by pinPositioned().
    *
-   * A sticky element itself cannot be moved by an offset, which its insets are
-   * for: it is translated, and its insets moved by the scroll the other way, so
-   * that it sticks (to its unscrolled container) where it would scrolled.
-   * A fixed one does not scroll with its container, and is left in place;
-   * anything else positioned (absolutely) is translated, as it was.
+   * An absolute or fixed one is moved by its insets, if it scrolls with the
+   * content: if what scrolls is its containing block. Otherwise it stays.
+   *
+   * A sticky one cannot be moved by an offset, which its insets are for: it
+   * is translated, and its insets moved by the scroll the other way, so that
+   * it sticks (to its unscrolled container) where it would scrolled; or, with
+   * fixed elements in it, held where it is by its insets (see holdSticky).
    */
-  private shift(live: Element, copy: HTMLElement | SVGElement, x: number, y: number): void {
-    const style = this.window.getComputedStyle(live);
-    const position = style.position;
-    if (position === "fixed" && live !== this.document.body) return;
+  private moveScrolled(
+    live: Element | null,
+    copy: HTMLElement | SVGElement,
+    x: number,
+    y: number,
+    container: Element | null,
+    flow = false,
+  ): void {
+    const style = live ? this.styles.get(live) : undefined;
+    const position = style?.position ?? "static";
+    // Moved with the flow (sticky ones too, sticking as on the page).
+    if (flow && position !== "absolute" && position !== "fixed") return;
     if (position === "static" || position === "relative") {
       // Relative offsets as laid out (a used `top` in px, whatever was specified).
-      const top = position === "relative" ? parseFloat(style.top) || 0 : 0;
-      const left = position === "relative" ? parseFloat(style.left) || 0 : 0;
+      const top = position === "relative" ? parseFloat(style!.top) || 0 : 0;
+      const left = position === "relative" ? parseFloat(style!.left) || 0 : 0;
       copy.style.setProperty("position", "relative", "important");
       copy.style.setProperty("top", `${top - y}px`, "important");
       copy.style.setProperty("left", `${left - x}px`, "important");
       copy.style.setProperty("bottom", "auto", "important");
       copy.style.setProperty("right", "auto", "important");
+      // Only a flex or grid item's z-index applies without a position.
+      const parent = live?.parentElement ? this.styles.get(live.parentElement) : undefined;
+      if (position === "static" && !/flex|grid/.test(parent?.display ?? ""))
+        copy.style.setProperty("z-index", "auto", "important");
+      this.moved.set(copy, "relative");
       return;
+    }
+    if (position === "absolute" || position === "fixed") {
+      const positioned = this.positioned.get(live!);
+      const scrolls = container
+        ? positioned?.container === container
+        : position === "absolute" || positioned?.container != null;
+      // Its place in the flow (both insets auto) moves with the flow, if moved.
+      if (scrolls) moveInsets(copy, style!, -x, -y, !flow);
+      return;
+    }
+    // Its static siblings, positioned now, would paint over it in their order:
+    // it is lifted over them, as the page paints it over what is not positioned.
+    if (position === "sticky" && container && style!.zIndex === "auto")
+      copy.style.setProperty("z-index", "1", "important");
+    if (position === "sticky" && container && this.holdsFixed(live!)) {
+      if (this.holdSticky(live!, copy, container, x, y)) return;
     }
     // The individual `translate` property composes with any `transform` it already has.
     copy.style.setProperty("translate", `${-x}px ${-y}px`);
-    if (position !== "sticky") return;
-    const insets = [
-      ["top", y],
-      ["bottom", -y],
-      ["left", x],
-      ["right", -x],
-    ] as const;
-    for (const [side, by] of insets) {
-      const inset = style.getPropertyValue(side);
-      if (inset && inset !== "auto" && by !== 0)
-        copy.style.setProperty(side, `calc(${inset} + ${by}px)`, "important");
+    this.moved.set(copy, "translated");
+    if (position === "sticky") moveInsets(copy, style!, x, y);
+  }
+
+  /** Whether fixed elements in `element` are placed from the viewport (a transform would place them from it). */
+  private holdsFixed(element: Element): boolean {
+    for (const [live, { fixed, container }] of this.positioned) {
+      if (fixed && live !== element && element.contains(live) && !element.contains(container))
+        return true;
+    }
+    return false;
+  }
+
+  /**
+   * Holds a sticky element where the page shows it, by insets that make that
+   * box its sticky view rectangle (in the scroll container, unscrolled), so
+   * that it is not translated: the fixed elements in it would be clipped to
+   * the container with it. False (nothing done) where an inset cannot place it:
+   * above the container's content (sticking in its padding, or scrolled past),
+   * or with a transform of its own (then it is their containing block anyway).
+   */
+  private holdSticky(
+    live: Element,
+    copy: HTMLElement | SVGElement,
+    container: Element,
+    x: number,
+    y: number,
+  ): boolean {
+    const style = this.styles.get(live)!;
+    const containerStyle = this.styles.get(container);
+    if (containsFixed(style) || !containerStyle) return false;
+    const rect = live.getBoundingClientRect();
+    const box = container.getBoundingClientRect();
+    const port = {
+      top: box.top + container.clientTop,
+      left: box.left + container.clientLeft,
+      bottom: box.top + container.clientTop + container.clientHeight,
+      right: box.left + container.clientLeft + container.clientWidth,
+    };
+    const paddingTop = parseFloat(containerStyle.paddingTop) || 0;
+    const paddingLeft = parseFloat(containerStyle.paddingLeft) || 0;
+    if (y !== 0 && rect.top < port.top + paddingTop - 0.5) return false;
+    if (x !== 0 && rect.left < port.left + paddingLeft - 0.5) return false;
+    const set = (property: string, value: number) =>
+      copy.style.setProperty(property, `${value}px`, "important");
+    if (y !== 0) {
+      set("top", rect.top - port.top);
+      set("bottom", port.bottom - rect.bottom);
+    }
+    if (x !== 0) {
+      set("left", rect.left - port.left);
+      set("right", port.right - rect.right);
+    }
+    return true;
+  }
+
+  /**
+   * Places absolute and fixed elements whose containing block in the copy is
+   * one moved for a scroll (a static box positioned relatively, a sticky one
+   * translated), and not the page's: where they are on the page, from that box.
+   */
+  pinPositioned(): void {
+    for (const [live, { copy, fixed, container }] of this.positioned) {
+      let trap: Element | null = null;
+      for (let ancestor = copy.parentElement; ancestor; ancestor = ancestor.parentElement) {
+        if (container && this.liveOf.get(ancestor) === container) break;
+        const moved = this.moved.get(ancestor);
+        if (moved === "translated" || (moved === "relative" && !fixed)) {
+          trap = ancestor;
+          break;
+        }
+      }
+      const trapLive = trap && this.liveOf.get(trap);
+      if (trapLive && isStyled(copy)) this.pin(live, copy, fixed, container, trapLive);
+    }
+  }
+
+  /** Positions an absolute or fixed element's copy from `trap` (its containing block in the copy), as the page has it from `container`. */
+  private pin(
+    live: Element,
+    copy: HTMLElement | SVGElement,
+    fixed: boolean,
+    container: Element | null,
+    trap: Element,
+  ): void {
+    const style = this.styles.get(live)!;
+    // Used values (in px) for a positioned element.
+    const top = parseFloat(style.top);
+    const left = parseFloat(style.left);
+    if (!Number.isFinite(top) || !Number.isFinite(left)) return;
+    const viewport = this.document.scrollingElement;
+    const origin = (element: Element | null) => {
+      if (element) {
+        const rect = element.getBoundingClientRect();
+        return { x: rect.left + element.clientLeft, y: rect.top + element.clientTop };
+      }
+      // The viewport, or the initial containing block: the document's start.
+      return fixed
+        ? { x: 0, y: 0 }
+        : { x: -(viewport?.scrollLeft ?? 0), y: -(viewport?.scrollTop ?? 0) };
+    };
+    const from = origin(container);
+    const to = origin(trap);
+    const set = (property: string, value: string) =>
+      copy.style.setProperty(property, value, "important");
+    set("top", `${top - (to.y - from.y)}px`);
+    set("left", `${left - (to.x - from.x)}px`);
+    set("bottom", "auto");
+    set("right", "auto");
+    // Sizes and margins in percent, or auto, are from the containing block: as on the page.
+    for (const property of PINNED_SIZES) {
+      const value = style.getPropertyValue(property);
+      if (value) set(property, value);
     }
   }
 
@@ -556,8 +915,8 @@ class Snapshotter {
    * position: hide them, keeping the room a classic scrollbar takes, and
    * remember them to be drawn by drawScrollbars().
    */
-  private hideScrollbars(element: Element, copy: Element): void {
-    const bars = scrollbarsOf(element);
+  private hideScrollbars(element: Element, copy: Element, style: CSSStyleDeclaration): void {
+    const bars = scrollbarsOf(element, style);
     if (bars.length === 0) return;
     this.scrollbars.push(...bars);
     // The document's scrollbars are the viewport's; the root copy never shows any.
@@ -759,6 +1118,7 @@ function inlineBackgroundImages(
 export function snapshotDocument(document: Document, options: SnapshotOptions): string {
   const snapshotter = new Snapshotter(document, options);
   const root = snapshotter.copy(document.documentElement) as HTMLElement;
+  snapshotter.pinPositioned();
   root.style.setProperty("width", `${document.documentElement.clientWidth}px`);
   root.style.setProperty("height", `${document.documentElement.clientHeight}px`);
   root.style.setProperty("overflow", "hidden");

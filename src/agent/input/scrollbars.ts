@@ -57,11 +57,11 @@ interface Overflow {
 }
 
 /** The overflow that applies to the element, or null if it is not a scroll container of its own. */
-function overflowOf(element: Element): Overflow | null {
+function overflowOf(element: Element, style?: CSSStyleDeclaration): Overflow | null {
   const document = element.ownerDocument;
   const window = document.defaultView!;
   if (element !== document.scrollingElement && element !== document.body) {
-    const computed = window.getComputedStyle(element);
+    const computed = style ?? window.getComputedStyle(element);
     return { x: computed.overflowX, y: computed.overflowY };
   }
   const html = window.getComputedStyle(document.documentElement);
@@ -80,14 +80,17 @@ function overflowOf(element: Element): Overflow | null {
   return { x: computed.overflowX, y: computed.overflowY };
 }
 
-/** The scrollbars an element shows right now, if any. */
-export function scrollbarsOf(element: Element): Scrollbar[] {
+/**
+ * The scrollbars an element shows right now, if any. `style` is its computed
+ * style, when the caller has it already.
+ */
+export function scrollbarsOf(element: Element, style?: CSSStyleDeclaration): Scrollbar[] {
   if (SKIPPED.has(element.tagName) || (element.tagName === "SELECT" && !isListBox(element)))
     return [];
   // This runs for every element of every frame. Checking the overflow style
   // first is cheaper than reading sizes, and rules out all but scroll containers.
   // A list box scrolls up and down, whatever its computed overflow.
-  const overflow = isListBox(element) ? { x: "hidden", y: "auto" } : overflowOf(element);
+  const overflow = isListBox(element) ? { x: "hidden", y: "auto" } : overflowOf(element, style);
   if (!overflow || (!SCROLLABLE.has(overflow.x) && !SCROLLABLE.has(overflow.y))) return [];
   const { clientWidth, clientHeight, scrollWidth, scrollHeight } = element;
   const overflowsX = scrollWidth > clientWidth + 1;
@@ -107,7 +110,7 @@ export function scrollbarsOf(element: Element): Scrollbar[] {
     gutterY = window.innerWidth - clientWidth;
     gutterX = window.innerHeight - clientHeight;
   } else {
-    const computed = window.getComputedStyle(element);
+    const computed = style ?? window.getComputedStyle(element);
     const rect = element.getBoundingClientRect();
     const border = (side: string) =>
       parseFloat(computed.getPropertyValue(`border-${side}-width`)) || 0;
