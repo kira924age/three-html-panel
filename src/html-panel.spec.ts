@@ -64,6 +64,9 @@ describe("the panel's iframe", () => {
 
   afterEach(() => {
     for (const panel of panels.splice(0)) panel.dispose();
+    // Tests that set the clock leave it to the next ones otherwise (spying again
+    // returns the spy already there).
+    vi.spyOn(performance, "now").mockRestore();
   });
 
   const open = (sandbox?: boolean, keyboard?: PanelKeyboard) => {
@@ -135,10 +138,6 @@ describe("the panel's iframe", () => {
       typing: true,
     };
     const delivered = () => new Promise((resolve) => setTimeout(resolve, 20));
-    // Tests that set the clock leave it to the next ones otherwise (spying again
-    // returns the spy already there).
-    afterEach(() => vi.spyOn(performance, "now").mockRestore());
-
     it("draws the caret in the page's color and alpha, whatever syntax the page wrote it in", async () => {
       const panel = open(false);
       const port = connect(panel);
@@ -338,9 +337,39 @@ describe("the panel's iframe", () => {
       it("does not take them when it waited to claim a field until then", async () => {
         panel.pointer("down", new Vector2(0.5, 0.5));
         panel.pointer("up", new Vector2(0.5, 0.5));
+        await delivered();
         hostField.focus();
         await delivered();
         await expectRefused();
+      });
+
+      it("takes them when the host moved focus while handling the press (an app focusing its canvas)", async () => {
+        panel.pointer("down", new Vector2(0.5, 0.5));
+        hostField.focus();
+        port.postMessage(editing);
+        await delivered();
+        expect(keyboard.isTarget(panel)).toBe(true);
+      });
+
+      it("does not open a link the page hands over then", async () => {
+        const onLink = vi.fn();
+        const linked = new HtmlPanel({
+          url: "https://panel.example/page/",
+          sandbox: true,
+          keyboard,
+          onLink,
+          readyTimeout: 60_000,
+        });
+        panels.push(linked);
+        const linkedPort = connect(linked);
+        linked.pointer("down", new Vector2(0.5, 0.5));
+        linked.pointer("up", new Vector2(0.5, 0.5));
+        await delivered();
+        hostField.focus();
+        linkedPort.postMessage({ type: "open", url: "https://example.com/" });
+        await delivered();
+        expect(onLink).not.toHaveBeenCalled();
+        linkedPort.close();
       });
 
       it("does not take them back by a drag still held", async () => {

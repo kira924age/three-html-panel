@@ -108,7 +108,7 @@ A link the user follows opens in a new tab of the host (only http(s), only right
 
 **`sandbox: false`** runs the page as an ordinary page of its origin. Use it only for pages you trust: a page on the host's origin can read the host's cookies and storage.
 
-**`sandbox: true`** is for pages you do not trust. The iframe gets `sandbox="allow-scripts allow-forms allow-popups"` (never `allow-same-origin`), so the page runs on an opaque origin and cannot reach the host's cookies, storage or document. It cannot take the keyboard either: the host gives focus back, and lets a text field have the keys only right after the user pressed it, and not once the user has moved on to something else.
+**`sandbox: true`** is for pages you do not trust. The iframe gets `sandbox="allow-scripts allow-forms allow-popups"` (never `allow-same-origin`), so the page runs on an opaque origin and cannot reach the host's cookies, storage or document. It cannot take the keyboard either: the host gives focus back, and lets a text field have the keys only right after the user pressed it, and not once the user has since focused something in the host or pressed elsewhere in the scene.
 
 Either way, treat what comes from the page (`onMessage` data included) as untrusted; the host checks the shape and size of every message (`src/protocol.ts`).
 

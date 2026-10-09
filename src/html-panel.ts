@@ -564,17 +564,24 @@ export class HtmlPanel
    * field pressed, or one a button press opens), or while it has the keyboard.
    */
   private mayTakeKeyboard(): boolean {
+    return !this.sandboxed || this.keyboard.isTarget(this) || this.userJustActed();
+  }
+
+  /**
+   * Whether the user acted on the panel within the last USER_ACTION_MS, and has
+   * not focused something in the host since (the keys are meant for it then).
+   */
+  private userJustActed(): boolean {
     return (
-      !this.sandboxed ||
-      this.keyboard.isTarget(this) ||
-      // Not if the user focused something in the host since: the keys are meant for it.
-      (this.userJustActed() && !this.keyboard.hostFocusedSince(this.userActionAt))
+      performance.now() <= this.userActionAt + USER_ACTION_MS &&
+      !this.keyboard.hostFocusedSince(this.userActionAt)
     );
   }
 
-  /** Whether the user acted on the panel within the last USER_ACTION_MS. */
-  private userJustActed(): boolean {
-    return performance.now() <= this.userActionAt + USER_ACTION_MS;
+  /** The user acts on the panel now: the page may act on their behalf for a while. */
+  private userActs(): void {
+    this.userActionAt = performance.now();
+    this.keyboard.userActed();
   }
 
   pointer(
@@ -590,7 +597,7 @@ export class HtmlPanel
     // Only presses, releases and drags (the user acting on this panel) open the
     // window, not hovering: a slow drag selecting text may take the keys at any point.
     const dragging = kind === "move" && this.pressing;
-    if (kind === "down" || kind === "up" || dragging) this.userActionAt = performance.now();
+    if (kind === "down" || kind === "up" || dragging) this.userActs();
     if (kind === "down") this.pressing = true;
     else if (kind === "up" || kind === "leave") this.pressing = false;
     const { x, y } = uv ? this.toPage(uv) : { x: 0, y: 0 };
@@ -604,7 +611,7 @@ export class HtmlPanel
 
   sendKey(event: KeyboardEvent): void {
     // Enter on a focused link opens it.
-    this.userActionAt = performance.now();
+    this.userActs();
     const { key, shiftKey, ctrlKey, altKey, metaKey } = event;
     this.send({ type: "key", key, shiftKey, ctrlKey, altKey, metaKey });
   }
@@ -667,7 +674,7 @@ export class HtmlPanel
     ) {
       return false;
     }
-    this.userActionAt = performance.now();
+    this.userActs();
     this.keyboard.focus(this);
     // The tap's release went out before this touchend: its answer has counted it.
     this.tapAnswerAt = this.pointersSent;
@@ -715,9 +722,8 @@ export class HtmlPanel
 
   blurFromHost(): void {
     // The host decides: editing ends now, whatever the page reports later.
-    // The user acted elsewhere since pressing the panel: the page may not take
-    // the keys back, nor reopen the window by a drag still held.
-    this.userActionAt = -Infinity;
+    // Focus moved in the host: a drag still held does not reopen the window
+    // (userJustActed already ends it if the user moved it).
     this.pressing = false;
     this.editing = false;
     this.typing = false;

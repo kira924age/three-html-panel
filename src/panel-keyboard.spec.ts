@@ -22,6 +22,10 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+/** A time after any earlier one in the file (the fake timers may hold performance.now() still). */
+let clock = 1e9;
+const later = () => (clock += 1000);
+
 /** The page focuses something: focus moves to the iframe, and the host's window gets blur. */
 function pageTakesFocus(): void {
   frame.focus();
@@ -50,13 +54,52 @@ describe("a panel iframe that takes focus", () => {
   it("does not count giving focus back as the user focusing the host", () => {
     keyboard.register(frame, { sandboxed: true });
     hostInput.focus();
-    const before = performance.now() + 1;
+    const before = later();
     const now = vi.spyOn(performance, "now").mockReturnValue(before);
     try {
       pageTakesFocus();
       expect(document.activeElement).toBe(hostInput);
       expect(keyboard.hostFocusedSince(before)).toBe(false);
       // The user focusing it is counted.
+      hostInput.blur();
+      hostInput.focus();
+      expect(keyboard.hostFocusedSince(before)).toBe(true);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it("does not count another keyboard's hidden field as the host", () => {
+    const other = new PanelKeyboard();
+    const target: KeyboardTarget = {
+      sendKey: () => {},
+      selectedText: () => "",
+      cut: () => {},
+      sendText: () => {},
+      sendComposition: () => {},
+      blurFromHost: () => {},
+    };
+    const before = later();
+    const now = vi.spyOn(performance, "now").mockReturnValue(before);
+    try {
+      other.focus(target);
+      expect(document.activeElement?.tagName).toBe("TEXTAREA");
+      expect(keyboard.hostFocusedSince(before)).toBe(false);
+    } finally {
+      now.mockRestore();
+      other.release(target);
+    }
+  });
+
+  it("does not count focus the host moves while a press on a panel is handled", () => {
+    const before = later();
+    const now = vi.spyOn(performance, "now").mockReturnValue(before);
+    try {
+      keyboard.userActed();
+      hostInput.focus();
+      expect(keyboard.hostFocusedSince(before)).toBe(false);
+      // After that event, it does.
+      vi.runAllTimers();
       hostInput.blur();
       hostInput.focus();
       expect(keyboard.hostFocusedSince(before)).toBe(true);

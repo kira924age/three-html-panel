@@ -59,6 +59,15 @@ const SOFT_KEYBOARD_KEYS: Record<string, string> = {
  */
 const CLIPBOARD_SHORTCUTS = new Set(["c", "v", "x"]);
 
+/** The hidden fields and panel iframes of every keyboard: focusing them is not focusing the host. */
+const panelElements = new WeakSet<Element>();
+/**
+ * Focus moves that are not the user going elsewhere in the host: a keyboard
+ * giving focus back, or the host's own handlers of a press on a panel (an app
+ * focusing its canvas on pointerdown, say).
+ */
+let notLeaving = 0;
+
 export class PanelKeyboard {
   private readonly field = document.createElement("textarea");
   /** Panel iframes, and whether each is sandboxed (its page is not trusted). */
@@ -69,11 +78,10 @@ export class PanelKeyboard {
   private lastHostFocus: HTMLElement | null = null;
   /** When the user last focused something in the host (not the hidden field, not a panel). */
   private hostFocusAt = -Infinity;
-  /** Focus being given back to the host by the guard below, not moved by the user. */
-  private givingBack = false;
 
   constructor(container: HTMLElement = document.body) {
     const field = this.field;
+    panelElements.add(field);
     field.setAttribute("aria-hidden", "true");
     field.tabIndex = -1;
     field.autocomplete = "off";
@@ -123,13 +131,9 @@ export class PanelKeyboard {
       "focusin",
       (event) => {
         const target = event.target;
-        if (
-          target instanceof HTMLElement &&
-          target !== field &&
-          !this.frames.has(target as HTMLIFrameElement)
-        ) {
+        if (target instanceof HTMLElement && !panelElements.has(target)) {
           this.lastHostFocus = target;
-          if (!this.givingBack) this.hostFocusAt = performance.now();
+          if (!notLeaving) this.hostFocusAt = performance.now();
         }
       },
       true,
@@ -155,10 +159,22 @@ export class PanelKeyboard {
   /** Watches a panel iframe so that it never keeps focus. */
   register(frame: HTMLIFrameElement, options: { sandboxed?: boolean } = {}): void {
     this.frames.set(frame, { sandboxed: options.sandboxed === true });
+    panelElements.add(frame);
   }
 
   unregister(frame: HTMLIFrameElement): void {
     this.frames.delete(frame);
+    panelElements.delete(frame);
+  }
+
+  /**
+   * The user acted on a panel (pressed it, typed into it). Focus the host moves
+   * while that event is handled is the host's doing, not the user leaving.
+   */
+  userActed(): void {
+    notLeaving++;
+    // Past the event, and the click that follows a release in the same task.
+    setTimeout(() => notLeaving--, 0);
   }
 
   /** Starts sending keys to `target`. */
@@ -171,7 +187,8 @@ export class PanelKeyboard {
 
   /**
    * Whether the user focused something in the host at or after `time` (a
-   * performance.now() value). Pressing a panel does not move focus.
+   * performance.now() value). Pressing a panel does not move focus, and focus
+   * the host moves while handling the press does not count.
    */
   hostFocusedSince(time: number): boolean {
     return this.hostFocusAt >= time;
@@ -283,11 +300,11 @@ export class PanelKeyboard {
       // a panel, or else where focus was in the host.
       if (this.target) this.field.focus({ preventScroll: true });
       else if (this.lastHostFocus?.isConnected) {
-        this.givingBack = true;
+        notLeaving++;
         try {
           this.lastHostFocus.focus({ preventScroll: true });
         } finally {
-          this.givingBack = false;
+          notLeaving--;
         }
       }
       // With nowhere to go, a sandboxed panel loses focus all the same. A
