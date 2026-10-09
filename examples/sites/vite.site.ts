@@ -85,8 +85,14 @@ export function siteConfig({ name, dir, plugins = [], config = {} }: SiteOptions
       resolve: {
         // What a site that installed the package would import, from the library's source here.
         alias: [
-          { find: /^three-html-panel\/agent$/, replacement: resolve(ROOT, "src/agent/index.ts") },
-          { find: /^three-html-panel\/page$/, replacement: resolve(ROOT, "src/agent/page.ts") },
+          {
+            find: /^@urth\/three-html-panel\/agent$/,
+            replacement: resolve(ROOT, "src/agent/index.ts"),
+          },
+          {
+            find: /^@urth\/three-html-panel\/page$/,
+            replacement: resolve(ROOT, "src/agent/page.ts"),
+          },
         ],
       },
       // Deployed, the whole site is sandboxed and readable from "null", as in development.
