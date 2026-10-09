@@ -32,14 +32,18 @@ export class InteractionMarks {
     ]),
   );
 
-  /** Marks the elements in these states, and only those. */
-  update({ hovered, active, focused }: InteractionState): void {
+  /** Marks the elements in these states, and only those. Returns whether any mark changed. */
+  update({ hovered, active, focused }: InteractionState): boolean {
     const focusWithin: Element[] = [];
     for (let element = focused; element; element = element.parentElement) focusWithin.push(element);
-    this.mark(HOVER_ATTRIBUTE, hovered);
-    this.mark(ACTIVE_ATTRIBUTE, active);
-    this.mark(FOCUS_ATTRIBUTE, focused ? [focused] : []);
-    this.mark(FOCUS_WITHIN_ATTRIBUTE, focusWithin);
+    // Not short-circuited: every attribute is brought up to date.
+    const changed = [
+      this.mark(HOVER_ATTRIBUTE, hovered),
+      this.mark(ACTIVE_ATTRIBUTE, active),
+      this.mark(FOCUS_ATTRIBUTE, focused ? [focused] : []),
+      this.mark(FOCUS_WITHIN_ATTRIBUTE, focusWithin),
+    ];
+    return changed.includes(true);
   }
 
   /** Removes every mark. */
@@ -47,12 +51,22 @@ export class InteractionMarks {
     this.update({ hovered: [], active: [], focused: null });
   }
 
-  private mark(name: string, elements: Iterable<Element>): void {
+  private mark(name: string, elements: Iterable<Element>): boolean {
     const marked = this.marked.get(name)!;
     const next = new Set(elements);
-    for (const element of marked) if (!next.has(element)) element.removeAttribute(name);
+    let changed = false;
+    for (const element of marked) {
+      if (next.has(element)) continue;
+      element.removeAttribute(name);
+      changed = true;
+    }
     // Set again if the page took it off (re-rendering an element's attributes, say).
-    for (const element of next) if (!element.hasAttribute(name)) element.setAttribute(name, "");
+    for (const element of next) {
+      if (element.hasAttribute(name)) continue;
+      element.setAttribute(name, "");
+      changed = true;
+    }
     this.marked.set(name, next);
+    return changed;
   }
 }

@@ -35,6 +35,15 @@ describe("LiveInteractionCss", () => {
     expect(selectors()).toEqual([".tools", ".row:is(:hover,[data-thp-hover]) .tools", ".other"]);
   });
 
+  it("takes in a rule the page inserts into an @media block", () => {
+    setUp(".tools { display: none } @media all { .x { color: red } }");
+    document.querySelector(".row")!.setAttribute("data-thp-hover", "");
+    const media = document.styleSheets[0]!.cssRules[1] as CSSMediaRule;
+    media.insertRule(".row:hover .tools { display: flex }", 1);
+    live!.sync();
+    expect(display()).toBe("flex");
+  });
+
   it("rewrites rules in @media blocks, and each rule only once", () => {
     setUp("@media all { .row:focus-within .tools { display: flex } }");
     live!.sync();
@@ -50,13 +59,12 @@ describe("LiveInteractionCss", () => {
     setUp(".tools { display: none }");
     const row = document.querySelector(".row")!;
     row.setAttribute("data-thp-hover", "");
+    // Nothing changed: nothing read again.
+    expect(live!.sync()).toBe(false);
+    // Through the CSSOM, which no MutationObserver sees.
     document.styleSheets[0]!.insertRule(".row:hover .tools { display: flex }", 1);
     expect(display()).toBe("none");
-    // Not read again until the page says it may have changed.
-    live!.sync();
-    expect(display()).toBe("none");
-    live!.invalidate();
-    live!.sync();
+    expect(live!.sync()).toBe(true);
     expect(display()).toBe("flex");
 
     const style = document.createElement("style");
@@ -94,7 +102,11 @@ describe("LiveInteractionCss", () => {
       document.body.innerHTML = ROW;
       // What DocumentCss fetched with CORS, standing in for the unreadable sheet.
       const copy = new CSSStyleSheet();
-      copy.replaceSync("@media all { .row:hover .tools { display: flex } } .plain { color: red }");
+      copy.replaceSync(
+        "@media all { .row:hover .tools { display: flex } } .plain { color: red }" +
+          " @layer ui { .menu:focus-within .list { display: block } }" +
+          ' .tip { content: "use :hover"; color: gray; &:hover { opacity: 1 } }',
+      );
       live = new LiveInteractionCss(document, (sheet) =>
         sheet === document.styleSheets[0] ? copy : null,
       );
@@ -105,6 +117,14 @@ describe("LiveInteractionCss", () => {
       const css = Array.from(adopted[0]!.cssRules, (rule) => rule.cssText).join(" ");
       expect(css).toContain(".row:is(:hover,[data-thp-hover]) .tools");
       expect(css).not.toContain(".plain");
+      // In the block it is in, whatever block that is.
+      expect(css).toMatch(
+        /@layer ui\s*\{\s*\.menu:is\(:focus-within,\[data-thp-focus-within\]\) \.list/,
+      );
+      // A nested rule's selector, not the declarations' text; and not its parent's own declarations.
+      expect(css).toContain("&:is(:hover,[data-thp-hover])");
+      expect(css).not.toContain("use :is(");
+      expect(css).not.toContain("gray");
       // The copy is DocumentCss's, for the image: left as it was.
       const media = copy.cssRules[0] as CSSMediaRule;
       expect((media.cssRules[0] as CSSStyleRule).selectorText).toBe(".row:hover .tools");
@@ -116,6 +136,51 @@ describe("LiveInteractionCss", () => {
     } finally {
       delete (document as { adoptedStyleSheets?: unknown }).adoptedStyleSheets;
     }
+  });
+
+  it("rewrites a disabled sheet too, for when the page enables it", () => {
+    document.head.innerHTML = `<style>.tools { display: none }</style><style>.row:hover .tools { display: flex }</style>`;
+    document.body.innerHTML = ROW;
+    document.styleSheets[1]!.disabled = true;
+    live = new LiveInteractionCss(document);
+    live.sync();
+    // (jsdom applies disabled sheets anyway: the selector is checked instead.)
+    expect(selectors(1)).toEqual([".row:is(:hover,[data-thp-hover]) .tools"]);
+  });
+
+  it("rewrites the page's own adopted stylesheets, and keeps its own sheet out of the page's", () => {
+    const adopted: CSSStyleSheet[] = [];
+    Object.defineProperty(document, "adoptedStyleSheets", {
+      configurable: true,
+      get: () => adopted,
+      set: (sheets: CSSStyleSheet[]) => adopted.splice(0, adopted.length, ...sheets),
+    });
+    try {
+      const own = new CSSStyleSheet();
+      own.replaceSync(".tools { display: none } .row:hover .tools { display: flex }");
+      adopted.push(own);
+      document.body.innerHTML = ROW;
+      live = new LiveInteractionCss(document);
+      live.sync();
+      expect((own.cssRules[1] as CSSStyleRule).selectorText).toBe(
+        ".row:is(:hover,[data-thp-hover]) .tools",
+      );
+    } finally {
+      delete (document as { adoptedStyleSheets?: unknown }).adoptedStyleSheets;
+    }
+  });
+
+  it("forgets the rules of a <style> the page removed", () => {
+    setUp(".row:hover .tools { display: flex }");
+    const sheet = document.styleSheets[0]!;
+    const rule = sheet.cssRules[0] as CSSStyleRule;
+    document.head.innerHTML = "";
+    live!.invalidate();
+    live!.sync();
+    live!.dispose();
+    live = null;
+    // Not written back into the sheet the page dropped.
+    expect(rule.selectorText).toBe(".row:is(:hover,[data-thp-hover]) .tools");
   });
 
   it("puts the page's selectors back when disposed", () => {

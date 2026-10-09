@@ -1,19 +1,31 @@
 import { describe, expect, it } from "vite-plus/test";
-import { inlineCssUrls, liveSelector, rewriteSelector } from "./css";
+import { inlineCssUrls, liveSelector, rewriteSelector, stylesheetsSignature } from "./css";
 
 describe("rewriteSelector", () => {
-  it("turns interaction pseudo-classes into attributes", () => {
-    expect(rewriteSelector("a:hover, b:active")).toBe("a[data-thp-hover], b[data-thp-active]");
+  it("lets interaction pseudo-classes match their attributes, as for the live page", () => {
+    expect(rewriteSelector("a:hover, b:active")).toBe(
+      "a:is(:hover,[data-thp-hover]), b:is(:active,[data-thp-active])",
+    );
   });
 
   it("keeps :focus, :focus-visible and :focus-within apart", () => {
-    expect(rewriteSelector("input:focus")).toBe("input[data-thp-focus]");
-    expect(rewriteSelector("input:focus-visible")).toBe("input[data-thp-focus]");
-    expect(rewriteSelector(".card:focus-within")).toBe(".card[data-thp-focus-within]");
+    expect(rewriteSelector("input:focus")).toBe("input:is(:focus,[data-thp-focus])");
+    expect(rewriteSelector("input:focus-visible")).toBe(
+      "input:is(:focus-visible,[data-thp-focus])",
+    );
+    expect(rewriteSelector(".card:focus-within")).toBe(
+      ".card:is(:focus-within,[data-thp-focus-within])",
+    );
   });
 
   it("maps :root to html", () => {
     expect(rewriteSelector(":root")).toBe("html");
+    expect(rewriteSelector(":root:hover")).toBe("html:is(:hover,[data-thp-hover])");
+  });
+
+  it("leaves what the live page rewrote already", () => {
+    const live = liveSelector(".row:hover .tools")!;
+    expect(rewriteSelector(live)).toBe(live);
   });
 
   it("leaves other pseudo-classes alone", () => {
@@ -41,20 +53,38 @@ describe("liveSelector", () => {
     expect(liveSelector("x-menu::part(item):hover")).toBeNull();
     // Not a pseudo-element: inside an attribute's value, or an argument.
     expect(liveSelector('[title="a::b"]:hover')).toBe('[title="a::b"]:is(:hover,[data-thp-hover])');
-    expect(rewriteSelector(".bar::-webkit-scrollbar-thumb:hover, a:hover")).toBe(
-      ".bar::-webkit-scrollbar-thumb:hover, a[data-thp-hover]",
-    );
   });
 
   it("is null for selectors without them, or rewritten already", () => {
     expect(liveSelector("li:hover-like, p:first-child")).toBeNull();
     expect(liveSelector(".row:is(:hover, [data-thp-hover])")).toBeNull();
   });
+});
 
-  it("is rewritten for the image as the page's own selector is", () => {
-    expect(rewriteSelector(liveSelector(".row:hover .tools")!)).toBe(
-      ".row:is([data-thp-hover],[data-thp-hover]) .tools",
-    );
+describe("stylesheetsSignature", () => {
+  /** A stand-in for a CSSStyleSheet: only what the signature reads. */
+  const sheet = (rules: object[], disabled = false) =>
+    ({ cssRules: rules, disabled }) as unknown as CSSStyleSheet;
+  const rule = (cssText: string) => ({ cssText });
+
+  it("changes when a sheet an @import loads gets its rules", () => {
+    const importedRules: object[] = [];
+    const imported = sheet(importedRules);
+    const page = sheet([
+      rule("@layer base;"),
+      { cssText: "@import url(menu.css);", styleSheet: imported },
+      rule(".a { color: red }"),
+    ]);
+    const before = stylesheetsSignature([page]);
+    importedRules.push(rule(".nav:hover .sub { display: block }"));
+    expect(stylesheetsSignature([page])).not.toBe(before);
+  });
+
+  it("changes when a sheet is disabled or enabled", () => {
+    const page = sheet([rule(".a { color: red }")]);
+    const enabled = stylesheetsSignature([page]);
+    (page as { disabled: boolean }).disabled = true;
+    expect(stylesheetsSignature([page])).not.toBe(enabled);
   });
 });
 

@@ -587,10 +587,14 @@ export class InputSynthesizer {
    * match: right when they change, so that the next hit test (and the page's
    * handlers) find what they show, a button shown only while its row is
    * hovered, say. Also before a capture, for what changed without input (the
-   * page moving the focused element elsewhere).
+   * page moving the focused element elsewhere). Returns whether a mark changed.
    */
-  syncMarks(): void {
-    this.marks.update({ hovered: this.hovered, active: this.active, focused: this.focus.current });
+  syncMarks(): boolean {
+    return this.marks.update({
+      hovered: this.hovered,
+      active: this.active,
+      focused: this.focus.current,
+    });
   }
 
   /** Not pressed anymore: no longer :active. */

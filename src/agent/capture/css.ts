@@ -7,7 +7,8 @@
 // - Interaction states (:hover, :active, :focus) depend on real input, which
 //   the image never receives. The agent marks the elements with attributes
 //   instead (interaction-marks.ts), and the selectors are rewritten to match
-//   those attributes.
+//   those attributes, as for the live page (live-css.ts, which has rewritten
+//   most of them in place already).
 // - :root would match the <svg>, not the copied <html>.
 // - @media is evaluated again inside the image, against the image's own
 //   environment. Only the rules that match in the page right now are kept.
@@ -41,9 +42,7 @@ const ROOT_PSEUDO_CLASS = /:root(?![-\w])/g;
 /**
  * Whether the compound selector that ends at `end` has a pseudo-element in it
  * (`::-webkit-scrollbar-thumb:hover`, `::part(x):hover`). Only a few
- * pseudo-classes may follow one, not an attribute: rewritten for the image,
- * the whole selector list would be invalid, and the rule lost with the other
- * selectors in it. Left alone for the live page too.
+ * pseudo-classes may follow one, not an attribute: those are left alone.
  */
 function followsPseudoElement(selector: string, end: number): boolean {
   let depth = 0;
@@ -73,19 +72,11 @@ function replaceInteractionPseudoClasses(
   );
 }
 
-/** The selector for the image: interaction pseudo-classes become their attributes, :root html. */
-export function rewriteSelector(selector: string): string {
-  return replaceInteractionPseudoClasses(
-    selector.replace(ROOT_PSEUDO_CLASS, "html"),
-    (_match, attribute) => `[${attribute}]`,
-  );
-}
-
 /**
- * The selector (or a rule's text) for the live page: each interaction
- * pseudo-class also matches its attribute, `:hover` becoming
- * `:is(:hover,[data-thp-hover])`. The specificity stays the same, and so does
- * the rule's place in the cascade. Null if it has none, or was rewritten already.
+ * The selector for the live page: each interaction pseudo-class also matches
+ * its attribute, `:hover` becoming `:is(:hover,[data-thp-hover])`. The
+ * specificity stays the same, and so does the rule's place in the cascade.
+ * Null if it has none, or was rewritten already.
  */
 export function liveSelector(selector: string): string | null {
   if (selector.includes("[data-thp-")) return null;
@@ -94,6 +85,15 @@ export function liveSelector(selector: string): string | null {
     (match, attribute) => `:is(${match},[${attribute}])`,
   );
   return rewritten === selector ? null : rewritten;
+}
+
+/**
+ * The selector (or a nested rule's text) for the image: as for the live page
+ * (:hover never matches in an image, the attribute does), and :root is html.
+ */
+export function rewriteSelector(selector: string): string {
+  const rooted = selector.replace(ROOT_PSEUDO_CLASS, "html");
+  return liveSelector(rooted) ?? rooted;
 }
 
 // Browsers draw a focus ring for text fields from their own user agent
@@ -160,27 +160,53 @@ export function ruleCount(sheet: CSSStyleSheet): number {
 const sheetIds = new WeakMap<CSSStyleSheet, number>();
 let nextSheetId = 0;
 
-/**
- * What a document's stylesheets are: which (a <style> whose text is replaced
- * has a new sheet, with as many rules maybe) and how many rules each has.
- */
-export function stylesheetsSignature(sheets: CSSStyleSheet[]): string {
-  return sheets
-    .map((sheet) => {
-      let id = sheetIds.get(sheet);
-      if (id === undefined) {
-        id = nextSheetId++;
-        sheetIds.set(sheet, id);
-      }
-      return `${id}:${ruleCount(sheet)}`;
-    })
-    .join("|");
+/** The agent's own sheets in document.adoptedStyleSheets (live-css.ts): not the page's. */
+export const agentSheets = new WeakSet<CSSStyleSheet>();
+
+/** The page's stylesheets, in cascade order: its <style> and <link> sheets, then those it adopted. */
+export function pageStylesheets(document: Document): CSSStyleSheet[] {
+  const adopted = (document as Document & { adoptedStyleSheets?: CSSStyleSheet[] })
+    .adoptedStyleSheets;
+  const sheets = Array.from(document.styleSheets);
+  return adopted ? [...sheets, ...adopted.filter((sheet) => !agentSheets.has(sheet))] : sheets;
+}
+
+function sheetSignature(sheet: CSSStyleSheet): string {
+  let id = sheetIds.get(sheet);
+  if (id === undefined) {
+    id = nextSheetId++;
+    sheetIds.set(sheet, id);
+  }
+  const count = ruleCount(sheet);
+  let signature = `${id}:${count}${sheet.disabled ? "d" : ""}`;
+  // The sheets it imports, which load after it. @import comes first in a sheet.
+  for (let i = 0; i < count; i++) {
+    const rule = sheet.cssRules[i]!;
+    if ("styleSheet" in rule) {
+      const imported = (rule as CSSImportRule).styleSheet;
+      signature += `[${imported ? sheetSignature(imported) : "-"}]`;
+    } else if ("cssRules" in rule || !rule.cssText.startsWith("@layer")) {
+      // Only @layer statements may come before an @import.
+      break;
+    }
+  }
+  return signature;
 }
 
 /**
- * Collects a document's CSS, recollecting only when the set of stylesheets or
- * the number of rules in them changes (see stylesheetsSignature). Editing an existing rule in place
- * (CSSStyleRule.style) is not noticed; call invalidate() for that.
+ * What the page's stylesheets are: which (a <style> whose text is replaced
+ * has a new sheet, with as many rules maybe), how many rules each has, whether
+ * it is disabled, and the same of the sheets they import.
+ */
+export function stylesheetsSignature(sheets: CSSStyleSheet[]): string {
+  return sheets.map(sheetSignature).join("|");
+}
+
+/**
+ * Collects a document's CSS, recollecting only when its stylesheets or the
+ * number of rules in them change (see stylesheetsSignature). Editing an
+ * existing rule in place (CSSStyleRule.style) is not noticed; call
+ * invalidate() for that.
  */
 export class DocumentCss {
   private signature = "";
@@ -206,7 +232,7 @@ export class DocumentCss {
   }
 
   get(): string {
-    const sheets = Array.from(this.document.styleSheets);
+    const sheets = pageStylesheets(this.document);
     const signature = stylesheetsSignature(sheets);
     if (signature !== this.signature) {
       const parts: string[] = [DEFAULT_FOCUS_RING_CSS];

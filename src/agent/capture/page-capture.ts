@@ -166,7 +166,8 @@ export class PageCapture {
       characterData: true,
     });
     for (const type of INVALIDATING_EVENTS) this.window.addEventListener(type, this.changed, true);
-    // A <link>'s stylesheet loaded. Load events of elements do not reach the window.
+    // A stylesheet loaded (a <link>'s, or one a <style> imports). Load events
+    // of elements do not reach the window.
     document.addEventListener("load", this.stylesheetsChanged, true);
     void document.fonts?.ready.then(() => {
       this.css.invalidate();
@@ -214,7 +215,7 @@ export class PageCapture {
   handle(input: PanelInput): void {
     if (this.disposed) return;
     // Rules the page added since apply to the hover before the input is hit tested.
-    this.liveCss.sync();
+    if (this.liveCss.sync()) this.changed();
     this.input.handle(input);
     // Cursor hit testing depends on pointer coordinates, even when an
     // unchanged hover skips capture. Keep its notification independent.
@@ -263,7 +264,9 @@ export class PageCapture {
   };
 
   private readonly stylesheetsChanged = (event: Event) => {
-    if (event.target instanceof this.window.HTMLLinkElement) this.changed();
+    const { HTMLLinkElement, HTMLStyleElement } = this.window;
+    if (event.target instanceof HTMLLinkElement || event.target instanceof HTMLStyleElement)
+      this.changed();
   };
 
   // A plain timer, not requestAnimationFrame: browsers may hold back rAF in an
@@ -294,8 +297,9 @@ export class PageCapture {
     this.dirty = false;
     // Before measuring anything: the page may have added rules since the last
     // input, or moved the focused element (its ancestors are :focus-within).
-    this.liveCss.sync();
-    this.input.syncMarks();
+    // Either may lay the page out differently: its selection is measured again.
+    const rewritten = this.liveCss.sync();
+    if (this.input.syncMarks() || rewritten) this.layoutVersion++;
     const started = performance.now();
     try {
       // The viewport, including any scrollbar: exactly the iframe's size.

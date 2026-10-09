@@ -12,7 +12,11 @@
 //
 // What the page can see: the selectorText of those rules, as it reads it back.
 // The rules themselves, their number and order, stay as they were (CSS-in-JS
-// libraries address rules by index).
+// libraries address rules by index). The CSSOM methods that change stylesheets
+// are wrapped, to know when to look again.
+//
+// The stylesheets of shadow roots are not rewritten: the agent's hover and
+// focus stop at a shadow root anyway.
 //
 // Rules the page's script cannot read (a cross-origin stylesheet without CORS,
 // linked or imported) cannot be edited. Their interaction rules, from the copy
@@ -24,16 +28,84 @@
 // (::-webkit-scrollbar-thumb:hover) is left alone, as css.ts does for the image.
 
 import type { FrameWindow } from "../../types";
-import { absolutizeUrls, liveSelector, ruleCount, stylesheetsSignature } from "./css";
+import {
+  absolutizeUrls,
+  agentSheets,
+  liveSelector,
+  pageStylesheets,
+  ruleCount,
+  stylesheetsSignature,
+} from "./css";
+
+/**
+ * Calls `onChange` after the page's script changes a stylesheet through the
+ * CSSOM (insertRule, replace, disabled, adoptedStyleSheets, ...), which no
+ * MutationObserver sees. Returns what puts the originals back.
+ */
+function watchStylesheets(window: FrameWindow, onChange: () => void): () => void {
+  const restores: (() => void)[] = [];
+  const wrapMethod = (proto: Record<string, unknown> | undefined, name: string) => {
+    const original = proto?.[name];
+    if (!proto || typeof original !== "function") return;
+    // The page's sheets call these with themselves as `this`: no arrow function.
+    const wrapped = function (this: unknown, ...args: unknown[]) {
+      const result: unknown = original.apply(this, args);
+      onChange();
+      // replace() applies the rules later.
+      if (result && typeof (result as Promise<unknown>).then === "function")
+        (result as Promise<unknown>).then(onChange, () => {});
+      return result;
+    };
+    proto[name] = wrapped;
+    restores.push(() => {
+      if (proto[name] === wrapped) proto[name] = original;
+    });
+  };
+  const wrapSetter = (proto: object | undefined, name: string) => {
+    const descriptor = proto && Object.getOwnPropertyDescriptor(proto, name);
+    // oxlint-disable-next-line typescript/unbound-method -- called with .call on the page's object
+    const set = descriptor?.set;
+    if (!proto || !descriptor?.configurable || !set) return;
+    Object.defineProperty(proto, name, {
+      ...descriptor,
+      set(value: unknown) {
+        set.call(this, value);
+        onChange();
+      },
+    });
+    restores.push(() => Object.defineProperty(proto, name, descriptor));
+  };
+  const sheet = window.CSSStyleSheet?.prototype as unknown as Record<string, unknown> | undefined;
+  for (const name of [
+    "insertRule",
+    "deleteRule",
+    "addRule",
+    "removeRule",
+    "replace",
+    "replaceSync",
+  ])
+    wrapMethod(sheet, name);
+  const grouping = (
+    window as unknown as { CSSGroupingRule?: { prototype: Record<string, unknown> } }
+  ).CSSGroupingRule?.prototype;
+  for (const name of ["insertRule", "deleteRule"]) wrapMethod(grouping, name);
+  wrapSetter(window.StyleSheet?.prototype, "disabled");
+  wrapSetter(window.Document?.prototype, "adoptedStyleSheets");
+  return () => {
+    for (const restore of restores.reverse()) restore();
+  };
+}
 
 export class LiveInteractionCss {
   private signature = "";
   /**
    * The stylesheets may have changed since the last sync. Reading them all
    * on every pointer move would be wasted work: the page says when (see
-   * invalidate()).
+   * invalidate()), or the CSSOM does (watchStylesheets).
    */
   private stale = true;
+  /** Set while syncing: the agent's own sheet changing is not the page's. */
+  private syncing = false;
   /** The selectors rewritten, as the page wrote them (restored on dispose). */
   private readonly originals = new Map<CSSStyleRule, string>();
   /** Rules whose rewritten selector the browser did not take: not tried again. */
@@ -41,6 +113,7 @@ export class LiveInteractionCss {
   /** The interaction rules of stylesheets that could not be edited. */
   private adopted: CSSStyleSheet | null = null;
   private readonly window: FrameWindow;
+  private readonly unwatch: () => void;
 
   constructor(
     private readonly document: Document,
@@ -49,11 +122,15 @@ export class LiveInteractionCss {
       ruleCount(sheet) >= 0 ? sheet : null,
   ) {
     this.window = document.defaultView as FrameWindow;
+    // A rule inserted into an @media block does not change the signature: look at everything again.
+    this.unwatch = watchStylesheets(this.window, () => {
+      if (!this.syncing) this.reset();
+    });
   }
 
   /**
    * The stylesheets may have changed: the DOM did (a <style> or <link> added,
-   * or a framework rendering, which is when CSS-in-JS inserts its rules).
+   * or a framework rendering), or a stylesheet loaded.
    */
   invalidate(): void {
     this.stale = true;
@@ -66,60 +143,79 @@ export class LiveInteractionCss {
   }
 
   /**
-   * Rewrites the rules added since the last call, if the page said they may
-   * have changed. As DocumentCss, it notices stylesheets added, removed or
-   * replaced, and rules added to or removed from them, not rules added inside
-   * an @media block or edited in place.
+   * Rewrites the rules added since the last call, if the page may have changed
+   * its stylesheets: stylesheets added, removed, replaced, disabled or
+   * enabled, rules added to or removed from them (or the sheets they import),
+   * and whatever the page changes through the CSSOM. Not a selector the page
+   * sets itself. Returns whether it rewrote anything (the page may lay out
+   * differently).
    */
-  sync(): void {
-    if (!this.stale) return;
+  sync(): boolean {
+    if (!this.stale) return false;
     this.stale = false;
-    const sheets = Array.from(this.document.styleSheets);
+    const sheets = pageStylesheets(this.document);
     const signature = stylesheetsSignature(sheets);
-    if (signature === this.signature) return;
+    if (signature === this.signature) return false;
     this.signature = signature;
-    // Rules the page removed are not restored.
-    for (const rule of this.originals.keys())
-      if (!rule.parentStyleSheet) this.originals.delete(rule);
-    const copied: string[] = [];
-    for (const sheet of sheets) this.syncSheet(sheet, sheet.media.mediaText, copied);
-    this.adopt(copied.join("\n"));
+    this.syncing = true;
+    try {
+      const copied: string[] = [];
+      const visited = new Set<CSSStyleSheet>();
+      for (const sheet of sheets) this.syncSheet(sheet, sheet.media.mediaText, copied, visited);
+      // Rules of sheets the page removed (or rules it deleted) are not restored.
+      for (const rule of this.originals.keys())
+        if (!rule.parentStyleSheet || !visited.has(rule.parentStyleSheet))
+          this.originals.delete(rule);
+      this.adopt(copied.join("\n"));
+    } finally {
+      this.syncing = false;
+    }
+    return true;
   }
 
-  /** Puts the page's selectors back. */
+  /** Puts the page's selectors and the CSSOM back. */
   dispose(): void {
+    this.syncing = true;
     for (const [rule, selector] of this.originals) rule.selectorText = selector;
     this.originals.clear();
     this.adopt("");
+    this.unwatch();
     this.signature = "";
     this.stale = true;
   }
 
   /** Rewrites a sheet in place, or, if the page cannot edit it, copies its interaction rules out. */
-  private syncSheet(source: CSSStyleSheet, media: string, copied: string[]): void {
-    if (source.disabled) return;
+  private syncSheet(
+    source: CSSStyleSheet,
+    media: string,
+    copied: string[],
+    visited: Set<CSSStyleSheet>,
+  ): void {
+    // A disabled sheet is rewritten as well, for when the page enables it.
     const sheet = this.readable(source);
     if (!sheet) return;
     if (sheet === source) {
-      this.rewrite(sheet.cssRules, copied);
+      visited.add(sheet);
+      this.rewrite(sheet.cssRules, copied, visited);
       return;
     }
-    let css = this.interactionRules(sheet.cssRules).join("\n");
+    if (source.disabled) return;
+    let css = this.interactionRules(sheet.cssRules, false).join("\n");
     if (!css) return;
     // In the agent's sheet, url() would be relative to the document.
     if (source.href) css = absolutizeUrls(css, source.href);
     copied.push(media && media !== "all" ? `@media ${media}{${css}}` : css);
   }
 
-  private rewrite(rules: CSSRuleList, copied: string[]): void {
+  private rewrite(rules: CSSRuleList, copied: string[], visited: Set<CSSStyleSheet>): void {
     const { CSSStyleRule, CSSImportRule } = this.window;
     for (const rule of Array.from(rules)) {
       if (rule instanceof CSSStyleRule) this.rewriteRule(rule);
       if (rule instanceof CSSImportRule) {
-        if (rule.styleSheet) this.syncSheet(rule.styleSheet, rule.media.mediaText, copied);
+        if (rule.styleSheet) this.syncSheet(rule.styleSheet, rule.media.mediaText, copied, visited);
       } else if ("cssRules" in rule) {
         // @media, @supports, @layer, @container blocks, and nested style rules.
-        this.rewrite(rule.cssRules as CSSRuleList, copied);
+        this.rewrite(rule.cssRules as CSSRuleList, copied, visited);
       }
     }
   }
@@ -139,27 +235,42 @@ export class LiveInteractionCss {
   }
 
   /**
-   * The interaction rules of a copy, rewritten, in their @media and @supports
-   * blocks. The copy is DocumentCss's: only its text is taken.
+   * The interaction rules of a copy (DocumentCss's, left as it is), rewritten,
+   * in the blocks they are in (@media, @layer, ...). Only what the
+   * interaction applies to is taken: the copy's other rules are the page's
+   * already, and would win ties again from here.
    */
-  private interactionRules(rules: CSSRuleList): string[] {
-    const { CSSStyleRule, CSSMediaRule, CSSSupportsRule } = this.window;
+  private interactionRules(rules: CSSRuleList, interactive: boolean): string[] {
     const out: string[] = [];
     for (const rule of Array.from(rules)) {
-      if (rule instanceof CSSStyleRule) {
-        // Nested rules (CSS nesting) are in the text, the interaction may be in one of them.
-        const text =
-          rule.cssRules.length > 0
-            ? liveSelector(rule.cssText)
-            : liveSelector(rule.selectorText)?.concat(`{${rule.style.cssText}}`);
-        if (text) out.push(text);
-      } else if (rule instanceof CSSMediaRule || rule instanceof CSSSupportsRule) {
-        const inner = this.interactionRules(rule.cssRules);
-        const keyword = rule instanceof CSSMediaRule ? "@media" : "@supports";
-        if (inner.length > 0) out.push(`${keyword} ${rule.conditionText}{${inner.join("\n")}}`);
-      }
+      const text = this.interactionRule(rule, interactive);
+      if (text) out.push(text);
     }
     return out;
+  }
+
+  /** A rule, or what of it is an interaction rule (`interactive`: inside one already); null if none. */
+  private interactionRule(rule: CSSRule, interactive: boolean): string | null {
+    const { CSSStyleRule } = this.window;
+    if (rule instanceof CSSStyleRule) {
+      const selector = liveSelector(rule.selectorText);
+      const inside = interactive || selector !== null;
+      // Nested rules (CSS nesting): selectors rewritten one by one, the declarations left as they are.
+      const nested = rule.cssRules ? this.interactionRules(rule.cssRules, inside) : [];
+      if (!inside && nested.length === 0) return null;
+      const declarations = inside ? rule.style.cssText : "";
+      return `${selector ?? rule.selectorText}{${declarations}${nested.join("\n")}}`;
+    }
+    if ("cssRules" in rule) {
+      // @media, @supports, @layer, @container, @scope (not @keyframes: none of its rules is a style rule).
+      const nested = this.interactionRules(rule.cssRules as CSSRuleList, interactive);
+      if (nested.length === 0) return null;
+      const prelude = rule.cssText.slice(0, rule.cssText.indexOf("{"));
+      return `${prelude}{${nested.join("\n")}}`;
+    }
+    // Declarations between nested rules (CSSNestedDeclarations).
+    if (interactive && "style" in rule) return (rule as CSSStyleRule).style.cssText;
+    return null;
   }
 
   private adopt(css: string): void {
@@ -175,6 +286,7 @@ export class LiveInteractionCss {
       return;
     }
     const sheet = current ?? new this.window.CSSStyleSheet();
+    agentSheets.add(sheet);
     sheet.replaceSync(css);
     this.adopted = sheet;
     // The page may have replaced the list (adoptedStyleSheets = [...]) since.
