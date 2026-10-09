@@ -8,6 +8,7 @@ import {
   type ViteDevServer,
   lazyPlugins,
 } from "vite-plus";
+import type { PackUserConfig } from "vite-plus/pack";
 import {
   AGENT_BUILD_FILE,
   PANEL_PAGES,
@@ -21,6 +22,39 @@ import {
 import { siteOrigins } from "./examples/sites/vite.site.ts";
 
 type PanelServer = ViteDevServer | PreviewServer;
+
+/** The npm package (`pnpm pack:lib`), into lib/: dist/ is the demo's build. */
+const LIB_PACK: PackUserConfig = {
+  outDir: "lib",
+  format: "esm",
+  platform: "browser",
+  // For browsers, not the Node version package.json's devEngines asks for (that is for development).
+  target: "es2022",
+  sourcemap: true,
+};
+const LIB_PACKS: PackUserConfig[] = [
+  {
+    ...LIB_PACK,
+    // For bundlers, which minify them with the rest of the app.
+    entry: {
+      index: "src/index.ts",
+      agent: "src/agent/index.ts",
+      page: "src/agent/page.ts",
+    },
+    dts: true,
+    clean: true,
+    publint: true,
+  },
+  {
+    ...LIB_PACK,
+    // The self-starting agent, for a <script> tag (data-host-origin on it),
+    // loaded as it is from a CDN by every panel page: one file, minified.
+    entry: { "agent-script": "src/agent/entry.ts" },
+    minify: true,
+    // Not to clean away the other build's files.
+    clean: false,
+  },
+];
 
 /**
  * The one panel server of this process. Vite reloads this file when it
@@ -102,25 +136,7 @@ export default defineConfig(({ mode }) => {
   const hostPort = Number(new URL(origins.host).port);
   return {
     fmt: {},
-    // The npm package (`pnpm pack:lib`), into lib/: dist/ is the demo's build.
-    pack: {
-      entry: {
-        index: "src/index.ts",
-        agent: "src/agent/index.ts",
-        page: "src/agent/page.ts",
-        // The self-starting agent, for a <script> tag (data-host-origin on it).
-        "agent-script": "src/agent/entry.ts",
-      },
-      outDir: "lib",
-      format: "esm",
-      platform: "browser",
-      // For browsers, not the Node version package.json's devEngines asks for (that is for development).
-      target: "es2022",
-      dts: true,
-      sourcemap: true,
-      clean: true,
-      publint: true,
-    },
+    pack: LIB_PACKS,
     lint: {
       jsPlugins: [{ name: "vite-plus", specifier: "vite-plus/oxlint-plugin" }],
       rules: { "vite-plus/prefer-vite-plus-imports": "error" },
