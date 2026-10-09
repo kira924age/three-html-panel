@@ -214,6 +214,16 @@ describe("interaction states in the live page", () => {
     expect(document.querySelector(".row")!.hasAttribute("data-thp-focus-within")).toBe(false);
   });
 
+  it("captures a change the page makes through the CSSOM only", async () => {
+    capture.start();
+    await settle();
+    const count = captures.mock.calls.length;
+    document.styleSheets[0]!.insertRule(".row { color: red }", 0);
+    await settle();
+    expect(captures).toHaveBeenCalledTimes(count + 1);
+    expect(frames.at(-1)).toContain(".row{color: red;}");
+  });
+
   it("does not count its marks as changes of the page", async () => {
     capture.start();
     await settle();

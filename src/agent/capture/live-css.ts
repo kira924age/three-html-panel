@@ -37,23 +37,46 @@ import {
   stylesheetsSignature,
 } from "./css";
 
+/** What the page changed through the CSSOM (see watchStylesheets). */
+export type CssomChange =
+  /** A rule inserted into a stylesheet or a block (@media, ...), at `index`. */
+  | { kind: "insert"; parent: CSSStyleSheet | CSSGroupingRule; index: number }
+  /** A rule deleted: nothing to rewrite, but the stylesheets are not what they were. */
+  | { kind: "delete"; parent: CSSStyleSheet | CSSGroupingRule }
+  /** A stylesheet replaced, disabled or enabled, or rules added the old way (addRule). */
+  | { kind: "sheet"; sheet: CSSStyleSheet }
+  /** A <style> element disabled or enabled, or a document's adoptedStyleSheets set. */
+  | { kind: "owner"; owner: Element | Document };
+
 /**
  * Calls `onChange` after the page's script changes a stylesheet through the
  * CSSOM (insertRule, replace, disabled, adoptedStyleSheets, ...), which no
- * MutationObserver sees. Returns what puts the originals back.
+ * MutationObserver sees. The methods and setters are replaced in the page's
+ * realm. Returns what puts the originals back.
  */
-function watchStylesheets(window: FrameWindow, onChange: () => void): () => void {
+function watchStylesheets(
+  window: FrameWindow,
+  onChange: (change: CssomChange) => void,
+): () => void {
   const restores: (() => void)[] = [];
-  const wrapMethod = (proto: Record<string, unknown> | undefined, name: string) => {
+  const wrapMethod = (
+    proto: Record<string, unknown> | undefined,
+    name: string,
+    change: (target: never, result: unknown) => CssomChange,
+  ) => {
     const original = proto?.[name];
     if (!proto || typeof original !== "function") return;
     // The page's sheets call these with themselves as `this`: no arrow function.
-    const wrapped = function (this: unknown, ...args: unknown[]) {
+    const wrapped = function (this: never, ...args: unknown[]) {
+      // Throws (a cross-origin sheet, an invalid rule) before anything changed.
       const result: unknown = original.apply(this, args);
-      onChange();
+      onChange(change(this, result));
       // replace() applies the rules later.
       if (result && typeof (result as Promise<unknown>).then === "function")
-        (result as Promise<unknown>).then(onChange, () => {});
+        (result as Promise<unknown>).then(
+          () => onChange(change(this, result)),
+          () => {},
+        );
       return result;
     };
     proto[name] = wrapped;
@@ -61,36 +84,49 @@ function watchStylesheets(window: FrameWindow, onChange: () => void): () => void
       if (proto[name] === wrapped) proto[name] = original;
     });
   };
-  const wrapSetter = (proto: object | undefined, name: string) => {
+  const wrapSetter = (
+    proto: object | undefined,
+    name: string,
+    change: (target: never) => CssomChange,
+  ) => {
     const descriptor = proto && Object.getOwnPropertyDescriptor(proto, name);
     // oxlint-disable-next-line typescript/unbound-method -- called with .call on the page's object
     const set = descriptor?.set;
     if (!proto || !descriptor?.configurable || !set) return;
-    Object.defineProperty(proto, name, {
-      ...descriptor,
-      set(value: unknown) {
-        set.call(this, value);
-        onChange();
-      },
+    const wrapped = function (this: never, value: unknown) {
+      set.call(this, value);
+      onChange(change(this));
+    };
+    Object.defineProperty(proto, name, { ...descriptor, set: wrapped });
+    restores.push(() => {
+      // Not over a wrapper the page (or a polyfill) put there since.
+      if (Object.getOwnPropertyDescriptor(proto, name)?.set === wrapped)
+        Object.defineProperty(proto, name, descriptor);
     });
-    restores.push(() => Object.defineProperty(proto, name, descriptor));
   };
+  type Parent = CSSStyleSheet | CSSGroupingRule;
+  const insert = (parent: Parent, index: unknown): CssomChange => ({
+    kind: "insert",
+    parent,
+    index: index as number,
+  });
+  const remove = (parent: Parent): CssomChange => ({ kind: "delete", parent });
+  const sheetChange = (sheet: CSSStyleSheet): CssomChange => ({ kind: "sheet", sheet });
   const sheet = window.CSSStyleSheet?.prototype as unknown as Record<string, unknown> | undefined;
-  for (const name of [
-    "insertRule",
-    "deleteRule",
-    "addRule",
-    "removeRule",
-    "replace",
-    "replaceSync",
-  ])
-    wrapMethod(sheet, name);
+  wrapMethod(sheet, "insertRule", insert);
+  wrapMethod(sheet, "deleteRule", remove);
+  wrapMethod(sheet, "removeRule", remove);
+  for (const name of ["addRule", "replace", "replaceSync"]) wrapMethod(sheet, name, sheetChange);
   const grouping = (
     window as unknown as { CSSGroupingRule?: { prototype: Record<string, unknown> } }
   ).CSSGroupingRule?.prototype;
-  for (const name of ["insertRule", "deleteRule"]) wrapMethod(grouping, name);
-  wrapSetter(window.StyleSheet?.prototype, "disabled");
-  wrapSetter(window.Document?.prototype, "adoptedStyleSheets");
+  wrapMethod(grouping, "insertRule", insert);
+  wrapMethod(grouping, "deleteRule", remove);
+  wrapSetter(window.StyleSheet?.prototype, "disabled", sheetChange);
+  // Not reflected in an attribute: no MutationObserver sees it.
+  const owner = (element: Element | Document): CssomChange => ({ kind: "owner", owner: element });
+  wrapSetter(window.HTMLStyleElement?.prototype, "disabled", owner);
+  wrapSetter(window.Document?.prototype, "adoptedStyleSheets", owner);
   return () => {
     for (const restore of restores.reverse()) restore();
   };
@@ -101,11 +137,19 @@ export class LiveInteractionCss {
   /**
    * The stylesheets may have changed since the last sync. Reading them all
    * on every pointer move would be wasted work: the page says when (see
-   * invalidate()), or the CSSOM does (watchStylesheets).
+   * invalidate()), or the CSSOM does (watchStylesheets: a rule inserted is
+   * rewritten right away, other changes are looked at on the next sync).
    */
   private stale = true;
   /** Set while syncing: the agent's own sheet changing is not the page's. */
   private syncing = false;
+  /**
+   * The page's adoptedStyleSheets when last synced. The list can be changed
+   * in place (push, splice), which no setter sees: compared on every sync.
+   */
+  private adoptedList: readonly CSSStyleSheet[] = [];
+  /** The text of the agent's own sheet, not replaced again when the same. */
+  private adoptedCss = "";
   /** The selectors rewritten, as the page wrote them (restored on dispose). */
   private readonly originals = new Map<CSSStyleRule, string>();
   /** Rules whose rewritten selector the browser did not take: not tried again. */
@@ -120,12 +164,11 @@ export class LiveInteractionCss {
     /** The sheet itself if it can be read, or else a readable copy (DocumentCss.readable). */
     private readonly readable: (sheet: CSSStyleSheet) => CSSStyleSheet | null = (sheet) =>
       ruleCount(sheet) >= 0 ? sheet : null,
+    /** The page changed its stylesheets through the CSSOM: it may look different. */
+    private readonly onChange: () => void = () => {},
   ) {
     this.window = document.defaultView as FrameWindow;
-    // A rule inserted into an @media block does not change the signature: look at everything again.
-    this.unwatch = watchStylesheets(this.window, () => {
-      if (!this.syncing) this.reset();
-    });
+    this.unwatch = watchStylesheets(this.window, (change) => this.cssomChanged(change));
   }
 
   /**
@@ -151,8 +194,9 @@ export class LiveInteractionCss {
    * differently).
    */
   sync(): boolean {
-    if (!this.stale) return false;
+    if (!this.stale && !this.adoptedListChanged()) return false;
     this.stale = false;
+    this.adoptedList = this.pageAdoptedList();
     const sheets = pageStylesheets(this.document);
     const signature = stylesheetsSignature(sheets);
     if (signature === this.signature) return false;
@@ -171,6 +215,76 @@ export class LiveInteractionCss {
       this.syncing = false;
     }
     return true;
+  }
+
+  /** What the page changed through the CSSOM, if it is in the document's stylesheets. */
+  private cssomChanged(change: CssomChange): void {
+    if (this.syncing) return;
+    switch (change.kind) {
+      case "insert": {
+        if (!this.pageSheetOf(change.parent)) return;
+        const rule = change.parent.cssRules[change.index];
+        // Only the rule inserted is rewritten, not all the page's (CSS-in-JS inserts rules all the time).
+        // It could be inserted: the sheet is readable.
+        if (rule && !(rule instanceof this.window.CSSImportRule)) {
+          this.syncing = true;
+          try {
+            this.rewrite([rule], [], new Set());
+          } finally {
+            this.syncing = false;
+          }
+          this.signatureChanged();
+        } else {
+          this.reset();
+        }
+        break;
+      }
+      case "delete":
+        if (!this.pageSheetOf(change.parent)) return;
+        // Nothing to rewrite.
+        this.signatureChanged();
+        break;
+      case "sheet":
+        if (!this.pageSheetOf(change.sheet)) return;
+        this.reset();
+        break;
+      case "owner":
+        if (change.owner !== this.document && change.owner.ownerDocument !== this.document) return;
+        this.invalidate();
+        break;
+    }
+    this.onChange();
+  }
+
+  /**
+   * The stylesheets changed only in what was taken care of already: the
+   * signature is brought up to date (if it was), so that the next sync does
+   * not look at everything again.
+   */
+  private signatureChanged(): void {
+    if (this.stale) return;
+    this.signature = stylesheetsSignature(pageStylesheets(this.document));
+  }
+
+  /** The document's stylesheet (or the one importing it) that `parent` is in; null if none. */
+  private pageSheetOf(parent: CSSStyleSheet | CSSRule): CSSStyleSheet | null {
+    let sheet = parent instanceof this.window.CSSStyleSheet ? parent : parent.parentStyleSheet;
+    while (sheet?.ownerRule?.parentStyleSheet) sheet = sheet.ownerRule.parentStyleSheet;
+    return sheet && pageStylesheets(this.document).includes(sheet) ? sheet : null;
+  }
+
+  private pageAdoptedList(): readonly CSSStyleSheet[] {
+    const adopted = (this.document as Document & { adoptedStyleSheets?: CSSStyleSheet[] })
+      .adoptedStyleSheets;
+    return adopted ? adopted.filter((sheet) => !agentSheets.has(sheet)) : [];
+  }
+
+  private adoptedListChanged(): boolean {
+    const list = this.pageAdoptedList();
+    return (
+      list.length !== this.adoptedList.length ||
+      list.some((sheet, i) => sheet !== this.adoptedList[i])
+    );
   }
 
   /** Puts the page's selectors and the CSSOM back. */
@@ -207,7 +321,7 @@ export class LiveInteractionCss {
     copied.push(media && media !== "all" ? `@media ${media}{${css}}` : css);
   }
 
-  private rewrite(rules: CSSRuleList, copied: string[], visited: Set<CSSStyleSheet>): void {
+  private rewrite(rules: ArrayLike<CSSRule>, copied: string[], visited: Set<CSSStyleSheet>): void {
     const { CSSStyleRule, CSSImportRule } = this.window;
     for (const rule of Array.from(rules)) {
       if (rule instanceof CSSStyleRule) this.rewriteRule(rule);
@@ -283,11 +397,14 @@ export class LiveInteractionCss {
           (sheet) => sheet !== current,
         );
       this.adopted = null;
+      this.adoptedCss = "";
       return;
     }
     const sheet = current ?? new this.window.CSSStyleSheet();
     agentSheets.add(sheet);
-    sheet.replaceSync(css);
+    // Replacing a sheet's rules restyles the whole document: only when they changed.
+    if (css !== this.adoptedCss || !current) sheet.replaceSync(css);
+    this.adoptedCss = css;
     this.adopted = sheet;
     // The page may have replaced the list (adoptedStyleSheets = [...]) since.
     if (!document.adoptedStyleSheets.includes(sheet))

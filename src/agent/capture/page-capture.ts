@@ -142,7 +142,15 @@ export class PageCapture {
         this.changed();
       },
     );
-    this.liveCss = new LiveInteractionCss(document, (sheet) => this.css.readable(sheet));
+    this.liveCss = new LiveInteractionCss(
+      document,
+      (sheet) => this.css.readable(sheet),
+      () => {
+        // A rule may have changed in place (an adopted sheet replaced with as many rules).
+        this.css.invalidate();
+        this.changed();
+      },
+    );
     this.mutations = new this.window.MutationObserver((records) => {
       // The agent's own interaction marks: changing them is input, which says
       // itself whether the page may look different (see optimizeHover).

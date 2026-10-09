@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { LiveInteractionCss } from "./live-css";
 
 let live: LiveInteractionCss | null = null;
@@ -40,8 +40,76 @@ describe("LiveInteractionCss", () => {
     document.querySelector(".row")!.setAttribute("data-thp-hover", "");
     const media = document.styleSheets[0]!.cssRules[1] as CSSMediaRule;
     media.insertRule(".row:hover .tools { display: flex }", 1);
-    live!.sync();
     expect(display()).toBe("flex");
+  });
+
+  it("tells when the page changes its stylesheets through the CSSOM, and only its own", () => {
+    const changed = vi.fn();
+    document.head.innerHTML = "<style>.tools { display: none }</style>";
+    document.body.innerHTML = ROW;
+    live = new LiveInteractionCss(document, undefined, changed);
+    live.sync();
+    document.styleSheets[0]!.insertRule(".x { color: red }", 1);
+    document.styleSheets[0]!.deleteRule(1);
+    expect(changed).toHaveBeenCalledTimes(2);
+    // Not the page's: a sheet of its own that is not in the document (a shadow root's, say).
+    const elsewhere = new CSSStyleSheet();
+    elsewhere.insertRule(".row:hover .tools { display: flex }");
+    elsewhere.replaceSync(".y { color: blue }");
+    expect(changed).toHaveBeenCalledTimes(2);
+    // A <style> disabled, which no attribute shows.
+    document.querySelector("style")!.disabled = true;
+    expect(changed).toHaveBeenCalledTimes(3);
+  });
+
+  it("notices a sheet the page pushes onto adoptedStyleSheets in place", () => {
+    const adopted: CSSStyleSheet[] = [];
+    Object.defineProperty(document, "adoptedStyleSheets", {
+      configurable: true,
+      get: () => adopted,
+    });
+    try {
+      document.body.innerHTML = ROW;
+      live = new LiveInteractionCss(document);
+      live.sync();
+      const sheet = new CSSStyleSheet();
+      sheet.replaceSync(".row:hover .tools { display: flex }");
+      adopted.push(sheet);
+      expect(live.sync()).toBe(true);
+      expect((sheet.cssRules[0] as CSSStyleRule).selectorText).toBe(
+        ".row:is(:hover,[data-thp-hover]) .tools",
+      );
+    } finally {
+      delete (document as { adoptedStyleSheets?: unknown }).adoptedStyleSheets;
+    }
+  });
+
+  it("puts the CSSOM back when disposed, but not over a wrapper put there since", () => {
+    // Read as values, compared by identity only (never called unbound).
+    const method = () => Reflect.get(CSSStyleSheet.prototype, "insertRule") as unknown;
+    const setter = () => Object.getOwnPropertyDescriptor(StyleSheet.prototype, "disabled")!;
+    const native = setter();
+    live = new LiveInteractionCss(document);
+    const wrappedInsert = method();
+    // A polyfill wrapping the setter after the agent did.
+    const ours = setter();
+    // oxlint-disable-next-line typescript/unbound-method -- called with Reflect.apply on the sheet
+    const set = ours.set!;
+    const theirs: PropertyDescriptor = {
+      ...ours,
+      set(this: StyleSheet, value: boolean) {
+        Reflect.apply(set, this, [value]);
+      },
+    };
+    Object.defineProperty(StyleSheet.prototype, "disabled", theirs);
+    try {
+      live.dispose();
+      live = null;
+      expect(method()).not.toBe(wrappedInsert);
+      expect(setter()).toEqual(theirs);
+    } finally {
+      Object.defineProperty(StyleSheet.prototype, "disabled", native);
+    }
   });
 
   it("rewrites rules in @media blocks, and each rule only once", () => {
@@ -61,11 +129,11 @@ describe("LiveInteractionCss", () => {
     row.setAttribute("data-thp-hover", "");
     // Nothing changed: nothing read again.
     expect(live!.sync()).toBe(false);
-    // Through the CSSOM, which no MutationObserver sees.
+    // Through the CSSOM, which no MutationObserver sees: that rule is rewritten
+    // right away, and the others are not looked at again.
     document.styleSheets[0]!.insertRule(".row:hover .tools { display: flex }", 1);
-    expect(display()).toBe("none");
-    expect(live!.sync()).toBe(true);
     expect(display()).toBe("flex");
+    expect(live!.sync()).toBe(false);
 
     const style = document.createElement("style");
     style.textContent = ".row:hover .tools { display: grid }";
@@ -125,6 +193,11 @@ describe("LiveInteractionCss", () => {
       expect(css).toContain("&:is(:hover,[data-thp-hover])");
       expect(css).not.toContain("use :is(");
       expect(css).not.toContain("gray");
+      // Looked at again with nothing changed: the agent's sheet is not replaced (that restyles everything).
+      const replace = vi.spyOn(adopted[0]!, "replaceSync");
+      live.reset();
+      live.sync();
+      expect(replace).not.toHaveBeenCalled();
       // The copy is DocumentCss's, for the image: left as it was.
       const media = copy.cssRules[0] as CSSMediaRule;
       expect((media.cssRules[0] as CSSStyleRule).selectorText).toBe(".row:hover .tools");
