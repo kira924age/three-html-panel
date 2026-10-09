@@ -258,6 +258,12 @@ export interface InputSynthesizerOptions {
   measure: <T>(run: () => T) => T;
   /** Called after anything that may have changed what the page looks like. */
   onChange: () => void;
+  /**
+   * Where the marks may start transitions, to end them at once (see
+   * syncMarks): nowhere (the page has none), inside the elements whose marks
+   * change, or anywhere (its rules restyle other elements: `.a:hover ~ .b`).
+   */
+  transitions?: () => "none" | "inside" | "everywhere";
 }
 
 /** A finger or controller drag that may scroll, from where it was pressed. */
@@ -633,6 +639,7 @@ export class InputSynthesizer {
     const focused = this.focus.current;
     let running: Set<Animation> | null = null;
     let roots: Element[] = [];
+    const scope = this.options.transitions?.() ?? "inside";
     const changed = this.marks.update(
       {
         hovered: this.hovered,
@@ -644,7 +651,8 @@ export class InputSynthesizer {
           (this.keyboardModality || isTextField(focused) || isEditingHost(focused)),
       },
       (elements) => {
-        roots = topmost(elements);
+        if (scope === "none") return;
+        roots = scope === "everywhere" ? [this.document.documentElement] : topmost(elements);
         // What was already on its way is the page's own doing: left to run.
         running = new Set(runningTransitions(roots));
       },

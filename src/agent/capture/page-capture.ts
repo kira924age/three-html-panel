@@ -84,6 +84,9 @@ export class PageCapture {
   private readonly window: FrameWindow;
   private readonly css: DocumentCss;
   private readonly liveCss: LiveInteractionCss;
+  /** A transition has run in the page (see the transitions option of InputSynthesizer). */
+  private sawTransition = false;
+  private inlineTransition: boolean | null = null;
   private readonly images: ImageInliner;
   private readonly input: InputSynthesizer;
   private readonly mutations: MutationObserver;
@@ -165,7 +168,16 @@ export class PageCapture {
     this.input = new InputSynthesizer(document, {
       measure: this.measure,
       onChange: () => this.changed(),
+      transitions: () => {
+        // The rules as they are now, before the marks change.
+        if (this.liveCss.sync()) this.changed();
+        if (!this.liveCss.hasTransitions && !this.sawTransition && !this.inlineTransitions())
+          return "none";
+        return this.liveCss.reachesOutside ? "everywhere" : "inside";
+      },
     });
+    // A transition ran (one in an inline style, say): the page has some.
+    this.window.addEventListener("transitionrun", this.transitionRan, true);
 
     this.mutations.observe(document, {
       subtree: true,
@@ -244,6 +256,7 @@ export class PageCapture {
     for (const type of INVALIDATING_EVENTS)
       this.window.removeEventListener(type, this.changed, true);
     this.document.removeEventListener("load", this.stylesheetsChanged, true);
+    this.window.removeEventListener("transitionrun", this.transitionRan, true);
   }
 
   /** Runs a measurement that adds elements to the page, without it counting as a change. */
@@ -268,8 +281,19 @@ export class PageCapture {
   private readonly changed = () => {
     this.layoutVersion++;
     this.liveCss.invalidate();
+    this.inlineTransition = null;
     this.invalidate();
   };
+
+  private readonly transitionRan = () => {
+    this.sawTransition = true;
+  };
+
+  /** Whether an element has a transition in its inline style (cached until the page changes). */
+  private inlineTransitions(): boolean {
+    this.inlineTransition ??= this.document.querySelector('[style*="transition"]') !== null;
+    return this.inlineTransition;
+  }
 
   private readonly stylesheetsChanged = (event: Event) => {
     const { HTMLLinkElement, HTMLStyleElement } = this.window;

@@ -65,4 +65,20 @@ test("chooses from a menu that is open while focus is in it", async () => {
   await expect.poll(status).toBe("Marked as unread: Quarterly report");
 });
 
+test("leaves the page's own transition running when pressed elsewhere", async () => {
+  await panel.click(await panel.at("#compose"));
+  const running = () =>
+    panel.frame.evaluate(
+      () =>
+        document
+          .querySelector("#draft")!
+          .getAnimations()
+          .filter((animation) => animation.playState === "running").length,
+    );
+  await expect.poll(running).toBe(1);
+  // A press (every ancestor, <html> too, is :active meanwhile) and a hover elsewhere.
+  await panel.click(await panel.at("h1"));
+  expect(await running()).toBe(1);
+});
+
 const xy = ({ x, y }: { x: number; y: number }): [number, number] => [x, y];

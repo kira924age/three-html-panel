@@ -249,6 +249,16 @@ function patchSelectorQueries(window: FrameWindow): () => void {
   };
 }
 
+/** Combinators and :has(), with which a rule about one element restyles others (`+` in an :nth-child() too, which is only cautious). */
+const WIDE_SELECTOR = /[~+]|:has\(/;
+
+/** Whether declarations make an element transition (some duration other than 0). */
+export function hasTransition(style: CSSStyleDeclaration): boolean {
+  const duration =
+    style.getPropertyValue("transition-duration") || style.getPropertyValue("transition");
+  return /[1-9]/.test(duration);
+}
+
 const joinParts = (parts: [CSSStyleSheet | null, string][]) =>
   parts.map(([, part]) => part).join("|");
 
@@ -285,6 +295,14 @@ export class LiveInteractionCss {
   private readonly originals = new Map<CSSStyleRule, string>();
   /** Rules whose rewritten selector the browser did not take: not tried again. */
   private readonly rejected = new WeakSet<CSSStyleRule>();
+  /**
+   * The page's interaction rules reach elements outside the one in the state
+   * (`.a:hover ~ .b`, `.list:has(.row:hover) .bar`): what they restyle is not
+   * only inside the elements whose marks change.
+   */
+  reachesOutside = false;
+  /** The page's stylesheets have transitions (or may: a copy's are not looked at). */
+  hasTransitions = false;
   /** The interaction rules of stylesheets that could not be edited. */
   private adopted: CSSStyleSheet | null = null;
   private readonly window: FrameWindow;
@@ -499,6 +517,8 @@ export class LiveInteractionCss {
     if (source.disabled) return;
     let css = this.interactionRules(sheet.cssRules, false).join("\n");
     if (!css) return;
+    this.hasTransitions = true;
+    if (WIDE_SELECTOR.test(css)) this.reachesOutside = true;
     // In the agent's sheet, url() would be relative to the document.
     if (source.href) css = absolutizeUrls(css, source.href);
     copied.push(media && media !== "all" ? `@media ${media}{${css}}` : css);
@@ -518,6 +538,7 @@ export class LiveInteractionCss {
   }
 
   private rewriteRule(rule: CSSStyleRule): void {
+    if (!this.hasTransitions && hasTransition(rule.style)) this.hasTransitions = true;
     if (this.rejected.has(rule)) return;
     const original = rule.selectorText;
     const selector = liveSelector(original);
@@ -530,6 +551,7 @@ export class LiveInteractionCss {
     }
     // As the page wrote it, without what was rewritten of it before (it may have read it back and added to it).
     if (!this.originals.has(rule)) this.originals.set(rule, unwrapLiveSelector(original));
+    if (WIDE_SELECTOR.test(rule.selectorText)) this.reachesOutside = true;
   }
 
   /**

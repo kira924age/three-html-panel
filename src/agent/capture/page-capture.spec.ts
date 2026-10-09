@@ -276,6 +276,7 @@ describe("interaction states in the live page", () => {
       configurable: true,
       value: () => hitTarget,
     });
+    document.styleSheets[0]!.insertRule(".tools { transition: transform 0.3s }", 0);
     const [byHover, pageOwn] = fakeTransitions(
       { target: tools, started: () => row.hasAttribute("data-thp-hover") },
       // The page's own, running already (an accordion opening, say).
@@ -290,6 +291,46 @@ describe("interaction states in the live page", () => {
       // Pressed and released (every ancestor, <html> too, is :active meanwhile).
       press();
       expect(pageOwn!.finish).not.toHaveBeenCalled();
+    } finally {
+      delete (Element.prototype as { getAnimations?: unknown }).getAnimations;
+    }
+  });
+
+  it("does not look for transitions in a page that has none", () => {
+    const lookups = vi.fn(() => []);
+    Object.defineProperty(Element.prototype, "getAnimations", {
+      configurable: true,
+      value: lookups,
+    });
+    try {
+      capture.start();
+      move();
+      press();
+      expect(lookups).not.toHaveBeenCalled();
+      // One in an inline style counts.
+      document.querySelector(".row")!.setAttribute("style", "transition: opacity 0.2s");
+      capture.handle({ type: "pointer", kind: "leave", x: 0, y: 0 });
+      expect(lookups).toHaveBeenCalled();
+    } finally {
+      delete (Element.prototype as { getAnimations?: unknown }).getAnimations;
+    }
+  });
+
+  it("ends a transition the hover starts on a sibling, outside the row", () => {
+    const row = document.querySelector(".row")!;
+    const sibling = document.body.appendChild(document.createElement("aside"));
+    const style = document.createElement("style");
+    style.textContent =
+      "aside { transition: transform 0.3s } .row:hover + aside { transform: none }";
+    document.head.append(style);
+    const [onSibling] = fakeTransitions({
+      target: sibling,
+      started: () => row.hasAttribute("data-thp-hover"),
+    });
+    try {
+      capture.start();
+      move();
+      expect(onSibling!.finish).toHaveBeenCalled();
     } finally {
       delete (Element.prototype as { getAnimations?: unknown }).getAnimations;
     }

@@ -34,3 +34,7 @@ for (const subject of subjects) {
   });
   list.append(item);
 }
+
+document.querySelector("#compose")!.addEventListener("click", () => {
+  document.querySelector("#draft")!.classList.toggle("open");
+});
