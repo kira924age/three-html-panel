@@ -24,12 +24,27 @@ const DEFAULT_ORIGINS = {
   production: { host: "http://localhost:4173", panel: "http://localhost:4174" },
 };
 
+/**
+ * The mode of a build to deploy (`pnpm build:deploy`): every origin must be set
+ * (in .env.deploy.local, see .env.example), since a part left pointing at
+ * localhost would be deployed broken.
+ */
+export const DEPLOY_MODE = "deploy";
+
+/** The variable `name` from `env`; in DEPLOY_MODE, an error if it is not set. */
+export function originVariable(env: Record<string, string>, mode: string, name: string) {
+  const value = env[name];
+  if (!value && mode === DEPLOY_MODE)
+    throw new Error(`${name} is not set: a build to deploy needs every origin (see .env.example)`);
+  return value;
+}
+
 export function originsFor(mode: string): { host: string; panel: string } {
   const env = loadEnv(mode, import.meta.dirname, "VITE_");
   const defaults = mode === "production" ? DEFAULT_ORIGINS.production : DEFAULT_ORIGINS.development;
   return {
-    host: env.VITE_HOST_ORIGIN || defaults.host,
-    panel: env.VITE_PANEL_ORIGIN || defaults.panel,
+    host: originVariable(env, mode, "VITE_HOST_ORIGIN") || defaults.host,
+    panel: originVariable(env, mode, "VITE_PANEL_ORIGIN") || defaults.panel,
   };
 }
 /** Where the panel pages are, from the repository's root (and in URLs of the panel server). */

@@ -12,6 +12,7 @@ import { defineConfig, loadEnv, type PluginOption, type UserConfig } from "vite"
 import {
   PANEL_PAGE_HEADERS,
   PANEL_SANDBOX_CSP,
+  originVariable,
   originsFor,
   staticHeaders,
 } from "../../vite.panels.config.ts";
@@ -46,7 +47,7 @@ export function siteOrigins(mode: string): Record<SiteName, string> {
   return Object.fromEntries(
     SITE_NAMES.map((name) => [
       name,
-      env[siteOriginVariable(name)] ||
+      originVariable(env, mode, siteOriginVariable(name)) ||
         `http://localhost:${SITE_PORTS[name] - (preview ? 1000 : 0)}`,
     ]),
   ) as Record<SiteName, string>;
