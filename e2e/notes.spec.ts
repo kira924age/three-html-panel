@@ -269,11 +269,13 @@ test("paints a page's body background over the whole panel, as browsers do", asy
 
 test("draws an open popover over the page, where the page shows it, and not once it is closed", async () => {
   // In a clipped, transformed box: the popover is in the top layer, out of it.
+  // Its color comes from a rule through the box, which must still match it.
   await panel.frame.evaluate(() => {
     const box = document.createElement("div");
+    box.className = "clip";
     box.style.cssText =
       "position: absolute; left: 0; top: 0; width: 10px; height: 10px; overflow: hidden; transform: translateX(1px)";
-    box.innerHTML = `<div id="pop" popover style="margin: 0; inset: auto; left: 600px; top: 400px; width: 200px; height: 100px; border: 0; background: rgb(220, 20, 20)"></div>`;
+    box.innerHTML = `<style>.clip > button + #pop { background: rgb(220, 20, 20) }</style><button>Open</button><div id="pop" popover style="margin: 0; inset: auto; left: 600px; top: 400px; width: 200px; height: 100px; border: 0"></div>`;
     document.body.append(box);
   });
   const red = async () => {

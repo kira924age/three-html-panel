@@ -1046,7 +1046,10 @@ describe("scrolled content", () => {
 
 describe("the top layer", () => {
   /** The snapshot's root, with these elements in the top layer (jsdom has none). */
-  function snapshotWithTopLayer(open: Record<string, string>): HTMLElement {
+  function snapshotWithTopLayer(
+    open: Record<string, string>,
+    options: Partial<Parameters<typeof snapshotDocument>[1]> = {},
+  ): HTMLElement {
     for (const [id, pseudoClass] of Object.entries(open)) {
       const element = document.getElementById(id)!;
       const matches = element.matches.bind(element);
@@ -1054,23 +1057,40 @@ describe("the top layer", () => {
         (selector: string) => selector === pseudoClass || matches(selector),
       );
     }
-    const xhtml = snapshotDocument(document, { inlineImage: () => null });
+    const xhtml = snapshotDocument(document, { inlineImage: () => null, ...options });
     return new DOMParser().parseFromString(xhtml, "application/xhtml+xml").documentElement;
   }
 
   afterEach(() => vi.restoreAllMocks());
 
   it("draws an open popover over the page where the page has it, out of its parents", () => {
-    document.body.innerHTML = `<style>#menu { color: rgb(1, 2, 3); --accent: red }</style>
-      <header style="backdrop-filter: blur(4px)">
-        <div id="menu" popover style="display: flex">Light</div>
+    document.body.innerHTML = `<header class="bar" style="backdrop-filter: blur(4px)">
+        <button>Theme</button><div id="menu" popover style="display: flex">Light</div>
         <div id="closed" popover>Dark</div>
       </header><main>Page</main>`;
     document.getElementById("menu")!.getBoundingClientRect = () => new DOMRect(500, 40, 152, 120);
     const root = snapshotWithTopLayer({ menu: ":popover-open" });
-    const menu = root.querySelector<HTMLElement>("#menu")!;
-    expect(menu.parentElement).toBe(root);
-    expect(root.lastElementChild).toBe(menu);
+    const menu = root.lastElementChild!.querySelector<HTMLElement>("#menu")!;
+    // Out of the header, over the page: with stand-ins for its parents, which
+    // make no box, so that the page's rules (.bar #menu, button + #menu) match
+    // it and it inherits as it did.
+    const header = menu.parentElement!;
+    expect(header.className).toBe("bar");
+    expect(header.style.getPropertyValue("display")).toBe("contents");
+    expect(header.style.getPropertyPriority("display")).toBe("important");
+    expect(header.parentElement!.localName).toBe("body");
+    expect(header.parentElement!.style.getPropertyValue("display")).toBe("contents");
+    expect(root.lastElementChild).toBe(header.parentElement);
+    const button = menu.previousElementSibling as HTMLElement;
+    expect(button.localName).toBe("button");
+    expect(button.style.getPropertyValue("display")).toBe("none");
+    expect(header.nextElementSibling!.localName).toBe("main");
+    expect((header.nextElementSibling as HTMLElement).style.display).toBe("none");
+    // Where it was, a hidden stand-in (the header's children are counted as they were).
+    const body = root.querySelector("body")!;
+    const place = body.querySelector<HTMLElement>("header > button + #menu")!;
+    expect(place.style.getPropertyValue("display")).toBe("none");
+    expect(place.childNodes).toHaveLength(0);
     expect(menu.hasAttribute("data-thp-popover-open")).toBe(true);
     for (const [name, value] of <[string, string][]>[
       ["position", "fixed"],
@@ -1083,11 +1103,8 @@ describe("the top layer", () => {
       expect(menu.style.getPropertyValue(name)).toBe(value);
       expect(menu.style.getPropertyPriority(name)).toBe("important");
     }
-    // Its computed text style and custom properties (inherited in the header, which it is no longer in).
-    expect(menu.style.color).toBe("rgb(1, 2, 3)");
-    expect(menu.style.getPropertyValue("--accent")).toBe("red");
     // A closed popover stays where it is, hidden by the page's rules.
-    const closed = root.querySelector("#closed")!;
+    const closed = body.querySelector("#closed")!;
     expect(closed.parentElement!.localName).toBe("header");
     expect(closed.hasAttribute("data-thp-popover-open")).toBe(false);
   });
@@ -1102,12 +1119,34 @@ describe("the top layer", () => {
       return { backgroundColor: "rgba(0, 0, 0, 0.5)" } as CSSStyleDeclaration;
     });
     const root = snapshotWithTopLayer({ ask: ":modal" });
-    const copy = root.querySelector<HTMLElement>("#ask")!;
+    const copy = root.lastElementChild!.querySelector<HTMLElement>("#ask")!;
     expect(copy.hasAttribute("data-thp-modal")).toBe(true);
-    expect(root.lastElementChild).toBe(copy);
-    const backdrop = copy.previousElementSibling as HTMLElement;
+    const backdrop = root.lastElementChild!.previousElementSibling as HTMLElement;
     expect(backdrop.style.backgroundColor).toBe("rgba(0, 0, 0, 0.5)");
     expect(backdrop.style.position).toBe("fixed");
     expect(copy.style.top).toBe("80px");
+  });
+
+  it("draws the page's selection under a popover, and the selection and scrollbars in it over it", () => {
+    document.body.innerHTML = `<p id="text">Page</p><div id="menu" popover><p id="inside">Menu</p></div>`;
+    const menu = document.getElementById("menu")!;
+    menu.getBoundingClientRect = () => new DOMRect(0, 0, 100, 100);
+    const boxes = (root: HTMLElement) =>
+      Array.from(root.children).filter((child) => child.localName === "div");
+    const selection = [new DOMRect(10, 10, 30, 10)];
+    const under = snapshotWithTopLayer(
+      { menu: ":popover-open" },
+      { selection, selectionIn: document.getElementById("text") },
+    );
+    expect(boxes(under)).toHaveLength(1);
+    expect(boxes(under)[0]!.nextElementSibling!.localName).toBe("body");
+    expect(under.lastElementChild!.querySelector("#menu")).not.toBeNull();
+    vi.restoreAllMocks();
+    const over = snapshotWithTopLayer(
+      { menu: ":popover-open" },
+      { selection, selectionIn: document.getElementById("inside")!.firstChild },
+    );
+    expect(over.lastElementChild!.localName).toBe("div");
+    expect(over.lastElementChild!.previousElementSibling!.querySelector("#menu")).not.toBeNull();
   });
 });
