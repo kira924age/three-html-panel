@@ -293,32 +293,38 @@ export function stylesheetsSignature(sheets: CSSStyleSheet[]): string {
  */
 export class DocumentCss {
   /** Null until collected (a page without stylesheets has the signature ""). */
-  private signature: string | null = null;
-  private css: readonly string[] = [];
+  #signature: string | null = null;
+  #css: readonly string[] = [];
   /**
    * The lists of rules inside the sheets (of blocks, nested rules, imported
    * sheets) as they were collected, with how many rules each had: rules
    * inserted there change no sheet's own count.
    */
-  private inner: { rules: CSSRuleList; length: number }[] = [];
+  #inner: { rules: CSSRuleList; length: number }[] = [];
   /**
    * Cross-origin stylesheets (a web font service, say) hide their rules from
    * script unless they were loaded with CORS. They are fetched again with CORS
    * and parsed here, keyed by URL.
    */
-  private readonly fetched = new Map<string, CSSStyleSheet | "loading" | "failed">();
-  private readonly window: FrameWindow;
+  readonly #fetched = new Map<string, CSSStyleSheet | "loading" | "failed">();
+  readonly #window: FrameWindow;
+  readonly #document: Document;
+  readonly #resolveUrl: (url: string) => string | null;
+  readonly #onChange: () => void;
 
   constructor(
-    private readonly document: Document,
-    private readonly resolveUrl: (url: string) => string | null,
-    private readonly onChange: () => void = () => {},
+    document: Document,
+    resolveUrl: (url: string) => string | null,
+    onChange: () => void = () => {},
   ) {
-    this.window = document.defaultView as FrameWindow;
+    this.#document = document;
+    this.#resolveUrl = resolveUrl;
+    this.#onChange = onChange;
+    this.#window = document.defaultView as FrameWindow;
   }
 
   invalidate(): void {
-    this.signature = null;
+    this.#signature = null;
   }
 
   /**
@@ -327,30 +333,30 @@ export class DocumentCss {
    * (@namespace, which must come first in it).
    */
   get(): readonly string[] {
-    const sheets = pageStylesheets(this.document);
+    const sheets = pageStylesheets(this.#document);
     const signature = stylesheetsSignature(sheets);
-    const changedInside = this.inner.some(({ rules, length }) => rules.length !== length);
-    if (signature !== this.signature || changedInside) {
-      this.inner = [];
+    const changedInside = this.#inner.some(({ rules, length }) => rules.length !== length);
+    if (signature !== this.#signature || changedInside) {
+      this.#inner = [];
       const out: string[][] = [[DEFAULT_FOCUS_RING_CSS]];
-      for (const sheet of sheets) this.serializeSheet(sheet, out);
+      for (const sheet of sheets) this.#serializeSheet(sheet, out);
       out.push([FREEZE_ANIMATIONS_CSS]);
       // A namespace's url() is a name, not a file to inline.
-      this.css = out
+      this.#css = out
         .filter((rules) => rules.length > 0)
         .map((rules) =>
           [
             ...rules.filter(isNamespace),
             inlineCssUrls(
               rules.filter((rule) => !isNamespace(rule)).join("\n"),
-              this.document.baseURI,
-              this.resolveUrl,
+              this.#document.baseURI,
+              this.#resolveUrl,
             ),
           ].join("\n"),
         );
-      this.signature = signature;
+      this.#signature = signature;
     }
-    return this.css;
+    return this.#css;
   }
 
   /**
@@ -359,7 +365,7 @@ export class DocumentCss {
    * "" for an anonymous one), outermost first: its rules go in them, as on the
    * page.
    */
-  private serializeSheet(
+  #serializeSheet(
     source: CSSStyleSheet,
     sheets: string[][],
     layers: string[] = [],
@@ -369,12 +375,12 @@ export class DocumentCss {
     const sheet = this.readable(source);
     if (!sheet) return;
     // An imported sheet's rules count in no document sheet's (see get()).
-    if (imported) this.watch(sheet.cssRules);
+    if (imported) this.#watch(sheet.cssRules);
     const all = Array.from(sheet.cssRules);
     // Its @import rules, and the @layer statements among them (which declare
     // layers in turn with the imported ones), come first: each becomes a sheet
     // of its own, before this one, in their order.
-    const { CSSImportRule, CSSLayerStatementRule } = this.window;
+    const { CSSImportRule, CSSLayerStatementRule } = this.#window;
     let leading = 0;
     all.forEach((rule, index) => {
       if (rule instanceof CSSImportRule) leading = index + 1;
@@ -383,9 +389,9 @@ export class DocumentCss {
     for (const rule of all.slice(0, leading)) {
       if (CSSLayerStatementRule && rule instanceof CSSLayerStatementRule)
         sheets.push(inLayers([rule.cssText], layers));
-      else this.serializeRules([rule], rules, sheets, layers);
+      else this.#serializeRules([rule], rules, sheets, layers);
     }
-    this.serializeRules(all.slice(leading), rules, sheets, layers);
+    this.#serializeRules(all.slice(leading), rules, sheets, layers);
     if (source.href) {
       // A namespace's url() is a name, not a file.
       for (let i = 0; i < rules.length; i++)
@@ -394,7 +400,7 @@ export class DocumentCss {
     sheets.push(inLayers(rules, layers));
   }
 
-  private serializeRules(
+  #serializeRules(
     rules: ArrayLike<CSSRule>,
     out: string[],
     sheets: string[][],
@@ -409,12 +415,12 @@ export class DocumentCss {
       CSSGroupingRule,
       CSSPageRule,
       CSS,
-    } = this.window;
+    } = this.#window;
     for (const rule of Array.from(rules)) {
       // Rules inserted in a block later are noticed (see get()); not in every
       // style rule (each has a list, empty but for nested rules: too many).
       const block = (rule as Partial<CSSGroupingRule>).cssRules;
-      if (block && (block.length > 0 || !(rule instanceof CSSStyleRule))) this.watch(block);
+      if (block && (block.length > 0 || !(rule instanceof CSSStyleRule))) this.#watch(block);
       if (rule instanceof CSSStyleRule) {
         if (rule.cssRules.length === 0) {
           out.push(`${rewriteSelector(rule.selectorText)}{${rule.style.cssText}}`);
@@ -422,16 +428,16 @@ export class DocumentCss {
         }
         // Nested rules (CSS nesting) are copied as the top level's, inside it.
         const inner: string[] = [];
-        this.serializeRules(rule.cssRules, inner, sheets, layers);
+        this.#serializeRules(rule.cssRules, inner, sheets, layers);
         out.push(
           `${rewriteSelector(rule.selectorText)} {${rule.style.cssText}\n${inner.join("\n")}\n}`,
         );
       } else if (rule instanceof CSSMediaRule) {
-        if (this.window.matchMedia(rule.conditionText).matches)
-          this.serializeRules(rule.cssRules, out, sheets, layers);
+        if (this.#window.matchMedia(rule.conditionText).matches)
+          this.#serializeRules(rule.cssRules, out, sheets, layers);
       } else if (rule instanceof CSSSupportsRule) {
         if (CSS.supports(rule.conditionText))
-          this.serializeRules(rule.cssRules, out, sheets, layers);
+          this.#serializeRules(rule.cssRules, out, sheets, layers);
       } else if (rule instanceof CSSImportRule) {
         const sheet = rule.styleSheet;
         // Its conditions: media, and supports() (newer browsers).
@@ -439,10 +445,10 @@ export class DocumentCss {
         const layer = (rule as { layerName?: string | null }).layerName;
         if (
           sheet &&
-          this.window.matchMedia(rule.media.mediaText || "all").matches &&
+          this.#window.matchMedia(rule.media.mediaText || "all").matches &&
           (!supports || CSS.supports(supports))
         )
-          this.serializeSheet(sheet, sheets, layer == null ? layers : [...layers, layer], true);
+          this.#serializeSheet(sheet, sheets, layer == null ? layers : [...layers, layer], true);
       } else if (rule instanceof CSSKeyframesRule) {
         // Animations are frozen, so keyframes are never used.
       } else if (
@@ -454,7 +460,7 @@ export class DocumentCss {
         // Other blocks of rules (@layer, @container, @scope…): their rules as
         // the top level's (interaction states, @media checked here), in them.
         const inner: string[] = [];
-        this.serializeRules(rule.cssRules, inner, sheets, layers);
+        this.#serializeRules(rule.cssRules, inner, sheets, layers);
         const prelude = rule.cssText.slice(0, rule.cssText.indexOf("{")).trim();
         out.push(`${rewriteSelector(prelude)} {\n${inner.join("\n")}\n}`);
       } else {
@@ -463,8 +469,8 @@ export class DocumentCss {
     }
   }
 
-  private watch(rules: CSSRuleList): void {
-    this.inner.push({ rules, length: rules.length });
+  #watch(rules: CSSRuleList): void {
+    this.#inner.push({ rules, length: rules.length });
   }
 
   /**
@@ -475,24 +481,24 @@ export class DocumentCss {
     if (ruleCount(sheet) >= 0) return sheet;
     if (!sheet.href) return null;
     const href = sheet.href;
-    const fetched = this.fetched.get(href);
-    if (fetched instanceof this.window.CSSStyleSheet) return fetched;
+    const fetched = this.#fetched.get(href);
+    if (fetched instanceof this.#window.CSSStyleSheet) return fetched;
     if (!fetched) {
-      this.fetched.set(href, "loading");
+      this.#fetched.set(href, "loading");
       fetch(href, { mode: "cors", credentials: "omit", headers: { Accept: "text/css,*/*;q=0.1" } })
         .then((response) =>
           response.ok ? response.text() : Promise.reject(new Error(String(response.status))),
         )
         .then((text) => {
           // Parse in the page's realm, so the rules pass the type checks above.
-          const parsed = new this.window.CSSStyleSheet();
+          const parsed = new this.#window.CSSStyleSheet();
           // replaceSync ignores @import; enough for this purpose.
           parsed.replaceSync(text);
-          this.fetched.set(href, parsed);
+          this.#fetched.set(href, parsed);
           this.invalidate();
-          this.onChange();
+          this.#onChange();
         })
-        .catch(() => this.fetched.set(href, "failed"));
+        .catch(() => this.#fetched.set(href, "failed"));
     }
     return null;
   }

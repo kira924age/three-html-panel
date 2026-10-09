@@ -81,80 +81,81 @@ export interface PageCaptureOptions {
 }
 
 export class PageCapture {
-  private readonly window: FrameWindow;
-  private readonly css: DocumentCss;
-  private readonly liveCss: LiveInteractionCss;
+  readonly #window: FrameWindow;
+  readonly #css: DocumentCss;
+  readonly #liveCss: LiveInteractionCss;
   /** A transition has run in the page (see the transitions option of InputSynthesizer). */
-  private sawTransition = false;
-  private inlineTransition: boolean | null = null;
-  private readonly images: ImageInliner;
-  private readonly input: InputSynthesizer;
-  private readonly mutations: MutationObserver;
-  private readonly pacer = new RenderPacer();
-  private dirty = true;
-  private timer = 0;
-  private notBefore = 0;
-  private lastEditing = "";
+  #sawTransition = false;
+  #inlineTransition: boolean | null = null;
+  readonly #images: ImageInliner;
+  readonly #input: InputSynthesizer;
+  readonly #mutations: MutationObserver;
+  readonly #pacer = new RenderPacer();
+  #dirty = true;
+  #timer = 0;
+  #notBefore = 0;
+  #lastEditing = "";
   /**
    * The SVG of the frame sent last. A capture that looks the same (the DOM
    * changed, as a framework re-rendering does, but not what it shows) is not
    * sent: the host would load, draw and upload it again for nothing.
    */
-  private lastSvg = "";
-  private lastCursor = "";
-  private lastEditables = "";
+  #lastSvg = "";
+  #lastCursor = "";
+  #lastEditables = "";
   /** Presses and releases handled for this document (see onEditing). */
-  private pointers = 0;
+  #pointers = 0;
   /**
    * Bumped when the page may look different (its layout), and when its text
    * changes: the page's selection is measured again only then, not on every
    * frame an animation or a video asks for.
    */
-  private layoutVersion = 0;
-  private textVersion = 0;
-  private selectionBoxesCache: { key: SelectionKey; boxes: Box[] } | null = null;
-  private selectionTextCache: { key: SelectionKey; text: string } | null = null;
-  private started = false;
-  private disposed = false;
+  #layoutVersion = 0;
+  #textVersion = 0;
+  #selectionBoxesCache: { key: SelectionKey; boxes: Box[] } | null = null;
+  #selectionTextCache: { key: SelectionKey; text: string } | null = null;
+  #started = false;
+  #disposed = false;
   /**
    * The host does not draw the panel (it said so): no frames are captured, and
    * animations and videos are not sampled, until it does again. The editing
    * state, the editables and the cursor are still reported.
    */
-  private hidden = false;
+  #hidden = false;
   /** At least this long between captures, as the host asked (it shows the panel small). */
-  private paceMs = 0;
+  #paceMs = 0;
   /** When the last capture ended. */
-  private renderedAt = 0;
+  #renderedAt = 0;
+  readonly #document: Document;
+  readonly #options: PageCaptureOptions;
 
-  constructor(
-    private readonly document: Document,
-    private readonly options: PageCaptureOptions,
-  ) {
-    this.window = document.defaultView as FrameWindow;
-    this.images = new ImageInliner(() => {
-      this.css.invalidate();
-      this.changed();
+  constructor(document: Document, options: PageCaptureOptions) {
+    this.#document = document;
+    this.#options = options;
+    this.#window = document.defaultView as FrameWindow;
+    this.#images = new ImageInliner(() => {
+      this.#css.invalidate();
+      this.#changed();
     });
-    this.css = new DocumentCss(
+    this.#css = new DocumentCss(
       document,
-      (url) => this.images.get(url),
+      (url) => this.#images.get(url),
       () => {
         // A cross-origin stylesheet's copy arrived: its interaction rules apply to the live page too.
-        this.liveCss.reset();
-        this.changed();
+        this.#liveCss.reset();
+        this.#changed();
       },
     );
-    this.liveCss = new LiveInteractionCss(
+    this.#liveCss = new LiveInteractionCss(
       document,
-      (sheet) => this.css.readable(sheet),
+      (sheet) => this.#css.readable(sheet),
       () => {
         // A rule may have changed in place (an adopted sheet replaced with as many rules).
-        this.css.invalidate();
-        this.changed();
+        this.#css.invalidate();
+        this.#changed();
       },
     );
-    this.mutations = new this.window.MutationObserver((records) => {
+    this.#mutations = new this.#window.MutationObserver((records) => {
       // The agent's own interaction marks: changing them is input, which says
       // itself whether the page may look different (see optimizeHover).
       const changes = records.filter(
@@ -162,36 +163,37 @@ export class PageCapture {
           record.type !== "attributes" || !INTERACTION_ATTRIBUTES.has(record.attributeName!),
       );
       if (changes.length === 0) return;
-      if (changes.some((record) => record.type !== "attributes")) this.textVersion++;
-      this.changed();
+      if (changes.some((record) => record.type !== "attributes")) this.#textVersion++;
+      this.#changed();
     });
-    this.input = new InputSynthesizer(document, {
-      measure: this.measure,
-      onChange: () => this.changed(),
+    this.#input = new InputSynthesizer(document, {
+      measure: this.#measure,
+      onChange: () => this.#changed(),
       transitions: () => {
         // The rules as they are now, before the marks change.
-        if (this.liveCss.sync()) this.changed();
-        if (!this.liveCss.hasTransitions && !this.sawTransition && !this.inlineTransitions())
+        if (this.#liveCss.sync()) this.#changed();
+        if (!this.#liveCss.hasTransitions && !this.#sawTransition && !this.#inlineTransitions())
           return "none";
-        return this.liveCss.reach;
+        return this.#liveCss.reach;
       },
     });
     // A transition ran (one in an inline style, say): the page has some.
-    this.window.addEventListener("transitionrun", this.transitionRan, true);
+    this.#window.addEventListener("transitionrun", this.#transitionRan, true);
 
-    this.mutations.observe(document, {
+    this.#mutations.observe(document, {
       subtree: true,
       childList: true,
       attributes: true,
       characterData: true,
     });
-    for (const type of INVALIDATING_EVENTS) this.window.addEventListener(type, this.changed, true);
+    for (const type of INVALIDATING_EVENTS)
+      this.#window.addEventListener(type, this.#changed, true);
     // A stylesheet loaded (a <link>'s, or one a <style> imports). Load events
     // of elements do not reach the window.
-    document.addEventListener("load", this.stylesheetsChanged, true);
+    document.addEventListener("load", this.#stylesheetsChanged, true);
     void document.fonts?.ready.then(() => {
-      this.css.invalidate();
-      this.changed();
+      this.#css.invalidate();
+      this.#changed();
     });
   }
 
@@ -200,77 +202,77 @@ export class PageCapture {
    * state, as if seen for the first time (after a new connection).
    */
   start(optimizeHover = true): void {
-    this.input.optimizeHover = optimizeHover;
-    this.started = true;
+    this.#input.optimizeHover = optimizeHover;
+    this.#started = true;
     // A new connection starts shown, at full pace; the host says so if not.
-    this.hidden = false;
-    this.paceMs = 0;
-    this.lastEditing = "";
+    this.#hidden = false;
+    this.#paceMs = 0;
+    this.#lastEditing = "";
     // The host waits for the new document's picture: send the next frame, whatever it looks like.
-    this.lastSvg = "";
-    this.lastCursor = "";
-    this.lastEditables = "";
-    this.css.invalidate();
-    this.invalidate();
+    this.#lastSvg = "";
+    this.#lastCursor = "";
+    this.#lastEditables = "";
+    this.#css.invalidate();
+    this.#invalidate();
   }
 
   /** Whether the host draws the panel. Shown again, the page is captured as it is now. */
   setVisible(visible: boolean): void {
-    if (this.disposed || visible === !this.hidden) return;
-    this.hidden = !visible;
-    if (visible) this.invalidate();
+    if (this.#disposed || visible === !this.#hidden) return;
+    this.#hidden = !visible;
+    if (visible) this.#invalidate();
   }
 
   /** At least `intervalMs` between captures from now on; a capture already waiting goes by the new pace. */
   setPace(intervalMs: number): void {
-    if (this.disposed || intervalMs === this.paceMs) return;
-    this.paceMs = intervalMs;
-    this.notBefore = this.renderedAt + Math.max(this.pacer.interval, intervalMs);
-    if (!this.timer) return;
-    clearTimeout(this.timer);
-    this.timer = 0;
-    this.schedule();
+    if (this.#disposed || intervalMs === this.#paceMs) return;
+    this.#paceMs = intervalMs;
+    this.#notBefore = this.#renderedAt + Math.max(this.#pacer.interval, intervalMs);
+    if (!this.#timer) return;
+    clearTimeout(this.#timer);
+    this.#timer = 0;
+    this.#schedule();
   }
 
   handle(input: PanelInput): void {
-    if (this.disposed) return;
+    if (this.#disposed) return;
     // Rules the page added since apply to the hover before the input is hit tested.
-    if (this.liveCss.sync()) this.changed();
-    this.input.handle(input);
+    if (this.#liveCss.sync()) this.#changed();
+    this.#input.handle(input);
     // Cursor hit testing depends on pointer coordinates, even when an
     // unchanged hover skips capture. Keep its notification independent.
-    if (this.started && input.type === "pointer") this.reportCursor();
+    if (this.#started && input.type === "pointer") this.#reportCursor();
     if (input.type !== "pointer" || (input.kind !== "down" && input.kind !== "up")) return;
-    this.pointers++;
+    this.#pointers++;
     // The host waits for the page's answer to a tap (did it focus a text field?).
     // Moves and leaves after it are not counted: they could come before the answer.
-    if (input.kind === "up") this.lastEditing = "";
+    if (input.kind === "up") this.#lastEditing = "";
   }
 
   dispose(): void {
-    this.disposed = true;
-    clearTimeout(this.timer);
-    this.input.dispose();
-    this.liveCss.dispose();
-    this.mutations.disconnect();
+    this.#disposed = true;
+    clearTimeout(this.#timer);
+    this.#input.dispose();
+    this.#liveCss.dispose();
+    this.#mutations.disconnect();
     for (const type of INVALIDATING_EVENTS)
-      this.window.removeEventListener(type, this.changed, true);
-    this.document.removeEventListener("load", this.stylesheetsChanged, true);
-    this.window.removeEventListener("transitionrun", this.transitionRan, true);
+      this.#window.removeEventListener(type, this.#changed, true);
+    this.#document.removeEventListener("load", this.#stylesheetsChanged, true);
+    this.#window.removeEventListener("transitionrun", this.#transitionRan, true);
   }
 
   /** Runs a measurement that adds elements to the page, without it counting as a change. */
-  private readonly measure = <T>(run: () => T): T => {
+  readonly #measure = <T>(run: () => T): T => {
     try {
       return run();
     } finally {
-      this.mutations.takeRecords();
+      this.#mutations.takeRecords();
     }
   };
 
-  private readonly invalidate = () => {
-    this.dirty = true;
-    this.schedule();
+  readonly #invalidate = () => {
+    this.#dirty = true;
+    this.#schedule();
   };
 
   /**
@@ -278,44 +280,44 @@ export class PageCapture {
    * again. Its stylesheets may have changed too (the DOM did, or input made
    * the page render).
    */
-  private readonly changed = () => {
-    this.layoutVersion++;
-    this.liveCss.invalidate();
-    this.inlineTransition = null;
-    this.invalidate();
+  readonly #changed = () => {
+    this.#layoutVersion++;
+    this.#liveCss.invalidate();
+    this.#inlineTransition = null;
+    this.#invalidate();
   };
 
-  private readonly transitionRan = () => {
-    this.sawTransition = true;
+  readonly #transitionRan = () => {
+    this.#sawTransition = true;
   };
 
   /** Whether an element has a transition in its inline style (cached until the page changes). */
-  private inlineTransitions(): boolean {
-    this.inlineTransition ??= this.document.querySelector('[style*="transition"]') !== null;
-    return this.inlineTransition;
+  #inlineTransitions(): boolean {
+    this.#inlineTransition ??= this.#document.querySelector('[style*="transition"]') !== null;
+    return this.#inlineTransition;
   }
 
-  private readonly stylesheetsChanged = (event: Event) => {
-    const { HTMLLinkElement, HTMLStyleElement } = this.window;
+  readonly #stylesheetsChanged = (event: Event) => {
+    const { HTMLLinkElement, HTMLStyleElement } = this.#window;
     if (event.target instanceof HTMLLinkElement || event.target instanceof HTMLStyleElement)
-      this.changed();
+      this.#changed();
   };
 
   // A plain timer, not requestAnimationFrame: browsers may hold back rAF in an
   // iframe they consider not on screen (this one is transparent and behind the
   // host's canvas). Taking the snapshot forces style and layout anyway.
-  private schedule(): void {
-    if (!this.started || this.disposed || this.timer) return;
-    const wait = Math.max(0, this.notBefore - performance.now());
-    this.timer = window.setTimeout(() => {
-      this.timer = 0;
-      this.render();
+  #schedule(): void {
+    if (!this.#started || this.#disposed || this.#timer) return;
+    const wait = Math.max(0, this.#notBefore - performance.now());
+    this.#timer = window.setTimeout(() => {
+      this.#timer = 0;
+      this.#render();
     }, wait);
   }
 
   /** Animations copied as they are now (see collectAnimatedValues in snapshot.ts); the others end on a fixed value. */
-  private hasLiveAnimations(): boolean {
-    const { document } = this;
+  #hasLiveAnimations(): boolean {
+    const document = this.#document;
     return (
       typeof document.getAnimations === "function" &&
       document
@@ -324,113 +326,113 @@ export class PageCapture {
     );
   }
 
-  private render(): void {
-    if (this.disposed || !this.dirty) return;
-    this.dirty = false;
+  #render(): void {
+    if (this.#disposed || !this.#dirty) return;
+    this.#dirty = false;
     // Before measuring anything: the page may have added rules since the last
     // input, or moved the focused element (its ancestors are :focus-within).
     // Either may lay the page out differently: its selection is measured again.
-    const rewritten = this.liveCss.sync();
-    if (this.input.syncMarks() || rewritten) this.layoutVersion++;
+    const rewritten = this.#liveCss.sync();
+    if (this.#input.syncMarks() || rewritten) this.#layoutVersion++;
     const started = performance.now();
     try {
       // The viewport, including any scrollbar: exactly the iframe's size.
-      const width = this.window.innerWidth;
-      const height = this.window.innerHeight;
-      if (!this.hidden) this.sendFrame(width, height);
-      this.reportEditing();
-      this.reportEditables(width, height);
-      this.reportCursor();
+      const width = this.#window.innerWidth;
+      const height = this.#window.innerHeight;
+      if (!this.#hidden) this.#sendFrame(width, height);
+      this.#reportEditing();
+      this.#reportEditables(width, height);
+      this.#reportCursor();
     } finally {
-      this.renderedAt = performance.now();
-      this.notBefore =
-        this.renderedAt + Math.max(this.pacer.record(this.renderedAt - started), this.paceMs);
+      this.#renderedAt = performance.now();
+      this.#notBefore =
+        this.#renderedAt + Math.max(this.#pacer.record(this.#renderedAt - started), this.#paceMs);
     }
     // Keep sampling while something is animating or a video plays, so the panel shows it moving.
-    if (this.dirty || (!this.hidden && (this.hasLiveAnimations() || this.hasPlayingVideo())))
-      this.invalidate();
+    if (this.#dirty || (!this.#hidden && (this.#hasLiveAnimations() || this.#hasPlayingVideo())))
+      this.#invalidate();
   }
 
   /** Captures the page and sends it, unless it looks as it did in the frame sent last. */
-  private sendFrame(width: number, height: number): void {
-    const focused = this.input.focused;
-    const composing = this.input.composition;
+  #sendFrame(width: number, height: number): void {
+    const focused = this.#input.focused;
+    const composing = this.#input.composition;
     const host = focused && editingHostOf(focused) === focused ? focused : null;
     // While composing, the selection is what the composition replaces: not drawn.
     // Outside text fields, the page's own selection is drawn (its text, or an editable's).
-    const range = isTextField(focused) || (host && composing) ? null : selectedRange(this.window);
+    const range = isTextField(focused) || (host && composing) ? null : selectedRange(this.#window);
     const selection = isTextField(focused)
       ? composing
         ? []
-        : this.measure(() => measureSelection(focused))
+        : this.#measure(() => measureSelection(focused))
       : range
-        ? this.selectionBoxes(range)
+        ? this.#selectionBoxes(range)
         : [];
     const composition =
       isTextField(focused) && composing
         ? {
             field: focused,
             value: composedValue(focused, composing).value,
-            boxes: this.measure(() => measureComposition(focused, composing)),
-            color: this.window.getComputedStyle(focused).color,
+            boxes: this.#measure(() => measureComposition(focused, composing)),
+            color: this.#window.getComputedStyle(focused).color,
           }
         : null;
     // The page's ::selection color, if it sets one.
     const selectionColor = isTextField(focused)
-      ? this.window.getComputedStyle(focused, "::selection").backgroundColor
+      ? this.#window.getComputedStyle(focused, "::selection").backgroundColor
       : range
-        ? selectionColorAt(this.window, range)
+        ? selectionColorAt(this.#window, range)
         : undefined;
     // The snapshot measures scrolled text fields with a mirror (caret.ts).
-    const xhtml = this.measure(() =>
-      snapshotDocument(this.document, {
+    const xhtml = this.#measure(() =>
+      snapshotDocument(this.#document, {
         selection,
         selectionColor,
         // The page's selection, when the keys do not go to it (the host took them, or the page made it).
         selectionInactive:
           range !== null &&
-          !this.input.hasSelection &&
+          !this.#input.hasSelection &&
           !(host && host.contains(range.startContainer)),
         composition,
-        inlineComposition: host && composing ? this.inlineComposition(composing.text) : null,
-        scrollbar: this.input.scrollbarState,
-        selectPopup: this.input.popupView,
-        listBoxSelection: isListBox(focused) ? this.listBoxRows(focused) : [],
-        inlineImage: (url) => this.images.get(url),
+        inlineComposition: host && composing ? this.#inlineComposition(composing.text) : null,
+        scrollbar: this.#input.scrollbarState,
+        selectPopup: this.#input.popupView,
+        listBoxSelection: isListBox(focused) ? this.#listBoxRows(focused) : [],
+        inlineImage: (url) => this.#images.get(url),
       }),
     );
-    const svg = buildFrameSvg(xhtml, this.css.get(), width, height);
-    if (svg !== this.lastSvg) {
-      this.lastSvg = svg;
-      this.options.onFrame({ svg, width, height });
+    const svg = buildFrameSvg(xhtml, this.#css.get(), width, height);
+    if (svg !== this.#lastSvg) {
+      this.#lastSvg = svg;
+      this.#options.onFrame({ svg, width, height });
     }
   }
 
   /** The boxes of the page's selection, measured again only when it or the page changed. */
-  private selectionBoxes(range: Range): Box[] {
-    const key = selectionKey(range, this.layoutVersion);
-    const cached = this.selectionBoxesCache;
+  #selectionBoxes(range: Range): Box[] {
+    const key = selectionKey(range, this.#layoutVersion);
+    const cached = this.#selectionBoxesCache;
     if (cached && sameKey(cached.key, key)) return cached.boxes;
-    const boxes = selectionBoxes(this.window, range);
-    this.selectionBoxesCache = { key, boxes };
+    const boxes = selectionBoxes(this.#window, range);
+    this.#selectionBoxesCache = { key, boxes };
     return boxes;
   }
 
   /** The text to copy: a text field's, or the page's selection (built again only when it or the text changed). */
-  private selectedText(): string {
-    if (isTextField(this.input.focused)) return this.input.selectedText;
-    const range = selectedRange(this.window);
+  #selectedText(): string {
+    if (isTextField(this.#input.focused)) return this.#input.selectedText;
+    const range = selectedRange(this.#window);
     if (!range) return "";
-    const key = selectionKey(range, this.textVersion);
-    const cached = this.selectionTextCache;
+    const key = selectionKey(range, this.#textVersion);
+    const cached = this.#selectionTextCache;
     if (cached && sameKey(cached.key, key)) return cached.text;
-    const text = this.input.selectedText;
-    this.selectionTextCache = { key, text };
+    const text = this.#input.selectedText;
+    this.#selectionTextCache = { key, text };
     return text;
   }
 
   /** The selected options of the focused list box, where they show. */
-  private listBoxRows(select: HTMLSelectElement): ListBoxRow[] {
+  #listBoxRows(select: HTMLSelectElement): ListBoxRow[] {
     const visible = visibleBoxOf(select);
     const rows: ListBoxRow[] = [];
     for (const option of Array.from(select.selectedOptions)) {
@@ -438,7 +440,7 @@ export class PageCapture {
       const box = { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
       const shown = intersect(box, visible);
       if (shown.width <= 0 || shown.height <= 0) continue;
-      const paddingLeft = parseFloat(this.window.getComputedStyle(option).paddingLeft) || 0;
+      const paddingLeft = parseFloat(this.#window.getComputedStyle(option).paddingLeft) || 0;
       rows.push({
         shown,
         box,
@@ -450,17 +452,17 @@ export class PageCapture {
     return rows;
   }
 
-  private hasPlayingVideo(): boolean {
-    return Array.from(this.document.querySelectorAll("video")).some(
+  #hasPlayingVideo(): boolean {
+    return Array.from(this.#document.querySelectorAll("video")).some(
       (video) => !video.paused && !video.ended && video.readyState >= 2,
     );
   }
 
   /** Where text composed in an editable shows: where the selection starts, in place of what is selected in that node. */
-  private inlineComposition(
+  #inlineComposition(
     text: string,
   ): { node: Node; offset: number; endOffset: number; text: string } | null {
-    const selection = this.window.getSelection();
+    const selection = this.#window.getSelection();
     if (!selection || selection.rangeCount === 0) return null;
     const range = selection.getRangeAt(0);
     const sameText =
@@ -475,10 +477,10 @@ export class PageCapture {
   }
 
   /** The caret of a focused editable (its collapsed selection), or null while text is selected or it is elsewhere. */
-  private editableCaret(host: HTMLElement): Caret | null {
-    const selection = this.window.getSelection();
+  #editableCaret(host: HTMLElement): Caret | null {
+    const selection = this.#window.getSelection();
     if (!selection || selection.rangeCount === 0) return null;
-    const composing = this.input.composition;
+    const composing = this.#input.composition;
     if (!selection.isCollapsed && !composing) return null;
     const range = selection.getRangeAt(0);
     if (!host.contains(range.startContainer)) return null;
@@ -489,16 +491,16 @@ export class PageCapture {
     // Cut to what shows of the editable.
     const shown = caret && clipCaret(caret, visibleBoxOf(host));
     if (!shown) return null;
-    const computed = this.window.getComputedStyle(host);
+    const computed = this.#window.getComputedStyle(host);
     const color = computed.caretColor === "auto" ? computed.color : computed.caretColor;
     return { ...shown, color };
   }
 
   /** The text fields and editables in view, for the host to open a soft keyboard on a tap right away. */
-  private reportEditables(width: number, height: number): void {
+  #reportEditables(width: number, height: number): void {
     const boxes: Box[] = [];
     for (const field of Array.from(
-      this.document.querySelectorAll("input, textarea, [contenteditable]"),
+      this.#document.querySelectorAll("input, textarea, [contenteditable]"),
     )) {
       if (boxes.length === MAX_EDITABLES) break;
       if (!isTextField(field) && editingHostOf(field) !== field) continue;
@@ -511,38 +513,38 @@ export class PageCapture {
         boxes.push({ left, top, width: right - left, height: bottom - top });
     }
     const key = JSON.stringify(boxes);
-    if (key === this.lastEditables) return;
-    this.lastEditables = key;
-    this.options.onEditables(boxes);
+    if (key === this.#lastEditables) return;
+    this.#lastEditables = key;
+    this.#options.onEditables(boxes);
   }
 
-  private reportCursor(): void {
-    const cursor = this.input.cursor;
-    if (cursor === this.lastCursor) return;
-    this.lastCursor = cursor;
-    this.options.onCursor(cursor);
+  #reportCursor(): void {
+    const cursor = this.#input.cursor;
+    if (cursor === this.#lastCursor) return;
+    this.#lastCursor = cursor;
+    this.#options.onCursor(cursor);
   }
 
-  private reportEditing(): void {
-    const focused = this.input.focused;
+  #reportEditing(): void {
+    const focused = this.#input.focused;
     // Any focused element takes keys: Enter and Space on a button, Tab anywhere.
     // So does selected text, to be copied.
-    const editing = focused !== null || this.input.hasSelection;
+    const editing = focused !== null || this.#input.hasSelection;
     const host = focused ? editingHostOf(focused) : null;
     const caret = isTextField(focused)
-      ? this.measure(() => measureCaret(focused, this.input.composition))
+      ? this.#measure(() => measureCaret(focused, this.#input.composition))
       : host && host === focused
-        ? this.editableCaret(host)
+        ? this.#editableCaret(host)
         : null;
     // A selection too long to send is not offered for copying at all, rather than cut short.
-    const selected = this.selectedText();
+    const selected = this.#selectedText();
     const selectedText = selected.length <= MAX_TEXT_LENGTH ? selected : "";
     // Text typed now goes in: a text field or an editable has focus (with or without a caret).
     const typing = isTextField(focused) || (host !== null && host === focused);
     const key = JSON.stringify([editing, caret, selectedText, typing]);
-    if (key === this.lastEditing) return;
-    this.lastEditing = key;
-    this.options.onEditing(editing, caret, selectedText, this.pointers, typing);
+    if (key === this.#lastEditing) return;
+    this.#lastEditing = key;
+    this.#options.onEditing(editing, caret, selectedText, this.#pointers, typing);
   }
 }
 

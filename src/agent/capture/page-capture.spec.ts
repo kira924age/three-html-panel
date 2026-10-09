@@ -370,18 +370,16 @@ describe("interaction states in the live page", () => {
   });
 
   it("does not check the page for transitions on captures where no mark changes", async () => {
-    const checks = vi.spyOn(
-      PageCapture.prototype as unknown as { inlineTransitions: () => boolean },
-      "inlineTransitions",
-    );
+    // Each change forgets what was found, so a check would query the page again.
+    const queries = vi.spyOn(document, "querySelector");
     capture.start();
     await settle();
-    checks.mockClear();
+    queries.mockClear();
     for (let i = 0; i < 3; i++) {
       document.body.append(document.createElement("span"));
       await settle();
     }
-    expect(checks).not.toHaveBeenCalled();
+    expect(queries).not.toHaveBeenCalledWith('[style*="transition"]');
   });
 
   it("follows the page moving the focused element elsewhere, on the next capture", async () => {

@@ -8,29 +8,32 @@ const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 type Entry = { state: "loading" } | { state: "loaded"; dataUrl: string } | { state: "failed" };
 
 export class ImageInliner {
-  private readonly entries = new Map<string, Entry>();
+  readonly #entries = new Map<string, Entry>();
+  readonly #onLoad: () => void;
 
-  constructor(private readonly onLoad: () => void) {}
+  constructor(onLoad: () => void) {
+    this.#onLoad = onLoad;
+  }
 
   /** The data URL for `url`, or null if it is not available (yet). */
   get(url: string): string | null {
     if (url.startsWith("data:")) return url;
-    const entry = this.entries.get(url);
+    const entry = this.#entries.get(url);
     if (!entry) {
-      this.load(url);
+      this.#load(url);
       return null;
     }
     return entry.state === "loaded" ? entry.dataUrl : null;
   }
 
-  private load(url: string): void {
-    this.entries.set(url, { state: "loading" });
+  #load(url: string): void {
+    this.#entries.set(url, { state: "loading" });
     fetchAsDataUrl(url)
       .then((dataUrl) => {
-        this.entries.set(url, { state: "loaded", dataUrl });
-        this.onLoad();
+        this.#entries.set(url, { state: "loaded", dataUrl });
+        this.#onLoad();
       })
-      .catch(() => this.entries.set(url, { state: "failed" }));
+      .catch(() => this.#entries.set(url, { state: "failed" }));
   }
 }
 
