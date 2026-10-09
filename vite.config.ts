@@ -11,8 +11,10 @@ import {
 import {
   AGENT_BUILD_FILE,
   PANEL_PAGES,
+  PANEL_PAGE_HEADERS,
   SITES_DIR,
   injectPanelAgent,
+  staticHeaders,
   originsFor,
   panelServerConfig,
 } from "./vite.panels.config.ts";
@@ -138,7 +140,18 @@ export default defineConfig(({ mode }) => {
       // The example sites that are packages of their own, each on its own origin.
       "import.meta.env.VITE_SITE_ORIGINS": JSON.stringify(siteOrigins(mode)),
     },
-    plugins: lazyPlugins(() => [panelServer(), injectPanelAgent(origins.host)]),
+    plugins: lazyPlugins(() => [
+      panelServer(),
+      injectPanelAgent(origins.host),
+      // The same build is deployed twice: as the scene, and as the panel pages
+      // on another origin (see .github/workflows/deploy.yml). Their pages, the
+      // agent and the assets they load are sandboxed and readable from "null".
+      staticHeaders({
+        [`/${SITES_DIR}/*`]: PANEL_PAGE_HEADERS,
+        [`/${AGENT_BUILD_FILE}`]: { "Access-Control-Allow-Origin": "*" },
+        "/assets/*": { "Access-Control-Allow-Origin": "*" },
+      }),
+    ]),
     build: {
       // three.js alone is about 500 kB.
       chunkSizeWarningLimit: 800,

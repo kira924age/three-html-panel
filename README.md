@@ -151,6 +151,16 @@ vp check        # format, lint and types
 
 The library is `src/` (the agent, which runs in panel pages, is `src/agent/`). The demo is in `examples/`: `examples/showcase/` is the 3D scene (`index.html` loads it), and `examples/sites/` holds the pages it shows as panels: `notes`, `controls` and `reader`, served from the other origin (with a few pages only the end-to-end tests use), and four sites that are packages of their own (`web-standards`, `hn-reader` with Vue, `chat` with React, `gallery` with Svelte), each built and deployed on its own and served from its own origin (see `examples/sites/vite.site.ts`; set `VITE_SITE_*_ORIGIN` where they are deployed, see `.env.example`). The end-to-end tests drive those pages in `e2e/harness/`, a scene with one flat panel.
 
+### Deploying the demo
+
+The demo is six static sites, each on its own origin: the scene, the panel pages (the same build), and the four example sites. To deploy them, for example to Cloudflare Pages:
+
+1. Choose where each will be, and write the origins (no trailing slash) into an untracked `.env.deploy.local` (see `.env.example`): `VITE_HOST_ORIGIN` (the scene), `VITE_PANEL_ORIGIN` (the panel pages), `VITE_SITE_WEB_STANDARDS_ORIGIN`, `VITE_SITE_HN_READER_ORIGIN`, `VITE_SITE_CHAT_ORIGIN` and `VITE_SITE_GALLERY_ORIGIN`. On Cloudflare Pages, a project named `name` is at `https://name.pages.dev` if that name is free: create the six projects first (Workers & Pages › Create › Pages › Upload assets) to know their addresses.
+2. Build: `pnpm build:deploy`. It stops if an origin is missing, since a part pointing at localhost would be deployed broken.
+3. Upload the folders: `dist/` to both the scene's and the panel pages' projects, and `examples/sites/<name>/dist/` to each site's.
+
+Each build writes a `_headers` file (read by Cloudflare Pages and Netlify) with the headers its pages need: the panel pages' sandbox, and CORS for the origin `null` that sandboxed pages request their files from. Elsewhere, send the same headers from the server. The builds point at one another through these origins (the agent answers only the scene's), so only those addresses work together, not per-deployment preview ones.
+
 ## License
 
 MIT
