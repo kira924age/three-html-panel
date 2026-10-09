@@ -163,15 +163,38 @@ describe("text editing", () => {
     document.body.innerHTML = `<button id="go" style="cursor: pointer">Go</button><p id="text">text</p>`;
     const go = document.querySelector("#go")!;
     const text = document.querySelector("#text")!;
-    // jsdom cannot build the pointer events that hovering dispatches, so the hover target is set directly.
-    (input as unknown as { hoverTarget: Element | null }).hoverTarget = go;
-    expect(input.cursor).toBe("pointer");
-    (input as unknown as { hoverTarget: Element | null }).hoverTarget = text;
-    expect(input.cursor).toBe("default");
-    document.body.innerHTML = `<textarea></textarea>`;
-    (input as unknown as { hoverTarget: Element | null }).hoverTarget =
-      document.querySelector("textarea");
-    expect(input.cursor).toBe("text");
+    // jsdom rejects the `view` the agent passes (Vitest's window is not jsdom's
+    // Window): the pointer events hovering dispatches are made here without it.
+    type EventClass = new (type: string, init?: EventInit) => Event;
+    const withoutView = (Base: EventClass) =>
+      class extends Base {
+        constructor(type: string, init: EventInit & { view?: unknown } = {}) {
+          const { view: _view, ...rest } = init;
+          super(type, rest);
+        }
+      };
+    vi.stubGlobal("MouseEvent", withoutView(MouseEvent as EventClass));
+    vi.stubGlobal("PointerEvent", withoutView(PointerEvent as EventClass));
+    let hit: Element | null = null;
+    Object.defineProperty(document, "elementFromPoint", { configurable: true, value: () => hit });
+    const hover = (target: Element | null) => {
+      hit = target;
+      input.handle({ type: "pointer", kind: "move", x: 1, y: 1 });
+    };
+    try {
+      hover(go);
+      expect(input.cursor).toBe("pointer");
+      hover(text);
+      expect(input.cursor).toBe("default");
+      document.body.innerHTML = `<textarea></textarea>`;
+      hover(document.querySelector("textarea"));
+      expect(input.cursor).toBe("text");
+      input.handle({ type: "pointer", kind: "leave", x: 0, y: 0 });
+      expect(input.cursor).toBe("");
+    } finally {
+      delete (document as { elementFromPoint?: unknown }).elementFromPoint;
+      vi.unstubAllGlobals();
+    }
   });
 
   it("keeps what is being composed for the focused field until it ends or focus moves", () => {

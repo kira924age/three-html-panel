@@ -6,7 +6,7 @@
 // the position of each character can be read from the layout.
 
 import type { Box, Caret, FrameWindow } from "../../types";
-import { clipCaret, visibleBoxOf } from "./selection";
+import { clipCaret, intersect, paddingBox, visibleBoxOf } from "./selection";
 
 export type TextField = HTMLInputElement | HTMLTextAreaElement;
 
@@ -217,21 +217,11 @@ export function measureCaret(field: TextField, composition?: Composition | null)
   return { ...shown, color };
 }
 
-/** The part of a field that shows its content: the padding box, in the page's CSS pixels. */
-function viewOf(field: TextField): Box {
-  const rect = field.getBoundingClientRect();
-  return {
-    left: rect.left + field.clientLeft,
-    top: rect.top + field.clientTop,
-    width: field.clientWidth,
-    height: field.clientHeight,
-  };
-}
-
 /** Scrolls the field so that the caret at `index` is in view, as browsers do while typing. */
 export function revealIndex(field: TextField, index: number): void {
   const caret = caretAt(field, index);
-  const view = viewOf(field);
+  // The part of the field that shows its content.
+  const view = paddingBox(field);
   const computed = windowOf(field).getComputedStyle(field);
   // Keep the caret inside the padding, not only inside the box.
   const padLeft = parseFloat(computed.paddingLeft) || 0;
@@ -332,12 +322,7 @@ function measureRange(field: TextField, start: number, end: number, text: string
 
     const rect = field.getBoundingClientRect();
     const origin = mirror.getBoundingClientRect();
-    const clip = {
-      left: rect.left + field.clientLeft,
-      top: rect.top + field.clientTop,
-      right: rect.left + field.clientLeft + field.clientWidth,
-      bottom: rect.top + field.clientTop + field.clientHeight,
-    };
+    const clip = paddingBox(field, rect);
     const boxes: Box[] = [];
     for (const line of Array.from(selected.getClientRects())) {
       const left = rect.left + line.left - origin.left - field.scrollLeft;
@@ -345,11 +330,8 @@ function measureRange(field: TextField, start: number, end: number, text: string
       const top = isSingleLine(field)
         ? rect.top + (rect.height - line.height) / 2
         : rect.top + line.top - origin.top - field.scrollTop;
-      const x0 = Math.max(left, clip.left);
-      const y0 = Math.max(top, clip.top);
-      const x1 = Math.min(left + line.width, clip.right);
-      const y1 = Math.min(top + line.height, clip.bottom);
-      if (x1 > x0 && y1 > y0) boxes.push({ left: x0, top: y0, width: x1 - x0, height: y1 - y0 });
+      const box = intersect(clip, { left, top, width: line.width, height: line.height });
+      if (box.width > 0 && box.height > 0) boxes.push(box);
     }
     return boxes;
   });

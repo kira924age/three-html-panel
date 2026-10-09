@@ -1,7 +1,16 @@
 // @vitest-environment jsdom
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vite-plus/test";
 import { InputSynthesizer } from "./input";
-import { optionAt, selectRange, stepOption } from "./list-box";
+import { isUsable, optionAt, selectRange, stepOption } from "./list-box";
 
 // jsdom rejects the `view` the agent passes (Vitest's window is not jsdom's
 // Window); events are made here without it.
@@ -14,11 +23,10 @@ beforeAll(() => {
         super(type, rest);
       }
     };
-  globalThis.MouseEvent = withoutView(MouseEvent as EventClass) as unknown as typeof MouseEvent;
-  globalThis.PointerEvent = withoutView(
-    (globalThis.PointerEvent ?? MouseEvent) as EventClass,
-  ) as unknown as typeof PointerEvent;
+  vi.stubGlobal("MouseEvent", withoutView(MouseEvent as EventClass));
+  vi.stubGlobal("PointerEvent", withoutView((globalThis.PointerEvent ?? MouseEvent) as EventClass));
 });
+afterAll(() => vi.unstubAllGlobals());
 
 let select: HTMLSelectElement;
 let changes: number;
@@ -62,10 +70,13 @@ describe("helpers", () => {
   });
 
   it("steps over disabled options", () => {
-    expect(stepOption(select, 1, 1)).toBe(3);
-    expect(stepOption(select, 3, -1)).toBe(1);
-    expect(stepOption(select, 0, -5)).toBe(0);
-    expect(stepOption(select, 0, 100)).toBe(4);
+    const step = (from: number, steps: number) =>
+      stepOption(select.options.length, from, steps, (index) => isUsable(select.options[index]!));
+    expect(step(1, 1)).toBe(3);
+    expect(step(3, -1)).toBe(1);
+    expect(step(0, -5)).toBe(0);
+    expect(step(0, 100)).toBe(4);
+    expect(step(0, Infinity)).toBe(4);
   });
 });
 
@@ -157,6 +168,15 @@ describe("choosing options in the panel", () => {
     key("a", { ctrlKey: true });
     expect(chosen()).toBe("abde");
     expect(changes).toBe(5);
+  });
+
+  it("leaves the selection to keys that do not move in the list, whatever their name", () => {
+    press(105);
+    press(165, { ctrlKey: true });
+    expect(chosen()).toBe("ad");
+    // Names an object has from its prototype are not keys of the list.
+    for (const name of ["toString", "constructor", "valueOf"]) key(name);
+    expect(chosen()).toBe("ad");
   });
 
   it("selects a single list box's option, and lets typing pick one", () => {

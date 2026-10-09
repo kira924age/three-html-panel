@@ -437,129 +437,131 @@ const PINNED_SIZES = [
 
 class Snapshotter {
   // A separate document without a browsing context, so the copies never load anything.
-  private readonly inert = globalThis.document.implementation.createHTMLDocument("");
-  private readonly window: FrameWindow;
-  private readonly animated: Map<Element, Map<string, string | null>>;
+  readonly #inert = globalThis.document.implementation.createHTMLDocument("");
+  readonly #window: FrameWindow;
+  readonly #animated: Map<Element, Map<string, string | null>>;
   /** The page's element each copy is of. */
-  private readonly liveOf = new WeakMap<Element, Element>();
+  readonly #liveOf = new WeakMap<Element, Element>();
   /** And the other way. */
-  private readonly copies = new WeakMap<Element, Element>();
+  readonly #copies = new WeakMap<Element, Element>();
   /** The computed style of each element copied, read once. */
-  private readonly styles = new Map<Element, CSSStyleDeclaration>();
+  readonly #styles = new Map<Element, CSSStyleDeclaration>();
   /** The absolute and fixed elements copied, by the page's element. */
-  private readonly positioned = new Map<Element, Positioned>();
+  readonly #positioned = new Map<Element, Positioned>();
   /** The elements with fixed ones in them placed from outside them. */
-  private readonly holdingFixed = new Set<Element>();
+  readonly #holdingFixed = new Set<Element>();
   /** Rules that move the generated boxes of scrolled containers (see shiftFlow). */
   readonly generatedRules: string[] = [];
   /** The elements with something positioned in them that has a z-index of its own. */
-  private readonly zOrdered = new Set<Element>();
+  readonly #zOrdered = new Set<Element>();
   /**
    * Copies moved for a scroll, and how: positioned relatively (the containing
    * block of absolute elements in them, now) or translated (of fixed ones too).
    */
-  private readonly moved = new Map<Element, "relative" | "translated">();
+  readonly #moved = new Map<Element, "relative" | "translated">();
   /**
    * The page's containing blocks of absolute and fixed elements where the copy
    * is now; null for the initial containing block (absolute) or the viewport (fixed).
    */
-  private absoluteContainer: Element | null = null;
-  private fixedContainer: Element | null = null;
+  #absoluteContainer: Element | null = null;
+  #fixedContainer: Element | null = null;
   /** Scrollbars to draw over the copy. */
   readonly scrollbars: Scrollbar[] = [];
 
-  constructor(
-    private readonly document: Document,
-    private readonly options: SnapshotOptions,
-  ) {
-    this.window = document.defaultView as FrameWindow;
-    this.animated = collectAnimatedValues(document);
+  readonly #document: Document;
+  readonly #options: SnapshotOptions;
+
+  constructor(document: Document, options: SnapshotOptions) {
+    this.#document = document;
+    this.#options = options;
+    this.#window = document.defaultView as FrameWindow;
+    this.#animated = collectAnimatedValues(document);
   }
 
   copy(live: Node): Node | null {
     if (live.nodeType === Node.TEXT_NODE) {
-      const composition = this.options.inlineComposition;
-      if (composition?.node === live) return this.composedText(live as Text, composition);
-      return this.inert.importNode(live, false);
+      const composition = this.#options.inlineComposition;
+      if (composition?.node === live) return this.#composedText(live as Text, composition);
+      return this.#inert.importNode(live, false);
     }
     if (live.nodeType !== Node.ELEMENT_NODE) return null;
     const element = live as Element;
-    if (SKIPPED_ELEMENTS.has(element.tagName) || this.options.ignored?.has(element)) return null;
-    const style = this.window.getComputedStyle(element);
-    this.styles.set(element, style);
+    if (SKIPPED_ELEMENTS.has(element.tagName) || this.#options.ignored?.has(element)) return null;
+    const style = this.#window.getComputedStyle(element);
+    this.#styles.set(element, style);
 
-    if (element instanceof this.window.HTMLCanvasElement)
-      return this.remember(element, style, this.copyCanvas(element));
-    if (element instanceof this.window.HTMLVideoElement)
-      return this.remember(element, style, this.copyVideo(element));
+    if (element instanceof this.#window.HTMLCanvasElement)
+      return this.#remember(element, style, this.#copyCanvas(element));
+    if (element instanceof this.#window.HTMLVideoElement)
+      return this.#remember(element, style, this.#copyVideo(element));
 
-    const copy = this.remember(element, style, this.inert.importNode(element, false) as Element);
-    this.copyFormState(element, copy);
-    this.copyImage(element, copy);
-    this.copyAnimatedValues(element, copy);
+    const copy = this.#remember(element, style, this.#inert.importNode(element, false) as Element);
+    this.#copyFormState(element, copy);
+    this.#copyImage(element, copy);
+    this.#copyAnimatedValues(element, copy);
 
     // <head> carries no visible content, but keep the element so the structure stays valid.
     if (element.tagName === "HEAD") return copy;
 
-    const outer = [this.absoluteContainer, this.fixedContainer] as const;
-    if (containsFixed(style)) this.absoluteContainer = this.fixedContainer = element;
-    else if (containsAbsolute(style)) this.absoluteContainer = element;
+    const outer = [this.#absoluteContainer, this.#fixedContainer] as const;
+    if (containsFixed(style)) this.#absoluteContainer = this.#fixedContainer = element;
+    else if (containsAbsolute(style)) this.#absoluteContainer = element;
     const children = element.tagName === "TEXTAREA" ? [] : Array.from(element.childNodes);
     // Composed text between two children (an empty line of an editable, say).
-    const composition = this.options.inlineComposition;
+    const composition = this.#options.inlineComposition;
     const composedAt = composition?.node === element ? composition.offset : -1;
     children.forEach((child, index) => {
-      if (index === composedAt) copy.appendChild(this.composedSpan(composition!.text));
+      if (index === composedAt) copy.appendChild(this.#composedSpan(composition!.text));
       const childCopy = this.copy(child);
       if (childCopy) copy.appendChild(childCopy);
     });
-    if (composedAt === children.length) copy.appendChild(this.composedSpan(composition!.text));
-    [this.absoluteContainer, this.fixedContainer] = outer;
-    this.copyScroll(element, copy);
-    this.hideScrollbars(element, copy, style);
+    if (composedAt === children.length) copy.appendChild(this.#composedSpan(composition!.text));
+    [this.#absoluteContainer, this.#fixedContainer] = outer;
+    this.#copyScroll(element, copy);
+    this.#hideScrollbars(element, copy, style);
     return copy;
   }
 
   /** Notes what a copy is of, and where it is positioned from if it is absolute or fixed. */
-  private remember<T extends Node | null>(live: Element, style: CSSStyleDeclaration, copy: T): T {
+  #remember<T extends Node | null>(live: Element, style: CSSStyleDeclaration, copy: T): T {
     if (!(copy instanceof Element)) return copy;
-    this.liveOf.set(copy, live);
-    this.copies.set(live, copy);
+    this.#liveOf.set(copy, live);
+    this.#copies.set(live, copy);
     // A z-index applies to positioned boxes, and to flex and grid items.
-    const parent = live.parentElement && this.styles.get(live.parentElement);
+    const parent = live.parentElement && this.#styles.get(live.parentElement);
     const stacked = style.position !== "static" || /flex|grid/.test(parent ? parent.display : "");
     if (stacked && style.zIndex !== "auto" && style.zIndex !== "") {
-      for (let box = live.parentElement; box && !this.zOrdered.has(box); box = box.parentElement)
-        this.zOrdered.add(box);
+      for (let box = live.parentElement; box && !this.#zOrdered.has(box); box = box.parentElement)
+        this.#zOrdered.add(box);
     }
     const fixed = style.position === "fixed";
     if (fixed || style.position === "absolute") {
-      const container = fixed ? this.fixedContainer : this.absoluteContainer;
-      this.positioned.set(live, { copy, fixed, container });
+      const container = fixed ? this.#fixedContainer : this.#absoluteContainer;
+      this.#positioned.set(live, { copy, fixed, container });
       if (fixed) {
         for (let box = live.parentElement; box && box !== container; box = box.parentElement)
-          this.holdingFixed.add(box);
+          this.#holdingFixed.add(box);
       }
     }
     return copy;
   }
 
-  private copyFormState(element: Element, copy: Element): void {
+  #copyFormState(element: Element, copy: Element): void {
     const { HTMLInputElement, HTMLTextAreaElement, HTMLOptionElement, HTMLSelectElement } =
-      this.window;
+      this.#window;
     if (element instanceof HTMLInputElement) {
       if (element.type === "checkbox" || element.type === "radio") {
         copy.toggleAttribute("checked", element.checked);
       } else if (element.type !== "file") {
-        const value = this.shownValue(element);
+        const value = this.#shownValue(element);
         copy.setAttribute("value", value);
         // Only text inputs have a selection, and scroll their text.
-        if (element.selectionStart !== null) this.copyTextScroll(element, copy, value);
+        if (element.selectionStart !== null) this.#copyTextScroll(element, copy, value);
       }
     } else if (element instanceof HTMLTextAreaElement) {
-      const value = this.shownValue(element);
+      const value = this.#shownValue(element);
       copy.textContent = value;
-      this.copyTextScroll(element, copy, value);
+      this.#copyTextScroll(element, copy, value);
     } else if (element instanceof HTMLOptionElement) {
       copy.toggleAttribute("selected", element.selected);
     } else if (element instanceof HTMLSelectElement && copy instanceof HTMLElement) {
@@ -581,7 +583,7 @@ class Snapshotter {
    * past and move the rest into place with the padding (measured, see
    * scrolledText). A line only partly scrolled past is left out whole.
    */
-  private copyTextScroll(
+  #copyTextScroll(
     field: HTMLInputElement | HTMLTextAreaElement,
     copy: Element,
     value: string,
@@ -593,80 +595,77 @@ class Snapshotter {
     if (isInput) copy.setAttribute("value", rest);
     else copy.textContent = rest;
     const side = isInput ? "padding-left" : "padding-top";
-    const padding = parseFloat(this.window.getComputedStyle(field).getPropertyValue(side)) || 0;
+    const padding = parseFloat(this.#window.getComputedStyle(field).getPropertyValue(side)) || 0;
     copy.style.setProperty(side, `${padding + scrolled.offset}px`, "important");
   }
 
   /** A field's value, or what it shows while text is composed in it. */
-  private shownValue(field: HTMLInputElement | HTMLTextAreaElement): string {
-    const composition = this.options.composition;
+  #shownValue(field: HTMLInputElement | HTMLTextAreaElement): string {
+    const composition = this.#options.composition;
     return composition?.field === field ? composition.value : field.value;
   }
 
-  private copyImage(element: Element, copy: Element): void {
-    if (!(element instanceof this.window.HTMLImageElement)) return;
+  #copyImage(element: Element, copy: Element): void {
+    if (!(element instanceof this.#window.HTMLImageElement)) return;
     copy.removeAttribute("srcset");
     copy.removeAttribute("loading");
     const source = element.currentSrc || element.src;
-    const dataUrl = source ? this.options.inlineImage(source) : null;
+    const dataUrl = source ? this.#options.inlineImage(source) : null;
     if (dataUrl) copy.setAttribute("src", dataUrl);
     else copy.removeAttribute("src");
   }
 
-  private copyCanvas(canvas: HTMLCanvasElement): Node | null {
-    const image = this.inert.createElement("img");
-    for (const attribute of Array.from(canvas.attributes))
-      image.setAttribute(attribute.name, attribute.value);
+  #copyCanvas(canvas: HTMLCanvasElement): Node | null {
+    const image = this.#imageOf(canvas);
     try {
       image.setAttribute("src", canvas.toDataURL());
     } catch {
       // A canvas tainted by cross-origin content cannot be read.
     }
-    const { width, height } = canvas.getBoundingClientRect();
+    return image;
+  }
+
+  /** An image in place of a canvas or a video: its attributes (but `skipped`), at its size. */
+  #imageOf(element: Element, skipped?: ReadonlySet<string>): HTMLElement {
+    const image = this.#inert.createElement("img");
+    for (const attribute of Array.from(element.attributes)) {
+      if (!skipped?.has(attribute.name)) image.setAttribute(attribute.name, attribute.value);
+    }
+    const { width, height } = element.getBoundingClientRect();
     image.style.width = `${width}px`;
     image.style.height = `${height}px`;
     return image;
   }
 
-  private composedSpan(text: string): Element {
-    const span = this.inert.createElement("span");
+  #composedSpan(text: string): Element {
+    const span = this.#inert.createElement("span");
     span.setAttribute("style", "text-decoration: underline");
     span.textContent = text;
     return span;
   }
 
   /** A text node with the composed text in it, in place of what the composition replaces. */
-  private composedText(
-    text: Text,
-    composition: NonNullable<SnapshotOptions["inlineComposition"]>,
-  ): Node {
-    const fragment = this.inert.createDocumentFragment();
+  #composedText(text: Text, composition: NonNullable<SnapshotOptions["inlineComposition"]>): Node {
+    const fragment = this.#inert.createDocumentFragment();
     fragment.append(
       text.data.slice(0, composition.offset),
-      this.composedSpan(composition.text),
+      this.#composedSpan(composition.text),
       text.data.slice(composition.endOffset),
     );
     return fragment;
   }
 
   /** A video, as an image of the frame it shows (its poster before it plays). */
-  private copyVideo(video: HTMLVideoElement): Node {
-    const image = this.inert.createElement("img");
-    for (const attribute of Array.from(video.attributes)) {
-      if (!VIDEO_ATTRIBUTES.has(attribute.name))
-        image.setAttribute(attribute.name, attribute.value);
-    }
+  #copyVideo(video: HTMLVideoElement): Node {
     const showsPoster = video.poster !== "" && video.paused && video.currentTime === 0;
-    const poster = video.poster ? this.options.inlineImage(video.poster) : null;
+    const poster = video.poster ? this.#options.inlineImage(video.poster) : null;
     const source = showsPoster
-      ? (poster ?? this.videoFrame(video))
-      : (this.videoFrame(video) ?? poster);
+      ? (poster ?? this.#videoFrame(video))
+      : (this.#videoFrame(video) ?? poster);
+    const image = this.#imageOf(video, VIDEO_ATTRIBUTES);
     if (source) image.setAttribute("src", source);
-    const { width, height } = video.getBoundingClientRect();
-    const computed = this.window.getComputedStyle(video);
+    const computed = this.#window.getComputedStyle(video);
     image.style.setProperty("box-sizing", "border-box");
-    image.style.setProperty("width", `${width}px`);
-    image.style.setProperty("height", `${height}px`);
     // A video letterboxes its frame by default; an image would stretch it.
     image.style.setProperty("object-fit", computed.objectFit);
     image.style.setProperty("object-position", computed.objectPosition);
@@ -680,7 +679,7 @@ class Snapshotter {
    * frame that has not changed (a paused video, at the same time and size, of
    * the same source) is not encoded again.
    */
-  private videoFrame(video: HTMLVideoElement): string | null {
+  #videoFrame(video: HTMLVideoElement): string | null {
     if (video.readyState < 2 || !video.videoWidth || !video.videoHeight) return null;
     const { width } = video.getBoundingClientRect();
     const scale = Math.min(1, (VIDEO_SCALE * Math.max(1, width)) / video.videoWidth);
@@ -691,48 +690,48 @@ class Snapshotter {
     const source = video.srcObject ?? video.currentSrc;
     const cached = videoFrames.get(video);
     if (cached?.key === key && cached.source === source) return cached.url;
-    const url = encodeFrame(this.document, video, frameWidth, frameHeight);
+    const url = encodeFrame(this.#document, video, frameWidth, frameHeight);
     videoFrames.set(video, { key, source, url });
     return url;
   }
 
-  private copyAnimatedValues(element: Element, copy: Element): void {
-    const values = this.animated.get(element);
+  #copyAnimatedValues(element: Element, copy: Element): void {
+    const values = this.#animated.get(element);
     if (!values?.size || !isStyled(copy)) return;
-    const computed = this.window.getComputedStyle(element);
+    const computed = this.#window.getComputedStyle(element);
     for (const [property, value] of values) {
       const baked = value ?? computed.getPropertyValue(property);
       if (baked) copy.style.setProperty(property, baked, "important");
     }
   }
 
-  private copyScroll(element: Element, copy: Element): void {
+  #copyScroll(element: Element, copy: Element): void {
     // The document's own scroll is applied to <body>; <html> must not move.
-    if (element === this.document.documentElement) return;
-    const viewport = this.document.scrollingElement;
-    if (element === this.document.body && viewport) {
+    if (element === this.#document.documentElement) return;
+    const viewport = this.#document.scrollingElement;
+    if (element === this.#document.body && viewport) {
       const { scrollLeft, scrollTop } = viewport;
       if ((scrollLeft !== 0 || scrollTop !== 0) && isStyled(copy))
-        this.moveScrolled(element, copy, scrollLeft, scrollTop, null);
+        this.#moveScrolled(element, copy, scrollLeft, scrollTop, null);
       // In quirks mode, <body> scrolls the viewport; otherwise it may scroll itself too.
       if (element === viewport) return;
     }
     const { scrollLeft, scrollTop } = element;
     if (scrollLeft === 0 && scrollTop === 0) return;
-    if (element instanceof this.window.HTMLSelectElement) {
-      this.copyListBoxScroll(element, copy);
+    if (element instanceof this.#window.HTMLSelectElement) {
+      this.#copyListBoxScroll(element, copy);
       return;
     }
     // foreignObject renders every scroll container at its origin. Move the
     // content instead: by its flow where it can be (see shiftFlow), otherwise
     // each child. Bare text directly inside a scroll container then does not
     // move (a known limitation).
-    const flow = this.shiftFlow(element, scrollLeft, scrollTop);
-    if (!flow) this.moveGeneratedApart(element, scrollLeft, scrollTop);
+    const flow = this.#shiftFlow(element, scrollLeft, scrollTop);
+    if (!flow) this.#moveGeneratedApart(element, scrollLeft, scrollTop);
     for (const child of Array.from(copy.children)) {
       if (isStyled(child)) {
-        const live = this.liveOf.get(child) ?? null;
-        this.moveScrolled(live, child, scrollLeft, scrollTop, element, flow);
+        const live = this.#liveOf.get(child) ?? null;
+        this.#moveScrolled(live, child, scrollLeft, scrollTop, element, flow);
       }
     }
   }
@@ -754,9 +753,9 @@ class Snapshotter {
    * floats, `display: contents`, margins that collapse in ways not worked out
    * (through an empty box, or past clearance).
    */
-  private shiftFlow(container: Element, x: number, y: number): boolean {
-    const style = this.styles.get(container);
-    if (!style || this.options.inlineComposition?.node === container) return false;
+  #shiftFlow(container: Element, x: number, y: number): boolean {
+    const style = this.#styles.get(container);
+    if (!style || this.#options.inlineComposition?.node === container) return false;
     const items = /^(inline-)?(flex|grid)$/.test(style.display);
     if (!items) {
       if (!BLOCK_CONTAINER.test(style.display)) return false;
@@ -766,12 +765,12 @@ class Snapshotter {
         return false;
       if ((style.writingMode || "horizontal-tb") !== "horizontal-tb") return false;
     }
-    const boxes = this.inFlowChildren(container, items);
+    const boxes = this.#inFlowChildren(container, items);
     if (!boxes) return false;
     // Generated content is a box of the flow too: moved with a rule of its own.
     // (In a block container, ::after comes after the boxes, and moves with them.)
-    const before = this.generatedBox(container, "::before", items);
-    const after = items ? this.generatedBox(container, "::after", items) : null;
+    const before = this.#generatedBox(container, "::before", items);
+    const after = items ? this.#generatedBox(container, "::after", items) : null;
     if (before === false || after === false) return false;
     const rules: string[] = [];
     for (const [pseudo, generated] of [
@@ -779,7 +778,7 @@ class Snapshotter {
       ["::after", after],
     ] as const) {
       if (!generated) continue;
-      const declarations = this.moveGenerated(
+      const declarations = this.#moveGenerated(
         container,
         generated,
         items,
@@ -795,10 +794,10 @@ class Snapshotter {
       margins.push([
         box,
         side,
-        plus(baseValue(box, this.styles.get(this.liveOf.get(box)!)!, side), by),
+        plus(baseValue(box, this.#styles.get(this.#liveOf.get(box)!)!, side), by),
       ]);
     const copies = boxes
-      .map((box) => this.copies.get(box))
+      .map((box) => this.#copies.get(box))
       .filter((copy) => copy && isStyled(copy));
     for (const copy of copies as (HTMLElement | SVGElement)[]) {
       if (y !== 0 && items) {
@@ -817,19 +816,19 @@ class Snapshotter {
       boxes[0] &&
       !(before && before.position !== "absolute" && before.position !== "fixed")
     ) {
-      const top = this.marginToMoveFlow(boxes[0], y);
-      const copy = this.copies.get(boxes[0]);
+      const top = this.#marginToMoveFlow(boxes[0], y);
+      const copy = this.#copies.get(boxes[0]);
       if (top === null) return false;
       if (copy && isStyled(copy)) margins.push([copy, "margin-top", `${top}px`]);
     }
     for (const [copy, side, value] of margins) copy.style.setProperty(side, value, "important");
-    this.addGeneratedRules(container, rules);
+    this.#addGeneratedRules(container, rules);
     return true;
   }
 
   /** Adds rules (`::before{…}`) for a container's generated boxes, marking its copy for them. */
-  private addGeneratedRules(container: Element, rules: string[]): void {
-    const copy = this.copies.get(container);
+  #addGeneratedRules(container: Element, rules: string[]): void {
+    const copy = this.#copies.get(container);
     if (rules.length === 0 || !copy) return;
     const id = String(this.generatedRules.length);
     copy.setAttribute(SCROLLED_ATTRIBUTE, id);
@@ -841,12 +840,12 @@ class Snapshotter {
    * by one (its flow is not moved): as moveScrolled moves a child of the same
    * position (see scrollMoves), with a rule.
    */
-  private moveGeneratedApart(container: Element, x: number, y: number): void {
-    const containerStyle = this.styles.get(container);
+  #moveGeneratedApart(container: Element, x: number, y: number): void {
+    const containerStyle = this.#styles.get(container);
     if (!containerStyle) return;
     const rules: string[] = [];
     for (const pseudo of ["::before", "::after"] as const) {
-      const style = this.window.getComputedStyle(container, pseudo);
+      const style = this.#window.getComputedStyle(container, pseudo);
       if (!isGenerated(style)) continue;
       const position = style.position;
       const moves = scrollMoves(position, (property) => style.getPropertyValue(property), x, y, {
@@ -859,58 +858,54 @@ class Snapshotter {
       const declarations = moves.map(([property, moved]) => `${property}:${moved} !important`);
       if (declarations.length > 0) rules.push(`${pseudo}{${declarations.join(";")}}`);
     }
-    this.addGeneratedRules(container, rules);
+    this.#addGeneratedRules(container, rules);
   }
 
   /**
    * The boxes of a container's flow (its in-flow element children), or null
    * if anything else is in it that its flow would not move as it moves them.
+   *
+   * `first`: only the first box of a block's flow, if it is a block (its top
+   * margin can collapse with the block's); null if lines come first. Floats
+   * do not separate them, as absolute and fixed elements do not.
    */
-  private inFlowChildren(container: Element, items: boolean): Element[] | null {
+  #inFlowChildren(container: Element, items: boolean, first = false): Element[] | null {
     const boxes: Element[] = [];
     for (const node of Array.from(container.childNodes)) {
       if (node.nodeType === Node.TEXT_NODE) {
         if (/\S/.test((node as Text).data)) return null;
         continue;
       }
-      const style = node.nodeType === Node.ELEMENT_NODE && this.styles.get(node as Element);
+      const style = node.nodeType === Node.ELEMENT_NODE && this.#styles.get(node as Element);
       if (!style || style.display === "none") continue;
       if (style.position === "absolute" || style.position === "fixed") continue;
-      if (style.display === "contents" || (style.cssFloat || "none") !== "none") return null;
-      if (!items && !BLOCK_LEVEL.test(style.display)) return null;
+      if ((style.cssFloat || "none") !== "none") {
+        if (first) continue;
+        return null;
+      }
+      if (style.display === "contents" || (!items && !BLOCK_LEVEL.test(style.display))) return null;
       boxes.push(node as Element);
+      if (first) break;
     }
     return boxes;
   }
 
+  /**
+   * The first box of a block's flow, if it is a block (its top margin can
+   * collapse with the block's); null if lines come first.
+   */
+  #firstBlock(container: Element): Element | null {
+    return this.#inFlowChildren(container, false, true)?.[0] ?? null;
+  }
+
   /** A length of a box (a margin, a padding) in px, as the copy has it (an animation's, baked) or the page. */
-  private pxOf(box: Element, property: string): number {
-    const style = this.styles.get(box)!;
-    const copy = this.copies.get(box);
+  #pxOf(box: Element, property: string): number {
+    const style = this.#styles.get(box)!;
+    const copy = this.#copies.get(box);
     const value = copy && isStyled(copy) ? baseValue(copy, style, property) : "";
     return value.endsWith("px")
       ? parseFloat(value)
       : parseFloat(style.getPropertyValue(property)) || 0;
-  }
-
-  /**
-   * The first box of a block's flow, if it is a block (its top margin can
-   * collapse with the block's); null if lines come first. What is out of the
-   * flow (floats, absolute and fixed elements) does not separate them.
-   */
-  private firstBlock(container: Element): Element | null {
-    for (const node of Array.from(container.childNodes)) {
-      if (node.nodeType === Node.TEXT_NODE) {
-        if (/\S/.test((node as Text).data)) return null;
-        continue;
-      }
-      const style = node.nodeType === Node.ELEMENT_NODE && this.styles.get(node as Element);
-      if (!style || style.display === "none") continue;
-      if (style.position === "absolute" || style.position === "fixed") continue;
-      if ((style.cssFloat || "none") !== "none") continue;
-      return BLOCK_LEVEL.test(style.display) ? (node as Element) : null;
-    }
-    return null;
   }
 
   /**
@@ -919,15 +914,15 @@ class Snapshotter {
    * nothing separates them), and the margin they make together must be `y`
    * less. Null where it cannot be worked out.
    */
-  private marginToMoveFlow(first: Element, y: number): number | null {
+  #marginToMoveFlow(first: Element, y: number): number | null {
     const margins: number[] = [];
     for (let box: Element | null = first; box;) {
-      const style: CSSStyleDeclaration = this.styles.get(box)!;
+      const style: CSSStyleDeclaration = this.#styles.get(box)!;
       // An empty box: margins collapse through it, with those after it.
       if ((box as HTMLElement).offsetHeight === 0) return null;
       // Clearance separates a box's margin from those before it.
       if (box !== first && (style.clear || "none") !== "none") return null;
-      margins.push(this.pxOf(box, "margin-top"));
+      margins.push(this.#pxOf(box, "margin-top"));
       // Not a new formatting context, and nothing between it and its first box.
       const through: boolean =
         /^(block|list-item)$/.test(style.display) &&
@@ -943,7 +938,7 @@ class Snapshotter {
       if (!through) break;
       // Its own ::before comes first: a block one's margin is the last that
       // collapses (its boxes are its text); lines stop it.
-      const before = this.window.getComputedStyle(box, "::before");
+      const before = this.#window.getComputedStyle(box, "::before");
       if (
         isGenerated(before) &&
         !/^(absolute|fixed)$/.test(before.position) &&
@@ -954,7 +949,7 @@ class Snapshotter {
         margins.push(parseFloat(before.getPropertyValue("margin-top")) || 0);
         break;
       }
-      box = this.firstBlock(box);
+      box = this.#firstBlock(box);
     }
     return marginMovingFlow(margins, y);
   }
@@ -965,12 +960,12 @@ class Snapshotter {
    * has none, or one that does not move (fixed); false if it is one that
    * margins cannot move (in a line, floating).
    */
-  private generatedBox(
+  #generatedBox(
     container: Element,
     pseudo: "::before" | "::after",
     items: boolean,
   ): CSSStyleDeclaration | null | false {
-    const style = this.window.getComputedStyle(container, pseudo);
+    const style = this.#window.getComputedStyle(container, pseudo);
     if (!isGenerated(style)) return null;
     if (style.position === "absolute" || style.position === "fixed") return style;
     if ((style.cssFloat || "none") !== "none") return false;
@@ -981,7 +976,7 @@ class Snapshotter {
    * The declarations that move a container's generated box with its content,
    * as shiftFlow moves its children; null where that cannot be worked out.
    */
-  private moveGenerated(
+  #moveGenerated(
     container: Element,
     style: CSSStyleDeclaration,
     items: boolean,
@@ -995,7 +990,7 @@ class Snapshotter {
     const value = (property: string) => style.getPropertyValue(property);
     if (style.position === "absolute" || style.position === "fixed") {
       // From the container (its containing block) it scrolls with it; else it stays.
-      const containerStyle = this.styles.get(container)!;
+      const containerStyle = this.#styles.get(container)!;
       const scrolls =
         style.position === "fixed"
           ? containsFixed(containerStyle)
@@ -1048,7 +1043,7 @@ class Snapshotter {
    * it sticks (to its unscrolled container) where it would scrolled; or, with
    * fixed elements in it, held where it is by its insets (see holdSticky).
    */
-  private moveScrolled(
+  #moveScrolled(
     live: Element | null,
     copy: HTMLElement | SVGElement,
     x: number,
@@ -1056,12 +1051,12 @@ class Snapshotter {
     container: Element | null,
     flow = false,
   ): void {
-    const style = live ? this.styles.get(live) : undefined;
+    const style = live ? this.#styles.get(live) : undefined;
     const position = style?.position ?? "static";
     // Moved with the flow (sticky ones too, sticking as on the page).
     if (flow && position !== "absolute" && position !== "fixed") return;
-    const positioned = live && this.positioned.get(live);
-    const parent = live?.parentElement && this.styles.get(live.parentElement);
+    const positioned = live && this.#positioned.get(live);
+    const parent = live?.parentElement && this.#styles.get(live.parentElement);
     const sticky = position === "sticky";
     const options: ScrollMoveOptions = {
       parentDisplay: parent ? parent.display : "",
@@ -1073,17 +1068,17 @@ class Snapshotter {
       // Its static siblings, positioned now, would paint over it in their order,
       // as the page does not. Not with a z-index in it, which would then only
       // count inside it.
-      lift: sticky && !!container && style?.zIndex === "auto" && !this.zOrdered.has(live!),
+      lift: sticky && !!container && style?.zIndex === "auto" && !this.#zOrdered.has(live!),
     };
-    if (sticky && container && this.holdingFixed.has(live!)) {
+    if (sticky && container && this.#holdingFixed.has(live!)) {
       if (options.lift) copy.style.setProperty("z-index", "1", "important");
-      if (this.holdSticky(live!, copy, container, x, y)) return;
+      if (this.#holdSticky(live!, copy, container, x, y)) return;
     }
     const value = (property: string) => (style ? baseValue(copy, style, property) : "");
     for (const [property, moved] of scrollMoves(position, value, x, y, options))
       copy.style.setProperty(property, moved, "important");
-    if (position === "static" || position === "relative") this.moved.set(copy, "relative");
-    else if (sticky) this.moved.set(copy, "translated");
+    if (position === "static" || position === "relative") this.#moved.set(copy, "relative");
+    else if (sticky) this.#moved.set(copy, "translated");
   }
 
   /**
@@ -1095,15 +1090,15 @@ class Snapshotter {
    * margin, or scrolled past),
    * or with a transform of its own (then it is their containing block anyway).
    */
-  private holdSticky(
+  #holdSticky(
     live: Element,
     copy: HTMLElement | SVGElement,
     container: Element,
     x: number,
     y: number,
   ): boolean {
-    const style = this.styles.get(live)!;
-    const containerStyle = this.styles.get(container);
+    const style = this.#styles.get(live)!;
+    const containerStyle = this.#styles.get(container);
     if (containsFixed(style) || !containerStyle) return false;
     const rect = live.getBoundingClientRect();
     const box = container.getBoundingClientRect();
@@ -1114,10 +1109,10 @@ class Snapshotter {
       right: box.left + container.clientLeft + container.clientWidth,
     };
     // Its margin box stays in the container's content (its containing block).
-    const paddingTop = this.pxOf(container, "padding-top");
-    const paddingLeft = this.pxOf(container, "padding-left");
-    const marginTop = this.pxOf(live, "margin-top");
-    const marginLeft = this.pxOf(live, "margin-left");
+    const paddingTop = this.#pxOf(container, "padding-top");
+    const paddingLeft = this.#pxOf(container, "padding-left");
+    const marginTop = this.#pxOf(live, "margin-top");
+    const marginLeft = this.#pxOf(live, "margin-left");
     if (y !== 0 && rect.top - marginTop < port.top + paddingTop - 0.5) return false;
     if (x !== 0 && rect.left - marginLeft < port.left + paddingLeft - 0.5) return false;
     const set = (property: string, value: number) =>
@@ -1139,31 +1134,31 @@ class Snapshotter {
    * translated), and not the page's: where they are on the page, from that box.
    */
   pinPositioned(): void {
-    for (const [live, { copy, fixed, container }] of this.positioned) {
+    for (const [live, { copy, fixed, container }] of this.#positioned) {
       let trap: Element | null = null;
       for (let ancestor = copy.parentElement; ancestor; ancestor = ancestor.parentElement) {
-        if (container && this.liveOf.get(ancestor) === container) break;
-        const moved = this.moved.get(ancestor);
+        if (container && this.#liveOf.get(ancestor) === container) break;
+        const moved = this.#moved.get(ancestor);
         if (moved === "translated" || (moved === "relative" && !fixed)) {
           trap = ancestor;
           break;
         }
       }
-      const trapLive = trap && this.liveOf.get(trap);
-      if (trapLive && isStyled(copy)) this.pin(live, copy, fixed, container, trapLive);
+      const trapLive = trap && this.#liveOf.get(trap);
+      if (trapLive && isStyled(copy)) this.#pin(live, copy, fixed, container, trapLive);
     }
   }
 
   /** Positions an absolute or fixed element's copy from `trap` (its containing block in the copy), as the page has it from `container`. */
-  private pin(
+  #pin(
     live: Element,
     copy: HTMLElement | SVGElement,
     fixed: boolean,
     container: Element | null,
     trap: Element,
   ): void {
-    const style = this.styles.get(live)!;
-    const viewport = this.document.scrollingElement;
+    const style = this.#styles.get(live)!;
+    const viewport = this.#document.scrollingElement;
     const origin = (element: Element | null) => {
       if (element) {
         const rect = element.getBoundingClientRect();
@@ -1211,8 +1206,8 @@ class Snapshotter {
    * that much lower than it is; the rows left out are right in every browser.
    * (An <optgroup>'s label stays, even scrolled out with its first options.)
    */
-  private copyListBoxScroll(select: HTMLSelectElement, copy: Element): void {
-    const style = this.window.getComputedStyle(select);
+  #copyListBoxScroll(select: HTMLSelectElement, copy: Element): void {
+    const style = this.#window.getComputedStyle(select);
     const top =
       select.getBoundingClientRect().top + select.clientTop + (parseFloat(style.paddingTop) || 0);
     const copies = Array.from(copy.querySelectorAll("option"));
@@ -1238,12 +1233,12 @@ class Snapshotter {
    * position: hide them, keeping the room a classic scrollbar takes, and
    * remember them to be drawn by drawScrollbars().
    */
-  private hideScrollbars(element: Element, copy: Element, style: CSSStyleDeclaration): void {
+  #hideScrollbars(element: Element, copy: Element, style: CSSStyleDeclaration): void {
     const bars = scrollbarsOf(element, style);
     if (bars.length === 0) return;
     this.scrollbars.push(...bars);
     // The document's scrollbars are the viewport's; the root copy never shows any.
-    if (element === this.document.scrollingElement || !(copy instanceof HTMLElement)) return;
+    if (element === this.#document.scrollingElement || !(copy instanceof HTMLElement)) return;
     copy.style.setProperty("overflow", "hidden", "important");
     if (bars.some((bar) => bar.gutter))
       copy.style.setProperty("scrollbar-gutter", "stable", "important");
@@ -1260,22 +1255,20 @@ const SCROLLBAR_THUMB_ACTIVE_COLOR = "rgb(0 0 0 / 64%)";
 const TRANSPARENT = /^(transparent|rgba\(0, 0, 0, 0\))$/;
 const SCROLLBAR_INSET = 2;
 
-/** Adds a fixed box on top of everything to the root copy. */
+/** Adds a fixed box on top of everything to the root copy (`css` may override its own). */
 function drawBox(
   root: HTMLElement,
-  left: number,
-  top: number,
-  width: number,
-  height: number,
+  { left, top, width, height }: Box,
   css: string,
-): void {
+  zIndex = 2147483647,
+): HTMLElement {
   const element = root.ownerDocument.createElement("div");
   element.setAttribute(
     "style",
     `position:fixed;left:${left}px;top:${top}px;width:${width}px;height:${height}px;` +
-      `margin:0;padding:0;border:0;pointer-events:none;z-index:2147483647;${css}`,
+      `margin:0;padding:0;border:0;pointer-events:none;z-index:${zIndex};${css}`,
   );
-  root.appendChild(element);
+  return root.appendChild(element);
 }
 
 /** Adds the scrollbars on top of everything, as fixed boxes in the root copy. */
@@ -1284,11 +1277,8 @@ function drawScrollbars(
   bars: readonly Scrollbar[],
   state: SnapshotOptions["scrollbar"],
 ): void {
-  const box = (left: number, top: number, width: number, height: number, css: string) =>
-    drawBox(root, left, top, width, height, css);
   for (const { element, axis, track, thumb, gutter } of bars) {
-    if (gutter)
-      box(track.left, track.top, track.width, track.height, `background:${SCROLLBAR_TRACK_COLOR}`);
+    if (gutter) drawBox(root, track, `background:${SCROLLBAR_TRACK_COLOR}`);
     const width = Math.max(0, thumb.width - 2 * SCROLLBAR_INSET);
     const height = Math.max(0, thumb.height - 2 * SCROLLBAR_INSET);
     const current = state?.element === element && state.axis === axis ? state.state : null;
@@ -1299,7 +1289,8 @@ function drawScrollbars(
           ? SCROLLBAR_THUMB_HOVER_COLOR
           : SCROLLBAR_THUMB_COLOR;
     const style = `background:${color};border-radius:${Math.min(width, height) / 2}px`;
-    box(thumb.left + SCROLLBAR_INSET, thumb.top + SCROLLBAR_INSET, width, height, style);
+    const left = thumb.left + SCROLLBAR_INSET;
+    drawBox(root, { left, top: thumb.top + SCROLLBAR_INSET, width, height }, style);
   }
 }
 
@@ -1307,15 +1298,9 @@ const POPUP_HIGHLIGHT = "rgb(30 110 220)";
 
 /** Draws a selected option of a focused list box over its copy: white on the selection's blue, cut to the box. */
 function drawListBoxRow(root: HTMLElement, row: ListBoxRow): void {
-  const document = root.ownerDocument;
   const { shown, box } = row;
-  const clip = document.createElement("div");
-  clip.setAttribute(
-    "style",
-    `position:fixed;left:${shown.left}px;top:${shown.top}px;width:${shown.width}px;height:${shown.height}px;` +
-      "margin:0;padding:0;border:0;overflow:hidden;pointer-events:none;z-index:2147483646",
-  );
-  const option = document.createElement("div");
+  const clip = drawBox(root, shown, "overflow:hidden", 2147483646);
+  const option = root.ownerDocument.createElement("div");
   option.setAttribute(
     "style",
     `position:absolute;left:${box.left - shown.left}px;top:${box.top - shown.top}px;width:${box.width}px;height:${box.height}px;` +
@@ -1324,23 +1309,19 @@ function drawListBoxRow(root: HTMLElement, row: ListBoxRow): void {
   );
   option.textContent = row.label;
   clip.appendChild(option);
-  root.appendChild(clip);
 }
 
 /** Draws the open list of a <select>, as a fixed box over everything. */
 function drawSelectPopup(root: HTMLElement, view: PopupView): void {
-  const document = root.ownerDocument;
-  const list = document.createElement("div");
-  const { left, top, width, height } = view.box;
-  list.setAttribute(
-    "style",
-    `position:fixed;left:${left}px;top:${top}px;width:${width}px;height:${height}px;box-sizing:border-box;` +
-      "margin:0;padding:0;border:1px solid rgb(118 118 118);background:#fff;color:#000;overflow:hidden;" +
-      "box-shadow:0 2px 8px rgb(0 0 0 / 25%);pointer-events:none;z-index:2147483647;text-align:left;" +
+  const list = drawBox(
+    root,
+    view.box,
+    "box-sizing:border-box;border:1px solid rgb(118 118 118);background:#fff;color:#000;overflow:hidden;" +
+      "box-shadow:0 2px 8px rgb(0 0 0 / 25%);text-align:left;" +
       `font:${view.font};line-height:${view.itemHeight}px;letter-spacing:normal;text-transform:none`,
   );
   for (const item of view.items) {
-    const row = document.createElement("div");
+    const row = root.ownerDocument.createElement("div");
     const indent = item.grouped ? 20 : 8;
     const color = item.highlighted
       ? "#fff"
@@ -1360,7 +1341,6 @@ function drawSelectPopup(root: HTMLElement, view: PopupView): void {
     row.textContent = item.label;
     list.appendChild(row);
   }
-  root.appendChild(list);
 }
 
 const BACKGROUND_PROPERTIES = [
@@ -1464,21 +1444,14 @@ export function snapshotDocument(document: Document, options: SnapshotOptions): 
     : pageColor
       ? `background:${pageColor};mix-blend-mode:multiply`
       : `background:${SELECTION_COLOR}`;
-  for (const { left, top, width, height } of options.selection ?? [])
-    drawBox(root, left, top, width, height, css);
+  for (const box of options.selection ?? []) drawBox(root, box, css);
   // Composed text is underlined, as IMEs do.
   if (options.composition) {
     const { boxes, color } = options.composition;
     for (const box of boxes) {
       const thickness = Math.max(1, Math.round(box.height / 14));
-      drawBox(
-        root,
-        box.left,
-        box.top + box.height - thickness,
-        box.width,
-        thickness,
-        `background:${color}`,
-      );
+      const top = box.top + box.height - thickness;
+      drawBox(root, { ...box, top, height: thickness }, `background:${color}`);
     }
   }
   drawScrollbars(root, snapshotter.scrollbars, options.scrollbar);

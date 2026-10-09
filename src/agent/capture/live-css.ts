@@ -39,6 +39,7 @@ import {
   ruleCount,
   sheetSignature,
   signatureParts,
+  stylesheetsSignature,
   unwrapLiveSelector,
 } from "./css";
 
@@ -267,9 +268,6 @@ export function hasTransition(style: CSSStyleDeclaration): boolean {
   return /[1-9]|var\(/.test(duration);
 }
 
-const joinParts = (parts: [CSSStyleSheet | null, string][]) =>
-  parts.map(([, part]) => part).join("|");
-
 export class LiveInteractionCss {
   /**
    * The parts of the signature as last synced (see signatureParts), and where
@@ -278,31 +276,31 @@ export class LiveInteractionCss {
    * changed meanwhile (a sheet added, an @import loaded) still shows on the
    * next sync.
    */
-  private parts: [CSSStyleSheet | null, string][] = [];
+  #parts: [CSSStyleSheet | null, string][] = [];
   /** Where each sheet's parts are: a sheet can be there twice (adopted twice, or imported twice). */
-  private readonly partIndex = new Map<CSSStyleSheet, number[]>();
+  readonly #partIndex = new Map<CSSStyleSheet, number[]>();
   /** The signature as last synced; null when parts changed since (joined only when compared). */
-  private signature: string | null = "";
+  #signature: string | null = "";
   /**
    * The stylesheets may have changed since the last sync. Reading them all
    * on every pointer move would be wasted work: the page says when (see
    * invalidate()), or the CSSOM does (watchStylesheets: a rule inserted is
    * rewritten right away, other changes are looked at on the next sync).
    */
-  private stale = true;
+  #stale = true;
   /** Set while syncing: the agent's own sheet changing is not the page's. */
-  private syncing = false;
+  #syncing = false;
   /**
    * The page's adoptedStyleSheets when last synced. The list can be changed
    * in place (push, splice), which no setter sees: compared on every sync.
    */
-  private adoptedList: readonly CSSStyleSheet[] = [];
+  #adoptedList: readonly CSSStyleSheet[] = [];
   /** The text of the agent's own sheet, not replaced again when the same. */
-  private adoptedCss = "";
+  #adoptedCss = "";
   /** The selectors rewritten, as the page wrote them (restored on dispose). */
-  private readonly originals = new Map<CSSStyleRule, string>();
+  readonly #originals = new Map<CSSStyleRule, string>();
   /** Rules whose rewritten selector the browser did not take: not tried again. */
-  private readonly rejected = new WeakSet<CSSStyleRule>();
+  readonly #rejected = new WeakSet<CSSStyleRule>();
   /**
    * How far the page's interaction rules restyle: only inside the elements
    * in the state, also their later siblings (`.a:hover ~ .b`), or anything
@@ -312,22 +310,28 @@ export class LiveInteractionCss {
   /** The page's stylesheets have transitions (or may: those read through a copy are counted as having some). */
   hasTransitions = false;
   /** The interaction rules of stylesheets that could not be edited. */
-  private adopted: CSSStyleSheet | null = null;
-  private readonly window: FrameWindow;
-  private readonly unwatch: () => void;
-  private readonly unpatchQueries: () => void;
+  #adopted: CSSStyleSheet | null = null;
+  readonly #window: FrameWindow;
+  readonly #unwatch: () => void;
+  readonly #unpatchQueries: () => void;
+  readonly #document: Document;
+  /** The sheet itself if it can be read, or else a readable copy (DocumentCss.readable). */
+  readonly #readable: (sheet: CSSStyleSheet) => CSSStyleSheet | null;
+  /** The page changed its stylesheets through the CSSOM: it may look different. */
+  readonly #onChange: () => void;
 
   constructor(
-    private readonly document: Document,
-    /** The sheet itself if it can be read, or else a readable copy (DocumentCss.readable). */
-    private readonly readable: (sheet: CSSStyleSheet) => CSSStyleSheet | null = (sheet) =>
+    document: Document,
+    readable: (sheet: CSSStyleSheet) => CSSStyleSheet | null = (sheet) =>
       ruleCount(sheet) >= 0 ? sheet : null,
-    /** The page changed its stylesheets through the CSSOM: it may look different. */
-    private readonly onChange: () => void = () => {},
+    onChange: () => void = () => {},
   ) {
-    this.window = document.defaultView as FrameWindow;
-    this.unwatch = watchStylesheets(this.window, (change) => this.cssomChanged(change));
-    this.unpatchQueries = patchSelectorQueries(this.window);
+    this.#document = document;
+    this.#readable = readable;
+    this.#onChange = onChange;
+    this.#window = document.defaultView as FrameWindow;
+    this.#unwatch = watchStylesheets(this.#window, (change) => this.#cssomChanged(change));
+    this.#unpatchQueries = patchSelectorQueries(this.#window);
   }
 
   /**
@@ -335,15 +339,15 @@ export class LiveInteractionCss {
    * or a framework rendering), or a stylesheet loaded.
    */
   invalidate(): void {
-    this.stale = true;
+    this.#stale = true;
   }
 
   /** Rewrites everything again on the next sync (a copy of a cross-origin sheet arrived, say). */
   reset(): void {
-    this.stale = true;
-    this.signature = "";
-    this.parts = [];
-    this.partIndex.clear();
+    this.#stale = true;
+    this.#signature = "";
+    this.#parts = [];
+    this.#partIndex.clear();
   }
 
   /**
@@ -354,96 +358,97 @@ export class LiveInteractionCss {
    * rewrote anything (the page may lay out differently).
    */
   sync(): boolean {
-    if (!this.stale && !this.adoptedListChanged()) return false;
-    this.stale = false;
-    this.adoptedList = this.pageAdoptedList();
-    const sheets = pageStylesheets(this.document);
+    if (!this.#stale && !this.#adoptedListChanged()) return false;
+    this.#stale = false;
+    this.#adoptedList = this.#pageAdoptedList();
+    const sheets = pageStylesheets(this.#document);
     const parts = signatureParts(sheets);
-    const signature = joinParts(parts);
-    if (signature === (this.signature ??= joinParts(this.parts))) return false;
-    this.parts = parts;
-    this.partIndex.clear();
+    const signature = stylesheetsSignature(parts);
+    if (signature === (this.#signature ??= stylesheetsSignature(this.#parts))) return false;
+    this.#parts = parts;
+    this.#partIndex.clear();
     parts.forEach(([sheet], i) => {
       if (!sheet) return;
-      const indices = this.partIndex.get(sheet);
+      const indices = this.#partIndex.get(sheet);
       if (indices) indices.push(i);
-      else this.partIndex.set(sheet, [i]);
+      else this.#partIndex.set(sheet, [i]);
     });
-    this.signature = signature;
-    this.syncing = true;
+    this.#signature = signature;
+    this.#syncing = true;
     try {
       const copied: string[] = [];
       const visited = new Set<CSSStyleSheet>();
       for (const sheet of sheets) this.syncSheet(sheet, sheet.media.mediaText, copied, visited);
       // Rules of sheets the page removed (or rules it deleted) are not restored.
-      for (const rule of this.originals.keys())
+      for (const rule of this.#originals.keys())
         if (!rule.parentStyleSheet || !visited.has(rule.parentStyleSheet))
-          this.originals.delete(rule);
-      this.adopt(copied.join("\n"));
+          this.#originals.delete(rule);
+      this.#adopt(copied.join("\n"));
     } finally {
-      this.syncing = false;
+      this.#syncing = false;
     }
     return true;
   }
 
   /** What the page changed through the CSSOM, if it is in the document's stylesheets. */
-  private cssomChanged(change: CssomChange): void {
-    if (this.syncing) return;
+  #cssomChanged(change: CssomChange): void {
+    if (this.#syncing) return;
     switch (change.kind) {
       case "insert": {
-        const sheet = this.pageSheetOf(change.parent);
+        const sheet = this.#pageSheetOf(change.parent);
         if (!sheet) return;
         const rule = change.parent.cssRules[change.index];
         // Only the rule inserted is rewritten, not all the page's (CSS-in-JS inserts rules all the time).
         // It could be inserted: the sheet is readable.
-        if (rule && !(rule instanceof this.window.CSSImportRule)) {
-          this.syncing = true;
+        if (rule && !(rule instanceof this.#window.CSSImportRule)) {
+          this.#syncing = true;
           try {
-            this.rewrite([rule], [], new Set());
+            this.#rewrite([rule], [], new Set());
           } finally {
-            this.syncing = false;
+            this.#syncing = false;
           }
-          this.sheetChanged(sheet);
+          this.#sheetChanged(sheet);
         } else {
           this.reset();
         }
         break;
       }
       case "delete": {
-        const sheet = this.pageSheetOf(change.parent);
+        const sheet = this.#pageSheetOf(change.parent);
         if (!sheet) return;
         // Nothing to rewrite; nothing to put back on dispose either.
-        if (change.rule) this.forget(change.rule);
-        this.sheetChanged(sheet);
+        if (change.rule) this.#forget(change.rule);
+        this.#sheetChanged(sheet);
         break;
       }
       case "selector": {
         const { rule } = change;
-        if (!rule.parentStyleSheet || !this.pageSheetOf(rule)) return;
+        if (!rule.parentStyleSheet || !this.#pageSheetOf(rule)) return;
         // The page's own selector now: rewritten as any other.
-        this.originals.delete(rule);
-        this.rejected.delete(rule);
-        this.syncing = true;
+        this.#originals.delete(rule);
+        this.#rejected.delete(rule);
+        this.#syncing = true;
         try {
-          this.rewriteRule(rule);
+          this.#rewriteRule(rule);
         } finally {
-          this.syncing = false;
+          this.#syncing = false;
         }
         // Written back as it read it (rewritten): put back without the rewrite on dispose.
-        if (!this.originals.has(rule) && rule.selectorText.includes("[data-thp-"))
-          this.originals.set(rule, unwrapLiveSelector(rule.selectorText));
+        if (!this.#originals.has(rule) && rule.selectorText.includes("[data-thp-"))
+          this.#originals.set(rule, unwrapLiveSelector(rule.selectorText));
         break;
       }
       case "sheet":
-        if (!this.pageSheetOf(change.sheet)) return;
+        if (!this.#pageSheetOf(change.sheet)) return;
         this.reset();
         break;
       case "owner":
-        if (change.owner !== this.document && change.owner.ownerDocument !== this.document) return;
+        if (change.owner !== this.#document && change.owner.ownerDocument !== this.#document)
+          return;
         this.invalidate();
         break;
     }
-    this.onChange();
+    this.#onChange();
   }
 
   /**
@@ -451,61 +456,64 @@ export class LiveInteractionCss {
    * signature is brought up to date, so that the next sync does not look at
    * everything again. A sheet not synced yet is left for the next sync.
    */
-  private sheetChanged(sheet: CSSStyleSheet): void {
-    const indices = this.partIndex.get(sheet);
+  #sheetChanged(sheet: CSSStyleSheet): void {
+    const indices = this.#partIndex.get(sheet);
     if (!indices) return;
     const part = sheetSignature(sheet);
-    for (const index of indices) this.parts[index] = [sheet, part];
-    this.signature = null;
+    for (const index of indices) this.#parts[index] = [sheet, part];
+    this.#signature = null;
   }
 
   /** A rule the page deleted, and those nested in it: not restored on dispose. */
-  private forget(rule: CSSRule): void {
-    if (rule instanceof this.window.CSSStyleRule) this.originals.delete(rule);
+  #forget(rule: CSSRule): void {
+    if (rule instanceof this.#window.CSSStyleRule) this.#originals.delete(rule);
     if ("cssRules" in rule)
-      for (const nested of Array.from(rule.cssRules as CSSRuleList)) this.forget(nested);
+      for (const nested of Array.from(rule.cssRules as CSSRuleList)) this.#forget(nested);
   }
 
   /**
    * The stylesheet `parent` is (or is in), if it is one of the page's, or
    * one they import; null if not (a shadow root's, say).
    */
-  private pageSheetOf(parent: CSSStyleSheet | CSSRule): CSSStyleSheet | null {
-    const own = parent instanceof this.window.CSSStyleSheet ? parent : parent.parentStyleSheet;
+  #pageSheetOf(parent: CSSStyleSheet | CSSRule): CSSStyleSheet | null {
+    const own = parent instanceof this.#window.CSSStyleSheet ? parent : parent.parentStyleSheet;
     if (!own) return null;
     // The sheets synced last, without listing the page's again (CSS-in-JS inserts rules all the time).
-    if (this.partIndex.has(own)) return own;
+    if (this.#partIndex.has(own)) return own;
     let top = own;
     while (top.ownerRule?.parentStyleSheet) top = top.ownerRule.parentStyleSheet;
-    return pageStylesheets(this.document).includes(top) ? own : null;
+    return pageStylesheets(this.#document).includes(top) ? own : null;
   }
 
-  private pageAdoptedList(): readonly CSSStyleSheet[] {
-    const adopted = (this.document as Document & { adoptedStyleSheets?: CSSStyleSheet[] })
+  #pageAdoptedList(): readonly CSSStyleSheet[] {
+    const adopted = (this.#document as Document & { adoptedStyleSheets?: CSSStyleSheet[] })
       .adoptedStyleSheets;
     return adopted ? adopted.filter((sheet) => !agentSheets.has(sheet)) : [];
   }
 
-  private adoptedListChanged(): boolean {
-    const list = this.pageAdoptedList();
+  #adoptedListChanged(): boolean {
+    const list = this.#pageAdoptedList();
     return (
-      list.length !== this.adoptedList.length ||
-      list.some((sheet, i) => sheet !== this.adoptedList[i])
+      list.length !== this.#adoptedList.length ||
+      list.some((sheet, i) => sheet !== this.#adoptedList[i])
     );
   }
 
   /** Puts the page's selectors and the CSSOM back. */
   dispose(): void {
-    this.syncing = true;
-    for (const [rule, selector] of this.originals) rule.selectorText = selector;
-    this.originals.clear();
-    this.adopt("");
-    this.unwatch();
-    this.unpatchQueries();
+    this.#syncing = true;
+    for (const [rule, selector] of this.#originals) rule.selectorText = selector;
+    this.#originals.clear();
+    this.#adopt("");
+    this.#unwatch();
+    this.#unpatchQueries();
     this.reset();
   }
 
-  /** Rewrites a sheet in place, or, if the page cannot edit it, copies its interaction rules out. */
+  /**
+   * Rewrites a sheet in place, or, if the page cannot edit it, copies its
+   * interaction rules out. Not #private: a test counts the calls.
+   */
   private syncSheet(
     source: CSSStyleSheet,
     media: string,
@@ -515,56 +523,56 @@ export class LiveInteractionCss {
     // Its copy would not be used: not fetched for nothing.
     if (source.disabled && ruleCount(source) < 0) return;
     // A disabled sheet is rewritten as well, for when the page enables it.
-    const sheet = this.readable(source);
+    const sheet = this.#readable(source);
     if (!sheet) return;
     if (sheet === source) {
       visited.add(sheet);
-      this.rewrite(sheet.cssRules, copied, visited);
+      this.#rewrite(sheet.cssRules, copied, visited);
       return;
     }
     if (source.disabled) return;
     // Its rules are not walked: it may have transitions that the page's hover rules start.
     this.hasTransitions = true;
-    let css = this.interactionRules(sheet.cssRules, false).join("\n");
+    let css = this.#interactionRules(sheet.cssRules, false).join("\n");
     if (!css) return;
-    this.widen(css);
+    this.#widen(css);
     // In the agent's sheet, url() would be relative to the document.
     if (source.href) css = absolutizeUrls(css, source.href);
     copied.push(media && media !== "all" ? `@media ${media}{${css}}` : css);
   }
 
-  private rewrite(rules: ArrayLike<CSSRule>, copied: string[], visited: Set<CSSStyleSheet>): void {
-    const { CSSStyleRule, CSSImportRule } = this.window;
+  #rewrite(rules: ArrayLike<CSSRule>, copied: string[], visited: Set<CSSStyleSheet>): void {
+    const { CSSStyleRule, CSSImportRule } = this.#window;
     for (const rule of Array.from(rules)) {
-      if (rule instanceof CSSStyleRule) this.rewriteRule(rule);
+      if (rule instanceof CSSStyleRule) this.#rewriteRule(rule);
       if (rule instanceof CSSImportRule) {
         if (rule.styleSheet) this.syncSheet(rule.styleSheet, rule.media.mediaText, copied, visited);
       } else if ("cssRules" in rule) {
         // @media, @supports, @layer, @container blocks, and nested style rules.
-        this.rewrite(rule.cssRules as CSSRuleList, copied, visited);
+        this.#rewrite(rule.cssRules as CSSRuleList, copied, visited);
       }
     }
   }
 
-  private rewriteRule(rule: CSSStyleRule): void {
+  #rewriteRule(rule: CSSStyleRule): void {
     if (!this.hasTransitions && hasTransition(rule.style)) this.hasTransitions = true;
-    if (this.rejected.has(rule)) return;
+    if (this.#rejected.has(rule)) return;
     const original = rule.selectorText;
     const selector = liveSelector(original);
     if (selector === null) return;
     rule.selectorText = selector;
     // An invalid selector is ignored, the rule left as it was.
     if (rule.selectorText === original) {
-      this.rejected.add(rule);
+      this.#rejected.add(rule);
       return;
     }
     // As the page wrote it, without what was rewritten of it before (it may have read it back and added to it).
-    if (!this.originals.has(rule)) this.originals.set(rule, unwrapLiveSelector(original));
-    this.widen(rule.selectorText);
+    if (!this.#originals.has(rule)) this.#originals.set(rule, unwrapLiveSelector(original));
+    this.#widen(rule.selectorText);
   }
 
   /** Takes note of how far an interaction rule restyles. */
-  private widen(selector: string): void {
+  #widen(selector: string): void {
     if (HAS_SELECTOR.test(selector)) this.reach = "everywhere";
     else if (this.reach === "inside" && SIBLING_SELECTOR.test(selector)) this.reach = "siblings";
   }
@@ -575,30 +583,30 @@ export class LiveInteractionCss {
    * interaction applies to is taken: the copy's other rules are the page's
    * already, and would win ties again from here.
    */
-  private interactionRules(rules: CSSRuleList, interactive: boolean): string[] {
+  #interactionRules(rules: CSSRuleList, interactive: boolean): string[] {
     const out: string[] = [];
     for (const rule of Array.from(rules)) {
-      const text = this.interactionRule(rule, interactive);
+      const text = this.#interactionRule(rule, interactive);
       if (text) out.push(text);
     }
     return out;
   }
 
   /** A rule, or what of it is an interaction rule (`interactive`: inside one already); null if none. */
-  private interactionRule(rule: CSSRule, interactive: boolean): string | null {
-    const { CSSStyleRule } = this.window;
+  #interactionRule(rule: CSSRule, interactive: boolean): string | null {
+    const { CSSStyleRule } = this.#window;
     if (rule instanceof CSSStyleRule) {
       const selector = liveSelector(rule.selectorText);
       const inside = interactive || selector !== null;
       // Nested rules (CSS nesting): selectors rewritten one by one, the declarations left as they are.
-      const nested = rule.cssRules ? this.interactionRules(rule.cssRules, inside) : [];
+      const nested = rule.cssRules ? this.#interactionRules(rule.cssRules, inside) : [];
       if (!inside && nested.length === 0) return null;
       const declarations = inside ? rule.style.cssText : "";
       return `${selector ?? rule.selectorText}{${declarations}${nested.join("\n")}}`;
     }
     if ("cssRules" in rule) {
       // @media, @supports, @layer, @container, @scope (not @keyframes: none of its rules is a style rule).
-      const nested = this.interactionRules(rule.cssRules as CSSRuleList, interactive);
+      const nested = this.#interactionRules(rule.cssRules as CSSRuleList, interactive);
       if (nested.length === 0) return null;
       const prelude = rule.cssText.slice(0, rule.cssText.indexOf("{"));
       return `${prelude}{${nested.join("\n")}}`;
@@ -608,25 +616,25 @@ export class LiveInteractionCss {
     return null;
   }
 
-  private adopt(css: string): void {
-    const document = this.document as Document & { adoptedStyleSheets?: CSSStyleSheet[] };
+  #adopt(css: string): void {
+    const document = this.#document as Document & { adoptedStyleSheets?: CSSStyleSheet[] };
     if (!document.adoptedStyleSheets) return;
-    const current = this.adopted;
+    const current = this.#adopted;
     if (!css) {
       if (current)
         document.adoptedStyleSheets = document.adoptedStyleSheets.filter(
           (sheet) => sheet !== current,
         );
-      this.adopted = null;
-      this.adoptedCss = "";
+      this.#adopted = null;
+      this.#adoptedCss = "";
       return;
     }
-    const sheet = current ?? new this.window.CSSStyleSheet();
+    const sheet = current ?? new this.#window.CSSStyleSheet();
     agentSheets.add(sheet);
     // Replacing a sheet's rules restyles the whole document: only when they changed.
-    if (css !== this.adoptedCss || !current) sheet.replaceSync(css);
-    this.adoptedCss = css;
-    this.adopted = sheet;
+    if (css !== this.#adoptedCss || !current) sheet.replaceSync(css);
+    this.#adoptedCss = css;
+    this.#adopted = sheet;
     // The page may have replaced the list (adoptedStyleSheets = [...]) since.
     if (!document.adoptedStyleSheets.includes(sheet))
       document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];

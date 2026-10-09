@@ -24,11 +24,11 @@ interface Entry {
 const MAX_STEPS = 100;
 
 export class EditHistory {
-  private readonly entries = new WeakMap<Element, Entry>();
+  readonly #entries = new WeakMap<Element, Entry>();
 
   /** Records the state before an edit of `inputType`. */
   record(field: Element, before: FieldState, inputType: string): void {
-    const entry = this.current(field, before.value);
+    const entry = this.#current(field, before.value);
     const typing = inputType === "insertText";
     if (!(typing && entry.typing)) {
       entry.undo.push(before);
@@ -40,34 +40,34 @@ export class EditHistory {
 
   /** The value an edit (or an undo, or a redo) left. */
   edited(field: Element, value: string): void {
-    const entry = this.entries.get(field);
+    const entry = this.#entries.get(field);
     if (entry) entry.last = value;
   }
 
   /** The caret moved: the next typing starts a new step. */
   breakTyping(field: Element): void {
-    const entry = this.entries.get(field);
+    const entry = this.#entries.get(field);
     if (entry) entry.typing = false;
   }
 
   /** The state to go back to, given the state now; null if there is none. */
   undo(field: Element, now: FieldState): FieldState | null {
-    return this.step(field, now, "undo", "redo");
+    return this.#step(field, now, "undo", "redo");
   }
 
   redo(field: Element, now: FieldState): FieldState | null {
-    return this.step(field, now, "redo", "undo");
+    return this.#step(field, now, "redo", "undo");
   }
 
-  private step(
+  #step(
     field: Element,
     now: FieldState,
     from: "undo" | "redo",
     to: "undo" | "redo",
   ): FieldState | null {
-    const entry = this.entries.get(field);
+    const entry = this.#entries.get(field);
     if (!entry || entry.last !== now.value) {
-      this.entries.delete(field);
+      this.#entries.delete(field);
       return null;
     }
     const state = entry[from].pop();
@@ -81,11 +81,11 @@ export class EditHistory {
   }
 
   /** The field's entry, dropped first if the page changed the value since the agent's last edit. */
-  private current(field: Element, value: string): Entry {
-    let entry = this.entries.get(field);
+  #current(field: Element, value: string): Entry {
+    let entry = this.#entries.get(field);
     if (!entry || entry.last !== value) {
       entry = { undo: [], redo: [], last: value, typing: false };
-      this.entries.set(field, entry);
+      this.#entries.set(field, entry);
     }
     return entry;
   }

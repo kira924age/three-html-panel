@@ -8,6 +8,7 @@
 // and fires input and change, as the browser's list does.
 
 import type { Box, FrameWindow } from "../../types";
+import { announceChange, nextMatch, stepOption } from "./list-box";
 import { fontOf, textWidth } from "./selection";
 
 /** Items shown at once; more scroll. */
@@ -50,9 +51,9 @@ export class SelectPopup {
   readonly items: PopupItem[];
   readonly box: Box;
   readonly itemHeight: number;
-  private readonly font: string;
+  readonly #font: string;
   /** The first item shown. */
-  private scroll = 0;
+  #scroll = 0;
   /** The item under the pointer, or chosen with the keys. */
   highlighted: number;
 
@@ -60,7 +61,7 @@ export class SelectPopup {
     const document = select.ownerDocument;
     const window = document.defaultView as FrameWindow;
     this.items = itemsOf(select);
-    this.font = fontOf(select);
+    this.#font = fontOf(select);
     const fontSize = parseFloat(window.getComputedStyle(select).fontSize) || 13;
     this.itemHeight = Math.max(18, Math.round(fontSize * 1.5));
 
@@ -70,7 +71,7 @@ export class SelectPopup {
     const widest = Math.max(
       0,
       ...this.items.map(
-        (item) => textWidth(document, this.font, item.label) + (item.grouped ? GROUP_INDENT : 0),
+        (item) => textWidth(document, this.#font, item.label) + (item.grouped ? GROUP_INDENT : 0),
       ),
     );
     const width = Math.min(
@@ -100,10 +101,10 @@ export class SelectPopup {
       0,
       this.items.findIndex((item) => item.index === select.selectedIndex),
     );
-    this.reveal(this.highlighted);
+    this.#reveal(this.highlighted);
   }
 
-  private get shown(): number {
+  get #shown(): number {
     return Math.round((this.box.height - 2 * BORDER) / this.itemHeight);
   }
 
@@ -116,7 +117,7 @@ export class SelectPopup {
   itemAt(x: number, y: number): number | null {
     if (!this.contains(x, y)) return null;
     const row = Math.floor((y - this.box.top - BORDER) / this.itemHeight);
-    const item = this.scroll + Math.max(0, Math.min(this.shown - 1, row));
+    const item = this.#scroll + Math.max(0, Math.min(this.#shown - 1, row));
     return item < this.items.length ? item : null;
   }
 
@@ -134,47 +135,33 @@ export class SelectPopup {
 
   /** Moves the highlight by `steps` choosable items (or to the first or last one past the ends). */
   step(steps: number): void {
-    const direction = Math.sign(steps);
-    if (direction === 0) return;
-    let item = this.highlighted;
-    let left = Math.abs(steps);
-    for (
-      let next = item + direction;
-      next >= 0 && next < this.items.length && left > 0;
-      next += direction
-    ) {
-      if (!this.choosable(next)) continue;
-      item = next;
-      left--;
-    }
-    this.highlighted = item;
-    this.reveal(item);
+    if (steps === 0) return;
+    this.highlighted = stepOption(this.items.length, this.highlighted, steps, (item) =>
+      this.choosable(item),
+    );
+    this.#reveal(this.highlighted);
   }
 
   /** Highlights the first choosable item (after the highlighted one) whose label starts with `text`. */
   typeAhead(text: string): void {
-    const prefix = text.toLowerCase();
-    const count = this.items.length;
-    for (let offset = 1; offset <= count; offset++) {
-      const item = (this.highlighted + offset) % count;
-      if (this.choosable(item) && this.items[item]!.label.trim().toLowerCase().startsWith(prefix)) {
-        this.highlighted = item;
-        this.reveal(item);
-        return;
-      }
-    }
+    const item = nextMatch(this.items.length, this.highlighted, text, (item) =>
+      this.choosable(item) ? this.items[item]!.label : null,
+    );
+    if (item === null) return;
+    this.highlighted = item;
+    this.#reveal(item);
   }
 
   /** Scrolls the list by `deltaY` CSS px (whole items). */
   scrollBy(deltaY: number): void {
     const rows =
       deltaY > 0 ? Math.ceil(deltaY / this.itemHeight) : Math.floor(deltaY / this.itemHeight);
-    this.scroll = Math.max(0, Math.min(this.items.length - this.shown, this.scroll + rows));
+    this.#scroll = Math.max(0, Math.min(this.items.length - this.#shown, this.#scroll + rows));
   }
 
-  private reveal(item: number): void {
-    if (item < this.scroll) this.scroll = item;
-    else if (item >= this.scroll + this.shown) this.scroll = item - this.shown + 1;
+  #reveal(item: number): void {
+    if (item < this.#scroll) this.#scroll = item;
+    else if (item >= this.#scroll + this.#shown) this.#scroll = item - this.#shown + 1;
   }
 
   get view(): PopupView {
@@ -182,10 +169,10 @@ export class SelectPopup {
     return {
       box: this.box,
       itemHeight: this.itemHeight,
-      font: this.font,
-      items: this.items.slice(this.scroll, this.scroll + this.shown).map((item, row) => ({
+      font: this.#font,
+      items: this.items.slice(this.#scroll, this.#scroll + this.#shown).map((item, row) => ({
         ...item,
-        highlighted: this.scroll + row === this.highlighted,
+        highlighted: this.#scroll + row === this.highlighted,
         selected: item.index >= 0 && item.index === selected,
       })),
     };
@@ -220,38 +207,11 @@ function itemsOf(select: HTMLSelectElement): PopupItem[] {
   return items;
 }
 
-const labelOf = (option: HTMLOptionElement) => option.label || option.text;
+export const labelOf = (option: HTMLOptionElement) => option.label || option.text;
 
 /** Sets the select to an option, with input and change, as choosing it in the browser's list does. */
 export function chooseOption(select: HTMLSelectElement, index: number): void {
   if (select.selectedIndex === index) return;
   select.selectedIndex = index;
-  const { Event } = select.ownerDocument.defaultView as FrameWindow;
-  select.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
-  select.dispatchEvent(new Event("change", { bubbles: true }));
-}
-
-/** The next (or previous) option that can be chosen, from the selected one; null past the ends. */
-export function adjacentOption(
-  select: HTMLSelectElement,
-  direction: -1 | 1 | "first" | "last",
-): number | null {
-  const options = Array.from(select.options);
-  const usable = (option: HTMLOptionElement) =>
-    !option.disabled &&
-    !option.hidden &&
-    !(option.parentElement as HTMLOptGroupElement | null)?.disabled;
-  if (direction === "first" || direction === "last") {
-    const ordered = direction === "first" ? options : options.slice().reverse();
-    const option = ordered.find(usable);
-    return option ? options.indexOf(option) : null;
-  }
-  for (
-    let index = select.selectedIndex + direction;
-    index >= 0 && index < options.length;
-    index += direction
-  ) {
-    if (usable(options[index]!)) return index;
-  }
-  return null;
+  announceChange(select);
 }

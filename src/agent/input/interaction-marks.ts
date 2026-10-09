@@ -28,7 +28,7 @@ export interface InteractionState {
 
 export class InteractionMarks {
   /** The elements marked, per attribute. */
-  private readonly marked = new Map<string, Set<Element>>(
+  readonly #marked = new Map<string, Set<Element>>(
     [
       HOVER_ATTRIBUTE,
       ACTIVE_ATTRIBUTE,
@@ -59,7 +59,7 @@ export class InteractionMarks {
       [FOCUS_WITHIN_ATTRIBUTE, focusWithin],
     ] as const) {
       const next = new Set<Element>(elements);
-      const remove = Array.from(this.marked.get(name)!).filter((element) => !next.has(element));
+      const remove = Array.from(this.#marked.get(name)!).filter((element) => !next.has(element));
       // Set again if the page took it off (re-rendering an element's attributes, say).
       const add = Array.from(next).filter((element) => !element.hasAttribute(name));
       for (const element of [...remove, ...add]) changed.add(element);
@@ -70,7 +70,7 @@ export class InteractionMarks {
     for (const { name, add, remove, next } of changes) {
       for (const element of remove) element.removeAttribute(name);
       for (const element of add) element.setAttribute(name, "");
-      this.marked.set(name, next);
+      this.#marked.set(name, next);
     }
     return list;
   }
