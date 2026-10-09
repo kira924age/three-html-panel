@@ -733,7 +733,7 @@ describe("scrolled content", () => {
     expect(a.style.position).toBe("");
   });
 
-  it("moves a block ::before with the flow by a rule of its own, and not a flow with an inline one", () => {
+  it("moves a block ::before with the flow by a rule of its own, and an inline one with the children", () => {
     vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(20);
     document.body.innerHTML =
       `<div id="block" style="overflow: auto"><p id="a" style="margin-top: 8px"></p></div>` +
@@ -749,20 +749,23 @@ describe("scrolled content", () => {
       ]),
     );
     const copy = snapshot();
-    const block = copy.getElementById("block")!;
+    const id = (selector: string) =>
+      copy.querySelector(selector)!.getAttribute("data-thp-scrolled");
     // The ::before box moves the flow (its 10px margin, 30px less); the first child goes with it.
     expect(copy.getElementById("a")!.style.getPropertyPriority("margin-top")).toBe("");
     // In a layer of its own, declared first: over the page's important rules.
     expect(copy.querySelector("style")!.textContent).toMatch(/^@layer thp-scrolled\{/);
-    expect(generatedRules(copy)).toBe(
-      `[data-thp-scrolled="${block.getAttribute("data-thp-scrolled")}"]::before{margin-top:-20px !important}`,
-    );
-    expect(buildFrameSvg("", ".page{}", 10, 10)).toContain(
-      "<![CDATA[@layer thp-scrolled;\n.page{}",
-    );
-    // Lines first: moved by itself instead (the ::before, text, does not move).
+    // Lines first: the children moved by themselves, and the ::before relatively, as they are.
     expect(copy.getElementById("b")!.style.top).toBe("-30px");
-    expect(copy.getElementById("inline")!.hasAttribute("data-thp-scrolled")).toBe(false);
+    expect(generatedRules(copy)).toBe(
+      `[data-thp-scrolled="${id("#block")}"]::before{margin-top:-20px !important}\n` +
+        `[data-thp-scrolled="${id("#inline")}"]::before{position:relative !important;top:-30px !important;` +
+        `left:0px !important;bottom:auto !important;right:auto !important;z-index:auto !important}`,
+    );
+    // Declared in a sheet of its own, before the page's (which may start with @namespace).
+    expect(buildFrameSvg("", "@namespace svg url(x);", 10, 10)).toContain(
+      "<style>@layer thp-scrolled;</style><style><![CDATA[@namespace svg url(x);",
+    );
   });
 
   it("moves a flex container's ::after and an absolute ::before (from its positioned container) with the content", () => {
@@ -840,6 +843,49 @@ describe("scrolled content", () => {
     scroll(new Map([[document.querySelector("#box")!, { top: 50 }]]));
     const sticky = snapshot().getElementById("sticky")!;
     expect(sticky.style.getPropertyValue("translate")).toBe("calc(10px + min(5%, 2vw)) -46px");
+  });
+
+  it("does not lift a sticky element with a z-index in a flex item in it", () => {
+    document.body.innerHTML =
+      `<div id="box" style="overflow: auto">Text` +
+      `<h3 id="toolbar" style="position: sticky; top: 0; display: flex"><div style="z-index: 100"></div></h3>` +
+      `</div>`;
+    scroll(new Map([[document.querySelector("#box")!, { top: 50 }]]));
+    expect(snapshot().getElementById("toolbar")!.style.zIndex).toBe("");
+  });
+
+  it("holds a sticky element from the margin an animation ends on", () => {
+    document.body.innerHTML =
+      `<div id="box" style="overflow: auto">Text` +
+      `<header id="toolbar" style="position: sticky; top: 0; margin-top: 20px"><div style="position: fixed; top: 100px"></div></header>` +
+      `</div>`;
+    const box = document.querySelector("#box")!;
+    const toolbar = document.querySelector("#toolbar")!;
+    document.getAnimations = () => [
+      animation(toolbar, [{ computedOffset: 1, marginTop: "0px" }], {
+        fill: "forwards",
+        iterations: 1,
+      }),
+    ];
+    scroll(new Map([[box, { top: 50 }]]));
+    box.getBoundingClientRect = () => new DOMRect(10, 30, 300, 200);
+    Object.defineProperty(box, "clientHeight", { value: 200 });
+    toolbar.getBoundingClientRect = () => new DOMRect(10, 30, 300, 40);
+    const copy = snapshot().getElementById("toolbar")!;
+    delete (document as { getAnimations?: unknown }).getAnimations;
+    // Its margin box fits as the animation ends (0px), though not now (20px): held, not translated.
+    expect(copy.style.top).toBe("0px");
+    expect(copy.style.getPropertyValue("translate")).toBe("");
+  });
+
+  it("adds no rule for an absolute ::before placed from outside the container", () => {
+    vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(20);
+    document.body.innerHTML = `<div id="box" style="overflow: auto"><p></p></div>`;
+    generate({ box: { "::before": { position: "absolute", top: "10px" } } });
+    scroll(new Map([[document.querySelector("#box")!, { top: 30 }]]));
+    const copy = snapshot();
+    expect(copy.querySelector("style")).toBeNull();
+    expect(copy.getElementById("box")!.hasAttribute("data-thp-scrolled")).toBe(false);
   });
 
   it("does not move a flow in columns, or in vertical writing", () => {

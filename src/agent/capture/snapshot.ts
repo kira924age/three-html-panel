@@ -499,7 +499,10 @@ class Snapshotter {
     if (!(copy instanceof Element)) return copy;
     this.liveOf.set(copy, live);
     this.copies.set(live, copy);
-    if (style.position !== "static" && style.zIndex !== "auto" && style.zIndex !== "") {
+    // A z-index applies to positioned boxes, and to flex and grid items.
+    const parent = live.parentElement && this.styles.get(live.parentElement);
+    const stacked = style.position !== "static" || /flex|grid/.test(parent ? parent.display : "");
+    if (stacked && style.zIndex !== "auto" && style.zIndex !== "") {
       for (let box = live.parentElement; box && !this.zOrdered.has(box); box = box.parentElement)
         this.zOrdered.add(box);
     }
@@ -707,6 +710,7 @@ class Snapshotter {
     // each child. Bare text directly inside a scroll container then does not
     // move (a known limitation).
     const flow = this.shiftFlow(element, scrollLeft, scrollTop);
+    if (!flow) this.moveGeneratedApart(element, scrollLeft, scrollTop);
     for (const child of Array.from(copy.children)) {
       if (isStyled(child)) {
         const live = this.liveOf.get(child) ?? null;
@@ -766,7 +770,7 @@ class Snapshotter {
         pseudo === "::before",
       );
       if (declarations === null) return false;
-      rules.push(`${pseudo}{${declarations}}`);
+      if (declarations) rules.push(`${pseudo}{${declarations}}`);
     }
     const margins: [HTMLElement | SVGElement, string, string][] = [];
     const moved = (box: HTMLElement | SVGElement, side: string, by: number) =>
@@ -801,13 +805,64 @@ class Snapshotter {
       if (copy && isStyled(copy)) margins.push([copy, "margin-top", `${top}px`]);
     }
     for (const [copy, side, value] of margins) copy.style.setProperty(side, value, "important");
-    const copy = this.copies.get(container);
-    if (rules.length > 0 && copy) {
-      const id = String(this.generatedRules.length);
-      copy.setAttribute(SCROLLED_ATTRIBUTE, id);
-      for (const rule of rules) this.generatedRules.push(`[${SCROLLED_ATTRIBUTE}="${id}"]${rule}`);
-    }
+    this.addGeneratedRules(container, rules);
     return true;
+  }
+
+  /** Adds rules (`::before{…}`) for a container's generated boxes, marking its copy for them. */
+  private addGeneratedRules(container: Element, rules: string[]): void {
+    const copy = this.copies.get(container);
+    if (rules.length === 0 || !copy) return;
+    const id = String(this.generatedRules.length);
+    copy.setAttribute(SCROLLED_ATTRIBUTE, id);
+    for (const rule of rules) this.generatedRules.push(`[${SCROLLED_ATTRIBUTE}="${id}"]${rule}`);
+  }
+
+  /**
+   * Moves a container's ::before and ::after where its children are moved one
+   * by one (its flow is not moved): as moveScrolled moves a child of the same
+   * position, with a rule (a static or relative one positioned relatively, an
+   * absolute or fixed one by its insets if it scrolls with the container, a
+   * sticky one translated with its insets moved the other way).
+   */
+  private moveGeneratedApart(container: Element, x: number, y: number): void {
+    const containerStyle = this.styles.get(container);
+    if (!containerStyle) return;
+    const rules: string[] = [];
+    for (const pseudo of ["::before", "::after"] as const) {
+      const style = this.window.getComputedStyle(container, pseudo);
+      if (!isGenerated(style)) continue;
+      const value = (property: string) => style.getPropertyValue(property);
+      const declarations: string[] = [];
+      const set = (property: string, moved: string) =>
+        declarations.push(`${property}:${moved} !important`);
+      const position = style.position;
+      if (position === "static" || position === "relative") {
+        const offset = (side: string) => (position === "relative" ? value(side) : "0px");
+        set("position", "relative");
+        set("top", plus(offset("top"), -y));
+        set("left", plus(offset("left"), -x));
+        set("bottom", "auto");
+        set("right", "auto");
+        if (position === "static" && !/flex|grid/.test(containerStyle.display))
+          set("z-index", "auto");
+      } else if (position === "absolute" || position === "fixed") {
+        const scrolls =
+          position === "fixed" ? containsFixed(containerStyle) : containsAbsolute(containerStyle);
+        if (scrolls)
+          for (const [property, moved] of insetMoves(value, position, -x, -y, true))
+            set(property, moved);
+      } else {
+        const [tx = "0px", ty = "0px", tz] = isSet(value("translate"))
+          ? splitValues(value("translate"))
+          : [];
+        set("translate", [plus(tx, -x), plus(ty, -y), ...(tz ? [tz] : [])].join(" "));
+        for (const [property, moved] of insetMoves(value, position, x, y, false))
+          set(property, moved);
+      }
+      if (declarations.length > 0) rules.push(`${pseudo}{${declarations.join(";")}}`);
+    }
+    this.addGeneratedRules(container, rules);
   }
 
   /**
@@ -831,12 +886,14 @@ class Snapshotter {
     return boxes;
   }
 
-  /** A box's margin in px, as the copy has it (an animation's, baked) or the page. */
-  private marginOf(box: Element, side: string): number {
+  /** A length of a box (a margin, a padding) in px, as the copy has it (an animation's, baked) or the page. */
+  private pxOf(box: Element, property: string): number {
     const style = this.styles.get(box)!;
     const copy = this.copies.get(box);
-    const value = copy && isStyled(copy) ? baseValue(copy, style, side) : "";
-    return value.endsWith("px") ? parseFloat(value) : parseFloat(style.getPropertyValue(side)) || 0;
+    const value = copy && isStyled(copy) ? baseValue(copy, style, property) : "";
+    return value.endsWith("px")
+      ? parseFloat(value)
+      : parseFloat(style.getPropertyValue(property)) || 0;
   }
 
   /**
@@ -873,7 +930,7 @@ class Snapshotter {
       if ((box as HTMLElement).offsetHeight === 0) return null;
       // Clearance separates a box's margin from those before it.
       if (box !== first && (style.clear || "none") !== "none") return null;
-      margins.push(this.marginOf(box, "margin-top"));
+      margins.push(this.pxOf(box, "margin-top"));
       // Not a new formatting context, and nothing between it and its first box.
       const through: boolean =
         /^(block|list-item)$/.test(style.display) &&
@@ -1074,10 +1131,10 @@ class Snapshotter {
       right: box.left + container.clientLeft + container.clientWidth,
     };
     // Its margin box stays in the container's content (its containing block).
-    const paddingTop = parseFloat(containerStyle.paddingTop) || 0;
-    const paddingLeft = parseFloat(containerStyle.paddingLeft) || 0;
-    const marginTop = parseFloat(style.marginTop) || 0;
-    const marginLeft = parseFloat(style.marginLeft) || 0;
+    const paddingTop = this.pxOf(container, "padding-top");
+    const paddingLeft = this.pxOf(container, "padding-left");
+    const marginTop = this.pxOf(live, "margin-top");
+    const marginLeft = this.pxOf(live, "margin-left");
     if (y !== 0 && rect.top - marginTop < port.top + paddingTop - 0.5) return false;
     if (x !== 0 && rect.left - marginLeft < port.left + paddingLeft - 0.5) return false;
     const set = (property: string, value: number) =>
@@ -1450,10 +1507,12 @@ export function snapshotDocument(document: Document, options: SnapshotOptions): 
 /** Wraps the page's XHTML and CSS in an SVG document of the given size. */
 export function buildFrameSvg(xhtml: string, css: string, width: number, height: number): string {
   // "]]>" inside CSS would end the CDATA section early.
-  // The agent's layer first (see SCROLLED_LAYER), before the page's.
-  const safeCss = `@layer ${SCROLLED_LAYER};\n${css}`.replace(/]]>/g, "]]]]><![CDATA[>");
+  const safeCss = css.replace(/]]>/g, "]]]]><![CDATA[>");
   return (
     `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">` +
+    // The agent's layer first (see SCROLLED_LAYER), in a sheet of its own: the
+    // page's may start with rules that must come first (@import, @namespace).
+    `<style>@layer ${SCROLLED_LAYER};</style>` +
     `<style><![CDATA[${safeCss}]]></style>` +
     `<foreignObject x="0" y="0" width="100%" height="100%">${xhtml}</foreignObject>` +
     `</svg>`

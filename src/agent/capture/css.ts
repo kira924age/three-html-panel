@@ -125,10 +125,18 @@ export class DocumentCss {
       .map((sheet) => `${sheet.href ?? "inline"}:${ruleCount(sheet)}`)
       .join("|");
     if (signature !== this.signature) {
-      const parts: string[] = [DEFAULT_FOCUS_RING_CSS];
+      const parts: string[] = [];
       for (const sheet of sheets) this.serializeSheet(sheet, parts);
-      parts.push(FREEZE_ANIMATIONS_CSS);
-      this.css = inlineCssUrls(parts.join("\n"), this.document.baseURI, this.resolveUrl);
+      // @namespace rules only count before all other rules (the sheets are put
+      // together: a prefix declared in one counts in the rest too), and their
+      // url() names a namespace, not a file to inline.
+      const isNamespace = (part: string) => part.startsWith("@namespace");
+      const rules = [DEFAULT_FOCUS_RING_CSS, ...parts.filter((part) => !isNamespace(part))];
+      rules.push(FREEZE_ANIMATIONS_CSS);
+      this.css = [
+        ...parts.filter(isNamespace),
+        inlineCssUrls(rules.join("\n"), this.document.baseURI, this.resolveUrl),
+      ].join("\n");
       this.signature = signature;
     }
     return this.css;
@@ -146,8 +154,15 @@ export class DocumentCss {
   }
 
   private serializeRules(rules: CSSRuleList, out: string[]): void {
-    const { CSSStyleRule, CSSMediaRule, CSSSupportsRule, CSSImportRule, CSSKeyframesRule, CSS } =
-      this.window;
+    const {
+      CSSStyleRule,
+      CSSMediaRule,
+      CSSSupportsRule,
+      CSSImportRule,
+      CSSKeyframesRule,
+      CSSNamespaceRule,
+      CSS,
+    } = this.window;
     for (const rule of Array.from(rules)) {
       if (rule instanceof CSSStyleRule) {
         // Nested rules (CSS nesting) are serialized with the parent; rewrite the whole text then.
@@ -167,6 +182,10 @@ export class DocumentCss {
           this.serializeSheet(sheet, out);
       } else if (rule instanceof CSSKeyframesRule) {
         // Animations are frozen, so keyframes are never used.
+      } else if (CSSNamespaceRule && rule instanceof CSSNamespaceRule) {
+        // A default namespace would apply to the type selectors of every other
+        // sheet put together with it: only prefixed ones are kept.
+        if (rule.prefix) out.push(rule.cssText);
       } else {
         out.push(rule.cssText);
       }

@@ -18,3 +18,16 @@ describe("DocumentCss", () => {
     expect(css).not.toContain(".printed");
   });
 });
+
+describe("@namespace rules", () => {
+  it("come first in the copied CSS, prefixed ones only", () => {
+    vi.stubGlobal("matchMedia", () => ({ matches: true }));
+    document.head.innerHTML =
+      "<style>p { color: red }</style>" +
+      '<style>@namespace svg url("http://www.w3.org/2000/svg"); @namespace url("http://www.w3.org/2000/svg"); svg|a { fill: blue }</style>';
+    const css = new DocumentCss(document, () => null).get();
+    expect(css.startsWith('@namespace svg url("http://www.w3.org/2000/svg");')).toBe(true);
+    expect(css.match(/@namespace/g)).toHaveLength(1);
+    expect(css).toContain("svg|a");
+  });
+});

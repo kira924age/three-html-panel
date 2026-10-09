@@ -75,6 +75,13 @@ test("draws what is positioned in scrolled boxes where the page shows it", async
     };
     await expect.poll(() => blue(heading.top + 2)).toBe(true);
     expect(await blue(heading.top - 2)).toBe(false);
+    // Colored by a rule with a namespace prefix.
+    await expect.poll(() => drawn("#mark", [255, 0, 255]), { message: "#mark" }).toBe(true);
+    // The ::before of a box moved child by child: scrolled with them, its
+    // 40px up out of view (not left below the stuck heading, where it was).
+    const moved = await panel.box("#moved-box");
+    const [orange, , notBlue] = await panel.pixel(moved.left + 20, moved.top + 38);
+    expect(orange > 220 && notBlue < 60).toBe(false);
     // The generated box at the top of the box, scrolled with it: its lower part, bluer.
     const generated = await panel.box("#generated-box");
     const scrolled = await panel.frame.evaluate(

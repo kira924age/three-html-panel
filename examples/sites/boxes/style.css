@@ -1,5 +1,11 @@
 /* Boxes that scroll, with what is positioned in them: each element with a
    color of its own, for the e2e tests (e2e/boxes.spec.ts) to find it drawn. */
+@namespace svg url("http://www.w3.org/2000/svg");
+
+/* Colored by a selector with a namespace prefix. */
+svg|rect {
+  fill: rgb(255, 0, 255);
+}
 body {
   margin: 0;
   padding: 16px;
@@ -137,4 +143,15 @@ h1 {
 /* A rule of the page's own for it, important: the copy's moving it wins all the same. */
 .grid .generated::before {
   margin-top: 0 !important;
+}
+/* Generated content in a box whose flow cannot move (text first): moved with it all the
+   same. Painted over what follows, so that it would show where it was if it stayed. */
+#moved-box::before {
+  content: "";
+  position: relative;
+  z-index: 2;
+  display: inline-block;
+  width: 60px;
+  height: 40px;
+  background: rgb(240, 120, 0);
 }
