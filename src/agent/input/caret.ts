@@ -6,6 +6,7 @@
 // the position of each character can be read from the layout.
 
 import type { Box, Caret, FrameWindow } from "../../types";
+import { fieldSelection, fieldText } from "./field-text";
 import { clipCaret, visibleBoxOf } from "./selection";
 
 export type TextField = HTMLInputElement | HTMLTextAreaElement;
@@ -21,6 +22,10 @@ const TEXT_INPUT_TYPES = new Set([
   "",
 ]);
 
+/** An <input> of a type that takes text (whether or not it is editable now). */
+export const hasTextInputType = (input: HTMLInputElement): boolean =>
+  TEXT_INPUT_TYPES.has(input.type);
+
 const windowOf = (node: Node) => node.ownerDocument!.defaultView as FrameWindow;
 
 export function isTextField(element: Element | null): element is TextField {
@@ -28,7 +33,7 @@ export function isTextField(element: Element | null): element is TextField {
   const { HTMLTextAreaElement, HTMLInputElement } = windowOf(element);
   if (element instanceof HTMLTextAreaElement) return !element.readOnly && !element.disabled;
   if (element instanceof HTMLInputElement) {
-    return TEXT_INPUT_TYPES.has(element.type) && !element.readOnly && !element.disabled;
+    return hasTextInputType(element) && !element.readOnly && !element.disabled;
   }
   return false;
 }
@@ -109,7 +114,7 @@ function withMirror<T>(field: TextField, measure: (mirror: HTMLDivElement) => T)
 /** An <input> (one line) rather than a <textarea>. */
 const isSingleLine = (field: TextField): field is HTMLInputElement => field.tagName === "INPUT";
 
-const displayText = (field: TextField, value = field.value) =>
+const displayText = (field: TextField, value = fieldText(field)) =>
   isSingleLine(field) && field.type === "password" ? "•".repeat(value.length) : value;
 
 /** Text being composed with an IME, not yet in the field's value. `cursor` is its caret, within `text`. */
@@ -126,10 +131,9 @@ export function composedValue(
   field: TextField,
   composition: Composition,
 ): { value: string; start: number } {
-  const length = field.value.length;
-  const start = field.selectionStart ?? length;
-  const end = field.selectionEnd ?? length;
-  return { value: field.value.slice(0, start) + composition.text + field.value.slice(end), start };
+  const text = fieldText(field);
+  const { start, end } = fieldSelection(field);
+  return { value: text.slice(0, start) + composition.text + text.slice(end), start };
 }
 
 /**
@@ -205,8 +209,9 @@ export function measureCaret(field: TextField, composition?: Composition | null)
     const { value, start } = composedValue(field, composition);
     caret = caretAt(field, start + composition.cursor, value);
   } else {
-    if (field.selectionStart !== field.selectionEnd) return null;
-    caret = caretAt(field, field.selectionEnd ?? field.value.length);
+    const { start, end } = fieldSelection(field);
+    if (start !== end) return null;
+    caret = caretAt(field, end);
   }
   // A field clips its text to its padding box, and its ancestors may clip it too
   // (a scrolled line half out of view, a field in a box that hides what overflows).
@@ -268,7 +273,7 @@ export function verticalIndex(
   const distance = page ? Math.max(caret.height, field.clientHeight - caret.height) : caret.height;
   const y = caret.y + caret.height / 2 + direction * distance;
   const first = caretAt(field, 0);
-  const last = caretAt(field, field.value.length);
+  const last = caretAt(field, fieldText(field).length);
   if (y < first.y || y > last.y + last.height) return null;
   return indexFromPoint(field, x ?? caret.x, y);
 }
@@ -307,9 +312,8 @@ export function scrolledText(field: TextField): { index: number; offset: number 
  * the page's CSS pixels and clipped to the field. Empty without a selection.
  */
 export function measureSelection(field: TextField): Box[] {
-  const start = field.selectionStart;
-  const end = field.selectionEnd;
-  if (start === null || end === null || start === end) return [];
+  const { start, end } = fieldSelection(field);
+  if (start === end) return [];
   return measureRange(field, start, end, displayText(field));
 }
 

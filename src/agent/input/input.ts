@@ -35,6 +35,7 @@ import {
 } from "./caret";
 import { contentAction } from "./contenteditable";
 import { editAction, lineEnd, lineStart, wordAt } from "./editing";
+import { fieldSelection, fieldText, replaceFieldText, setFieldSelection } from "./field-text";
 import { EditHistory, type FieldState } from "./history";
 import { PAN_START_DISTANCE, panAxes, type PanAxes } from "./pan";
 import {
@@ -480,10 +481,8 @@ export class InputSynthesizer {
       return range ? selectedText(this.window, range, MAX_TEXT_LENGTH) : "";
     }
     if (field.tagName === "INPUT" && (field as HTMLInputElement).type === "password") return "";
-    const { selectionStart, selectionEnd } = field;
-    return selectionStart === null || selectionEnd === null
-      ? ""
-      : field.value.slice(selectionStart, selectionEnd);
+    const { start, end } = fieldSelection(field);
+    return fieldText(field).slice(start, end);
   }
 
   /**
@@ -725,16 +724,14 @@ export class InputSynthesizer {
    */
   private pressText(field: TextField, x: number, y: number, count: number, extend: boolean): void {
     const index = this.options.measure(() => indexFromPoint(field, x, y));
-    const value = field.value;
+    const value = fieldText(field);
     const multiline = field.tagName === "TEXTAREA";
     let start = index;
     let end = index;
     let unit: "char" | "word" | "line" = "char";
     if (extend) {
-      const anchor =
-        field.selectionDirection === "backward"
-          ? (field.selectionEnd ?? index)
-          : (field.selectionStart ?? index);
+      const selection = fieldSelection(field);
+      const anchor = selection.direction === "backward" ? selection.end : selection.start;
       start = end = anchor;
     } else if (count === 2) {
       [start, end] = wordAt(value, index);
@@ -753,7 +750,7 @@ export class InputSynthesizer {
   private dragText(x: number, y: number): void {
     const { field, unit, start, end } = this.textDrag!;
     const index = this.options.measure(() => indexFromPoint(field, x, y));
-    const value = field.value;
+    const value = fieldText(field);
     if (unit === "char") {
       this.select(field, start, index);
       return;
@@ -771,7 +768,8 @@ export class InputSynthesizer {
   /** Selects from `anchor` to `focus` (the end that moves), and scrolls the field to show `focus`. */
   private select(field: TextField, anchor: number, focus: number): void {
     this.history.breakTyping(field);
-    field.setSelectionRange(
+    setFieldSelection(
+      field,
       Math.min(anchor, focus),
       Math.max(anchor, focus),
       focus < anchor ? "backward" : "forward",
@@ -1432,13 +1430,10 @@ export class InputSynthesizer {
     }
 
     const field = target;
-    const length = field.value.length;
     const action = editAction(
       {
-        value: field.value,
-        start: field.selectionStart ?? length,
-        end: field.selectionEnd ?? length,
-        direction: field.selectionDirection ?? "none",
+        value: fieldText(field),
+        ...fieldSelection(field),
         multiline: field.tagName === "TEXTAREA",
       },
       input,
@@ -1604,7 +1599,7 @@ export class InputSynthesizer {
         ? order[direction > 0 ? 0 : order.length - 1]!
         : order[(index + direction + order.length) % order.length]!;
     this.focus.set(next);
-    if (isTextField(next)) next.setSelectionRange(0, next.value.length);
+    if (isTextField(next)) setFieldSelection(next, 0, fieldText(next).length);
     next.scrollIntoView?.({ block: "nearest", inline: "nearest" });
   }
 
@@ -1641,12 +1636,8 @@ export class InputSynthesizer {
   }
 
   private stateOf(field: TextField): FieldState {
-    const length = field.value.length;
-    return {
-      value: field.value,
-      start: field.selectionStart ?? length,
-      end: field.selectionEnd ?? length,
-    };
+    const { start, end } = fieldSelection(field);
+    return { value: fieldText(field), start, end };
   }
 
   /** Puts a field back to a state from its history, the way the browser's undo would. */
@@ -1664,9 +1655,9 @@ export class InputSynthesizer {
       data: null,
     });
     if (!field.dispatchEvent(before)) return;
-    field.setRangeText(state.value, 0, field.value.length);
-    field.setSelectionRange(state.start, state.end);
-    this.history.edited(field, field.value);
+    replaceFieldText(field, state.value, 0, fieldText(field).length);
+    setFieldSelection(field, state.start, state.end);
+    this.history.edited(field, fieldText(field));
     this.options.measure(() => revealIndex(field, state.end));
     field.dispatchEvent(
       new InputEvent("input", { bubbles: true, composed: true, inputType, data: null }),
@@ -1698,7 +1689,7 @@ export class InputSynthesizer {
         ? goal.x
         : this.options.measure(() => caretAt(field, index).x);
     const target = this.options.measure(() => verticalIndex(field, index, direction, page, x));
-    this.goal = { field, index: target ?? (direction < 0 ? 0 : field.value.length), x };
+    this.goal = { field, index: target ?? (direction < 0 ? 0 : fieldText(field).length), x };
     return target;
   }
 
@@ -1740,20 +1731,16 @@ export class InputSynthesizer {
       return;
     }
     if (!isTextField(target)) return;
-    const length = target.value.length;
-    this.editText(
-      target,
-      text,
-      target.selectionStart ?? length,
-      target.selectionEnd ?? length,
-      "insertText",
-    );
+    const { start, end } = fieldSelection(target);
+    this.editText(target, text, start, end, "insertText");
   }
 
   /**
    * Replaces a range of a text field the way typing would, with beforeinput and
-   * input events. setRangeText does not go through the `value` setter, so
-   * frameworks that track the value (React) still see the change on `input`.
+   * input events. setRangeText (or, in email and number fields, which have no
+   * selection API, the element's own setter: see field-text.ts) does not go
+   * through the `value` property, so frameworks that track the value (React)
+   * still see the change on `input`.
    */
   private editText(
     field: TextField,
@@ -1772,18 +1759,15 @@ export class InputSynthesizer {
       data,
     });
     if (!field.dispatchEvent(before)) return;
-    this.history.record(
-      field,
-      { value: field.value, start, end: field.selectionEnd ?? end },
-      inputType,
-    );
+    const value = fieldText(field);
+    this.history.record(field, { value, start, end: fieldSelection(field).end }, inputType);
     if (data !== null && field.maxLength >= 0) {
-      const room = field.maxLength - (field.value.length - (end - start));
+      const room = field.maxLength - (value.length - (end - start));
       text = text.slice(0, Math.max(0, room));
     }
-    field.setRangeText(text, start, end, "end");
-    this.history.edited(field, field.value);
-    this.options.measure(() => revealIndex(field, field.selectionEnd ?? field.value.length));
+    replaceFieldText(field, text, start, end);
+    this.history.edited(field, fieldText(field));
+    this.options.measure(() => revealIndex(field, fieldSelection(field).end));
     field.dispatchEvent(
       new InputEvent("input", { bubbles: true, composed: true, inputType, data }),
     );

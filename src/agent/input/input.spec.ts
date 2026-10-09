@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { measureCaret, measureSelection } from "./caret";
 import { InputSynthesizer } from "./input";
 
 let input: InputSynthesizer;
@@ -303,5 +304,179 @@ describe("text editing", () => {
     document.querySelector<HTMLButtonElement>("#go")!.focus();
     input.handle({ type: "text", text: "X" });
     expect(document.querySelector<HTMLInputElement>("#name")!.value).toBe("ab");
+  });
+});
+
+// Email and number fields have no selection API: selectionStart is null, and
+// setSelectionRange and setRangeText throw (in jsdom as in browsers).
+describe("email and number fields", () => {
+  const field = () => document.querySelector<HTMLInputElement>("input")!;
+  const type = (text: string) => {
+    for (const character of text) input.handle({ type: "text", text: character });
+  };
+  const press = (key: string, modifiers: { ctrlKey?: boolean; metaKey?: boolean } = {}) =>
+    input.handle({
+      type: "key",
+      key,
+      shiftKey: false,
+      ctrlKey: false,
+      altKey: false,
+      metaKey: false,
+      ...modifiers,
+    });
+
+  it("have no selection API here, as in browsers", () => {
+    for (const kind of ["email", "number"]) {
+      document.body.innerHTML = `<input type="${kind}">`;
+      expect(field().selectionStart).toBeNull();
+      expect(() => field().setSelectionRange(0, 0)).toThrow();
+      expect(() => field().setRangeText("1", 0, 0)).toThrow();
+    }
+  });
+
+  it("type into an email field, with beforeinput and input events", () => {
+    document.body.innerHTML = `<input type="email">`;
+    const events: string[] = [];
+    for (const name of ["beforeinput", "input"]) {
+      field().addEventListener(name, (event) =>
+        events.push(`${name}:${(event as InputEvent).data}:${field().value}`),
+      );
+    }
+    field().focus();
+    type("x@y.z");
+    expect(field().value).toBe("x@y.z");
+    expect(events.slice(0, 4)).toEqual([
+      "beforeinput:x:",
+      "input:x:x",
+      "beforeinput:@:x",
+      "input:@:x@",
+    ]);
+  });
+
+  it("delete from the end with Backspace, and do nothing on Delete at the end", () => {
+    document.body.innerHTML = `<input type="email" value="ab@c">`;
+    field().focus();
+    press("Backspace");
+    expect(field().value).toBe("ab@");
+    press("Delete");
+    expect(field().value).toBe("ab@");
+  });
+
+  it("keep their own caret: the arrows move it, and typing goes there", () => {
+    document.body.innerHTML = `<input type="email" value="a@c">`;
+    field().focus();
+    press("ArrowLeft");
+    type("b");
+    expect(field().value).toBe("a@bc");
+    press("Delete");
+    expect(field().value).toBe("a@b");
+  });
+
+  it("select all, offer the selection for copying, and replace it when typing", () => {
+    vi.spyOn(navigator, "platform", "get").mockReturnValue("Win32");
+    document.body.innerHTML = `<input type="email" value="old@example.com">`;
+    field().focus();
+    press("a", { ctrlKey: true });
+    expect(input.selectedText).toBe("old@example.com");
+    expect(() => measureSelection(field())).not.toThrow();
+    // A caret is not drawn while text is selected.
+    expect(measureCaret(field())).toBeNull();
+    type("n@e.w");
+    expect(field().value).toBe("n@e.w");
+  });
+
+  it("cut the selected text", () => {
+    vi.spyOn(navigator, "platform", "get").mockReturnValue("Win32");
+    document.body.innerHTML = `<input type="number" value="42">`;
+    field().focus();
+    press("a", { ctrlKey: true });
+    input.handle({ type: "cut" });
+    expect(field().value).toBe("");
+  });
+
+  it("select their text when Tab focuses them", () => {
+    document.body.innerHTML = `<input type="email" value="a@b">`;
+    press("Tab");
+    expect(input.focused).toBe(field());
+    expect(input.selectedText).toBe("a@b");
+  });
+
+  it("undo and redo typing", () => {
+    vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+    document.body.innerHTML = `<input type="number" value="1">`;
+    field().focus();
+    type("23");
+    press("Backspace");
+    expect(field().value).toBe("12");
+    press("z", { metaKey: true });
+    expect(field().value).toBe("123");
+    press("z", { metaKey: true });
+    expect(field().value).toBe("1");
+    press("z", { metaKey: true });
+    expect(field().value).toBe("1");
+    input.handle({
+      type: "key",
+      key: "z",
+      shiftKey: true,
+      ctrlKey: false,
+      altKey: false,
+      metaKey: true,
+    });
+    expect(field().value).toBe("123");
+  });
+
+  it("type a number through text that is not a number yet, which reads as empty meanwhile", () => {
+    document.body.innerHTML = `<input type="number">`;
+    const values: string[] = [];
+    field().addEventListener("input", () => values.push(field().value));
+    field().focus();
+    type("-1.5e3");
+    // The browser sanitizes "-", "-1." and "-1.5e" to "", as when typed in browsers.
+    expect(values).toEqual(["", "-1", "", "-1.5", "", "-1.5e3"]);
+    expect(field().value).toBe("-1.5e3");
+    press("Backspace");
+    expect(field().value).toBe("");
+    press("Backspace");
+    expect(field().value).toBe("-1.5");
+  });
+
+  it("start again from the value when the page sets it", () => {
+    document.body.innerHTML = `<input type="number">`;
+    field().focus();
+    type("1e");
+    field().value = "7";
+    type("0");
+    expect(field().value).toBe("70");
+  });
+
+  it("insert what an IME composed", () => {
+    document.body.innerHTML = `<input type="email" value="a@">`;
+    field().focus();
+    input.handle({ type: "composition", text: "b", cursor: 1 });
+    expect(() => measureCaret(field(), input.composition)).not.toThrow();
+    input.handle({ type: "text", text: "b.c" });
+    expect(field().value).toBe("a@b.c");
+  });
+
+  it("keep the value React tracks on the element unchanged until input, so React sees the change", () => {
+    document.body.innerHTML = `<input type="email">`;
+    const element = field();
+    // React wraps `value` on the element to remember the value it set.
+    let tracked = "";
+    const native = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!;
+    Object.defineProperty(element, "value", {
+      configurable: true,
+      get() {
+        return native.get!.call(this);
+      },
+      set(value: string) {
+        tracked = value;
+        native.set!.call(this, value);
+      },
+    });
+    element.focus();
+    type("a");
+    expect(element.value).toBe("a");
+    expect(tracked).toBe("");
   });
 });

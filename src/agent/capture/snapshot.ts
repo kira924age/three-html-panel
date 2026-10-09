@@ -19,7 +19,8 @@
 // Type checks on live elements use the page's window (see FrameWindow).
 
 import type { Box, FrameWindow } from "../../types";
-import { scrolledText } from "../input/caret";
+import { hasTextInputType, scrolledText } from "../input/caret";
+import { fieldText } from "../input/field-text";
 import { scrollbarsOf, type Scrollbar } from "../input/scrollbars";
 import type { PopupView } from "../input/select-popup";
 import { ACTIVE_ATTRIBUTE, FOCUS_ATTRIBUTE, FOCUS_WITHIN_ATTRIBUTE, HOVER_ATTRIBUTE } from "./css";
@@ -276,8 +277,14 @@ class Snapshotter {
       } else if (element.type !== "file") {
         const value = this.shownValue(element);
         copy.setAttribute("value", value);
-        // Only text inputs have a selection, and scroll their text.
-        if (element.selectionStart !== null) this.copyTextScroll(element, copy, value);
+        if (hasTextInputType(element)) {
+          // The copy would sanitize text that is not a value yet (an email
+          // field's spaces, a number field's "1e" or "-"); as text it shows
+          // what the page's field shows.
+          if (value !== element.value) copy.setAttribute("type", "text");
+          // Only text inputs scroll their text.
+          this.copyTextScroll(element, copy, value);
+        }
       }
     } else if (element instanceof HTMLTextAreaElement) {
       const value = this.shownValue(element);
@@ -320,10 +327,10 @@ class Snapshotter {
     copy.style.setProperty(side, `${padding + scrolled.offset}px`, "important");
   }
 
-  /** A field's value, or what it shows while text is composed in it. */
+  /** A field's text (as typed, see field-text.ts), or what it shows while text is composed in it. */
   private shownValue(field: HTMLInputElement | HTMLTextAreaElement): string {
     const composition = this.options.composition;
-    return composition?.field === field ? composition.value : field.value;
+    return composition?.field === field ? composition.value : fieldText(field);
   }
 
   private copyImage(element: Element, copy: Element): void {
