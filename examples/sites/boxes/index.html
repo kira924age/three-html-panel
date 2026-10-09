@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Scrolling boxes</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <h1>
+      Scrolling boxes
+      <svg class="mark" width="20" height="20"><rect id="mark" width="20" height="20" /></svg>
+      <span class="hover-mark" id="hover-mark"></span>
+    </h1>
+    <div class="grid">
+      <section class="box" id="toolbar-box">
+        <div class="spacer"></div>
+        <header class="toolbar" id="toolbar">
+          Toolbar
+          <span class="menu" id="menu">Menu</span>
+        </header>
+        <div class="page"></div>
+      </section>
+      <section class="box" id="layer-box">
+        <div class="pinned" id="pinned">Pinned</div>
+        <div class="page"></div>
+      </section>
+      <section class="box" id="badge-box">
+        <span class="badge" id="badge">New</span>
+        <div class="page"></div>
+      </section>
+      <section class="box" id="note-box">
+        <div class="page"><span class="note" id="note">Note</span></div>
+      </section>
+      <section class="box" id="text-box">
+        Some text first, then a heading that sticks.
+        <h2 class="heading" id="text-heading">
+          Heading
+          <span class="popup" id="popup">Popup</span>
+        </h2>
+        <div class="page"></div>
+      </section>
+      <section class="box column" id="column-box">
+        <div class="page short"></div>
+        <h2 class="heading" id="column-heading">Column</h2>
+        <div class="page"></div>
+      </section>
+      <section class="box" id="margin-box">
+        <article class="margins">
+          <h2 class="margin-heading">Margins</h2>
+          Text after the heading.
+          <div class="marker" id="marker"></div>
+        </article>
+        <div class="page"></div>
+      </section>
+      <section class="box generated" id="generated-box">
+        <div class="page"></div>
+      </section>
+      <section class="box" id="moved-box">
+        Text first, then a heading moved by a translate of its own.
+        <h2 class="heading" id="moved-heading">Moved</h2>
+        <div class="page"></div>
+      </section>
+    </div>
+  </body>
+</html>

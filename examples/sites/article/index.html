@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Article</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <div class="reading-progress" id="progress"></div>
+    <header class="site-header">Field notes</header>
+    <div class="layout">
+      <article id="article">
+        <h1>Notes on lighthouses</h1>
+        <p>
+          A long page that scrolls, with what such pages often keep in view: a header that sticks to
+          the top, a table of contents beside the text, a bar showing how far you have read, and a
+          notice at the bottom.
+        </p>
+        <div class="table-wrap" id="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Light</th>
+                <th>Height</th>
+                <th>Range</th>
+              </tr>
+            </thead>
+            <tbody id="rows"></tbody>
+          </table>
+        </div>
+        <section class="glossary" id="glossary">
+          <h3>Lamp</h3>
+          <p>The light itself: oil, then gas, then electric, behind the lens.</p>
+          <p>Kept clean and trimmed by the keepers through the night.</p>
+          <h3>Lens</h3>
+          <p>Rings of glass prisms that bend the lamp's light into a beam.</p>
+          <p>The largest stand taller than the keepers who polished them.</p>
+          <h3>Range</h3>
+          <p>How far out at sea the light is seen, in nautical miles.</p>
+          <p>It depends on the height of the light and on the weather.</p>
+        </section>
+        <div id="sections"></div>
+      </article>
+      <nav class="toc" id="toc">
+        <strong>Contents</strong>
+        <ol id="toc-list"></ol>
+      </nav>
+    </div>
+    <div class="notice" id="notice">This page keeps no cookies.</div>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

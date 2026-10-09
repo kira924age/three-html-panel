@@ -1,0 +1,171 @@
+/* Boxes that scroll, with what is positioned in them: each element with a
+   color of its own, for the e2e tests (e2e/boxes.spec.ts) to find it drawn. */
+@namespace svg url("http://www.w3.org/2000/svg");
+
+/* Colored by a selector with a namespace prefix. */
+svg|rect {
+  fill: rgb(255, 0, 255);
+}
+body {
+  margin: 0;
+  padding: 16px;
+  background: #fff;
+  color: #23262d;
+  font:
+    14px/1.4 system-ui,
+    sans-serif;
+}
+h1 {
+  margin: 0 0 12px;
+  font-size: 20px;
+}
+.grid {
+  display: grid;
+  grid-template-columns: repeat(2, 300px);
+  gap: 12px;
+}
+.box {
+  height: 120px;
+  overflow: auto;
+  border: 1px solid #ccc;
+}
+.page {
+  height: 600px;
+  background: linear-gradient(#fff, #e8e8e8);
+}
+.page.short {
+  height: 20px;
+}
+.spacer {
+  height: 20px;
+}
+/* A sticky toolbar with a menu fixed to the viewport. */
+.toolbar {
+  position: sticky;
+  top: 0;
+  height: 30px;
+  margin-top: 6px;
+  background: rgb(250, 160, 0);
+}
+.menu {
+  position: fixed;
+  top: 40px;
+  left: 660px;
+  width: 50px;
+  height: 40px;
+  background: rgb(220, 30, 30);
+}
+/* A box on a layer of its own: the containing block of its fixed child, which scrolls with it. */
+#layer-box {
+  transform: translateZ(0);
+}
+.pinned {
+  position: fixed;
+  top: 100px;
+  left: 10px;
+  width: 60px;
+  height: 40px;
+  background: rgb(30, 30, 220);
+  color: #fff;
+}
+/* Positioned from the box. */
+#badge-box {
+  position: relative;
+}
+.badge {
+  position: absolute;
+  top: 100px;
+  left: 100px;
+  width: 50px;
+  height: 40px;
+  background: rgb(30, 180, 30);
+}
+/* Positioned from the page, not from the box: not clipped by it, not scrolled with it. */
+.note {
+  position: absolute;
+  top: 520px;
+  left: 660px;
+  width: 50px;
+  height: 40px;
+  background: rgb(200, 0, 200);
+}
+.heading {
+  position: sticky;
+  top: 0;
+  height: 30px;
+  margin: 0;
+  font-size: 16px;
+  background: rgb(0, 160, 160);
+}
+.popup {
+  position: fixed;
+  top: 600px;
+  left: 660px;
+  width: 50px;
+  height: 40px;
+  background: rgb(250, 120, 200);
+}
+.column {
+  display: flex;
+  flex-direction: column;
+}
+.column .page {
+  flex: none;
+}
+#column-heading {
+  background: rgb(120, 80, 0);
+}
+/* Margins that collapse together at the top of the box's flow (10px and 20px make 20px). */
+.margins {
+  margin-top: 10px;
+}
+.margin-heading {
+  margin: 20px 0 0;
+  font-size: 16px;
+}
+.marker {
+  height: 40px;
+  margin-top: 60px;
+  background: rgb(90, 90, 90);
+}
+/* Generated content first in the box's flow, scrolled with it: green at its top, blue at its bottom. */
+.generated::before {
+  content: "";
+  display: block;
+  height: 160px;
+  background: linear-gradient(rgb(0, 200, 0), rgb(0, 0, 200));
+}
+/* A translate of the page's own, kept as the box scrolls. */
+#moved-heading {
+  translate: 0 4px;
+  background: rgb(60, 60, 200);
+}
+/* A rule of the page's own for it, important: the copy's moving it wins all the same. */
+.grid .generated::before {
+  margin-top: 0 !important;
+}
+/* Generated content in a box whose flow cannot move (text first): moved with it all the
+   same. Painted over what follows, so that it would show where it was if it stayed. */
+#moved-box::before {
+  content: "";
+  position: relative;
+  z-index: 2;
+  display: inline-block;
+  width: 60px;
+  height: 40px;
+  background: rgb(240, 120, 0);
+}
+/* Hover styles in cascade layers (as Tailwind puts them): drawn in the panel too. */
+@layer base {
+  .hover-mark {
+    display: inline-block;
+    width: 40px;
+    height: 20px;
+    background: rgb(200, 200, 200);
+  }
+}
+@layer states {
+  .hover-mark:hover {
+    background: rgb(0, 120, 255);
+  }
+}
