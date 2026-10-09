@@ -96,10 +96,11 @@ const APPLE_PLATFORM = /mac|iphone|ipad|ipod/i;
 const FOCUSABLE_SELECTOR =
   'input, textarea, select, button, a[href], [tabindex], [contenteditable=""], [contenteditable="true"], [contenteditable="plaintext-only"]';
 
-/** Those of `elements` not inside another of them. */
+/** Those of `elements` not inside another of them, each once. */
 function topmost(elements: Element[]): Element[] {
-  return elements.filter(
-    (element) => !elements.some((other) => other !== element && other.contains(element)),
+  const unique = Array.from(new Set(elements));
+  return unique.filter(
+    (element) => !unique.some((other) => other !== element && other.contains(element)),
   );
 }
 
@@ -261,9 +262,10 @@ export interface InputSynthesizerOptions {
   /**
    * Where the marks may start transitions, to end them at once (see
    * syncMarks): nowhere (the page has none), inside the elements whose marks
-   * change, or anywhere (its rules restyle other elements: `.a:hover ~ .b`).
+   * change, also in their later siblings (`.a:hover ~ .b`), or anywhere
+   * (`:has()`). Asked only when marks change.
    */
-  transitions?: () => "none" | "inside" | "everywhere";
+  transitions?: () => "none" | "inside" | "siblings" | "everywhere";
 }
 
 /** A finger or controller drag that may scroll, from where it was pressed. */
@@ -639,7 +641,6 @@ export class InputSynthesizer {
     const focused = this.focus.current;
     let running: Set<Animation> | null = null;
     let roots: Element[] = [];
-    const scope = this.options.transitions?.() ?? "inside";
     const changed = this.marks.update(
       {
         hovered: this.hovered,
@@ -651,8 +652,14 @@ export class InputSynthesizer {
           (this.keyboardModality || isTextField(focused) || isEditingHost(focused)),
       },
       (elements) => {
+        const scope = this.options.transitions?.() ?? "inside";
         if (scope === "none") return;
-        roots = scope === "everywhere" ? [this.document.documentElement] : topmost(elements);
+        roots =
+          scope === "everywhere"
+            ? [this.document.documentElement]
+            : scope === "siblings"
+              ? topmost(elements.map((element) => element.parentElement ?? element))
+              : topmost(elements);
         // What was already on its way is the page's own doing: left to run.
         running = new Set(runningTransitions(roots));
       },

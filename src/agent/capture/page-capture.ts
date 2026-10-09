@@ -173,7 +173,7 @@ export class PageCapture {
         if (this.liveCss.sync()) this.changed();
         if (!this.liveCss.hasTransitions && !this.sawTransition && !this.inlineTransitions())
           return "none";
-        return this.liveCss.reachesOutside ? "everywhere" : "inside";
+        return this.liveCss.reach;
       },
     });
     // A transition ran (one in an inline style, say): the page has some.

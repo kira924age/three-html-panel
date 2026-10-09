@@ -248,7 +248,11 @@ describe("interaction states in the live page", () => {
    * `started` says so (a hover rule's, once the mark is on), and is listed by
    * getAnimations({ subtree: true }) on its target and the elements around it.
    */
+  /** Where getAnimations was asked (the elements transitions were looked for in). */
+  let lookedIn: Element[] = [];
+
   function fakeTransitions(...specs: { target: Element; started: () => boolean }[]) {
+    lookedIn = [];
     const transitions = specs.map(({ target, started }) => ({
       transitionProperty: "transform",
       playState: "running",
@@ -259,6 +263,7 @@ describe("interaction states in the live page", () => {
     Object.defineProperty(Element.prototype, "getAnimations", {
       configurable: true,
       value(this: Element) {
+        lookedIn.push(this);
         return transitions.filter(
           (transition) => transition.started() && this.contains(transition.effect.target),
         );
@@ -327,13 +332,56 @@ describe("interaction states in the live page", () => {
       target: sibling,
       started: () => row.hasAttribute("data-thp-hover"),
     });
+    const before = document.body.appendChild(document.createElement("p"));
+    let hitTarget: Element = before;
+    Object.defineProperty(document, "elementFromPoint", {
+      configurable: true,
+      value: () => hitTarget,
+    });
     try {
       capture.start();
       move();
+      lookedIn = [];
+      // From another element onto the row (entering the page changes <html> too).
+      hitTarget = row;
+      move();
       expect(onSibling!.finish).toHaveBeenCalled();
+      // Around the row (its parent), not the whole page.
+      expect(lookedIn).not.toContain(document.documentElement);
     } finally {
       delete (Element.prototype as { getAnimations?: unknown }).getAnimations;
     }
+  });
+
+  it("looks for transitions everywhere when a hover rule uses :has()", () => {
+    const row = document.querySelector(".row")!;
+    const style = document.createElement("style");
+    style.textContent =
+      "aside { transition: transform 0.3s } body:has(.row:hover) aside { transform: none }";
+    document.head.append(style);
+    fakeTransitions({ target: row, started: () => false });
+    try {
+      capture.start();
+      move();
+      expect(lookedIn).toContain(document.documentElement);
+    } finally {
+      delete (Element.prototype as { getAnimations?: unknown }).getAnimations;
+    }
+  });
+
+  it("does not check the page for transitions on captures where no mark changes", async () => {
+    const checks = vi.spyOn(
+      PageCapture.prototype as unknown as { inlineTransitions: () => boolean },
+      "inlineTransitions",
+    );
+    capture.start();
+    await settle();
+    checks.mockClear();
+    for (let i = 0; i < 3; i++) {
+      document.body.append(document.createElement("span"));
+      await settle();
+    }
+    expect(checks).not.toHaveBeenCalled();
   });
 
   it("follows the page moving the focused element elsewhere, on the next capture", async () => {

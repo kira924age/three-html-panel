@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-import { LiveInteractionCss } from "./live-css";
+import { hasTransition, LiveInteractionCss } from "./live-css";
 
 let live: LiveInteractionCss | null = null;
 
@@ -152,6 +152,30 @@ describe("LiveInteractionCss", () => {
     expect(row.matches(":hover")).toBe(false);
   });
 
+  it("tells how far the page's hover rules reach: inside, later siblings, or anywhere", () => {
+    setUp(".row:hover .tools { display: flex }");
+    expect(live!.reach).toBe("inside");
+    document.styleSheets[0]!.insertRule(".row:hover ~ .other { color: red }", 1);
+    expect(live!.reach).toBe("siblings");
+    document.styleSheets[0]!.insertRule("body:has(.row:hover) .bar { color: red }", 2);
+    expect(live!.reach).toBe("everywhere");
+  });
+
+  it("tells whether the page has transitions, from a custom property too", () => {
+    setUp(".row:hover .tools { display: flex }");
+    expect(live!.hasTransitions).toBe(false);
+    document.styleSheets[0]!.insertRule(".tools { transition: opacity var(--duration) }", 0);
+    expect(live!.hasTransitions).toBe(true);
+    const style = (css: string) => {
+      const sheet = new CSSStyleSheet();
+      sheet.replaceSync(`a { ${css} }`);
+      return (sheet.cssRules[0] as CSSStyleRule).style;
+    };
+    expect(hasTransition(style("transition: transform 0.3s"))).toBe(true);
+    expect(hasTransition(style("transition: none"))).toBe(false);
+    expect(hasTransition(style("transition-duration: 0s"))).toBe(false);
+  });
+
   it("rewrites a selector the page sets on a rule itself", () => {
     setUp(".tools { display: none } .x { color: red }");
     const rule = document.styleSheets[0]!.cssRules[1] as CSSStyleRule;
@@ -260,6 +284,8 @@ describe("LiveInteractionCss", () => {
       const adopted = (document as unknown as { adoptedStyleSheets: CSSStyleSheet[] })
         .adoptedStyleSheets;
       expect(adopted).toHaveLength(1);
+      // Its rules are not walked: counted as having transitions.
+      expect(live.hasTransitions).toBe(true);
       const css = Array.from(adopted[0]!.cssRules, (rule) => rule.cssText).join(" ");
       expect(css).toContain(".row:is(:hover,[data-thp-hover]) .tools");
       expect(css).not.toContain(".plain");
