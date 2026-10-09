@@ -83,6 +83,8 @@ function absolutizeUrls(css: string, sheetUrl: string): string {
   });
 }
 
+const isNamespace = (rule: string) => rule.startsWith("@namespace");
+
 function ruleCount(sheet: CSSStyleSheet): number {
   try {
     return sheet.cssRules.length;
@@ -106,6 +108,8 @@ export class DocumentCss {
    */
   private readonly fetched = new Map<string, CSSStyleSheet | "loading" | "failed">();
   private readonly window: FrameWindow;
+  /** Namespace prefixes given names of their own so far (see scopeNamespaces). */
+  private namespaces = 0;
 
   constructor(
     private readonly document: Document,
@@ -130,7 +134,6 @@ export class DocumentCss {
       // @namespace rules only count before all other rules (the sheets are put
       // together: a prefix declared in one counts in the rest too), and their
       // url() names a namespace, not a file to inline.
-      const isNamespace = (part: string) => part.startsWith("@namespace");
       const rules = [DEFAULT_FOCUS_RING_CSS, ...parts.filter((part) => !isNamespace(part))];
       rules.push(FREEZE_ANIMATIONS_CSS);
       this.css = [
@@ -148,8 +151,39 @@ export class DocumentCss {
     if (!sheet) return;
     const start = out.length;
     this.serializeRules(sheet.cssRules, out);
+    this.scopeNamespaces(out, start);
     if (source.href) {
-      for (let i = start; i < out.length; i++) out[i] = absolutizeUrls(out[i]!, source.href);
+      // A namespace's url() is a name, not a file.
+      for (let i = start; i < out.length; i++)
+        if (!isNamespace(out[i]!)) out[i] = absolutizeUrls(out[i]!, source.href);
+    }
+  }
+
+  /**
+   * Gives a sheet's namespace prefixes (its rules from `start` in `out`) names
+   * of their own: a prefix only counts in the sheet that declares it, but the
+   * copy puts all sheets together. A selector of another sheet with the same
+   * prefix (not declared there, so dropped) stays dropped.
+   */
+  private scopeNamespaces(out: string[], start: number): void {
+    const prefixes = new Map<string, string>();
+    for (let i = start; i < out.length; i++) {
+      const declared = /^@namespace\s+([\w-]+)\s/.exec(out[i]!);
+      if (!declared) continue;
+      const scoped = `thp${++this.namespaces}-${declared[1]}`;
+      prefixes.set(declared[1]!, scoped);
+      out[i] = `@namespace ${scoped} ${out[i]!.slice(declared[0].length)}`;
+    }
+    if (prefixes.size === 0) return;
+    // `prefix|name`, not `[attribute|=value]`.
+    const names = [...prefixes.keys()].map((prefix) => prefix.replace(/-/g, "\\-")).join("|");
+    const used = new RegExp(`(^|[^\\w-])(${names})\\|(?!=)`, "g");
+    for (let i = start; i < out.length; i++) {
+      if (!isNamespace(out[i]!))
+        out[i] = out[i]!.replace(
+          used,
+          (_, before: string, prefix: string) => `${before}${prefixes.get(prefix)}|`,
+        );
     }
   }
 

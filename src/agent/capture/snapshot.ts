@@ -279,17 +279,63 @@ function splitValues(value: string): string[] {
   return values;
 }
 
-/** Moves a box by (dx, dy) with the individual `translate` property, added to the one it has. */
-function addTranslate(
-  copy: HTMLElement | SVGElement,
-  style: CSSStyleDeclaration,
-  dx: number,
-  dy: number,
-): void {
-  const base = baseValue(copy, style, "translate");
-  const [x = "0px", y = "0px", z] = isSet(base) ? splitValues(base) : [];
-  const moved = [plus(x, dx), plus(y, dy), ...(z ? [z] : [])].join(" ");
-  copy.style.setProperty("translate", moved, "important");
+/** A translate (as computed, or none) moved by (dx, dy). */
+function movedTranslate(translate: string, dx: number, dy: number): string {
+  const [x = "0px", y = "0px", z] = isSet(translate) ? splitValues(translate) : [];
+  return [plus(x, dx), plus(y, dy), ...(z ? [z] : [])].join(" ");
+}
+
+interface ScrollMoveOptions {
+  /** The display of its parent (a z-index applies to flex and grid items unpositioned). */
+  parentDisplay: string;
+  /** An absolute or fixed one scrolls with the content: what scrolls is its containing block. */
+  scrolls: boolean;
+  /** An absolute one at its place in the flow (both insets auto) is moved by its margin. */
+  byMargin: boolean;
+  /** A sticky one is lifted over its siblings (positioned now). */
+  lift: boolean;
+}
+
+/**
+ * The declarations ([property, value]) that move something scrolled (an
+ * element's copy, or a generated box) up and left by the scroll (x, y), by
+ * its position, from the values `value` gives (see Snapshotter.moveScrolled):
+ * - static or relative: positioned relatively, its relative offset kept, the
+ *   page's z-index on a static box still ignored
+ * - absolute or fixed: by its insets, if it scrolls with the content
+ * - sticky: translated (added to its own translate), its insets moved the
+ *   other way; lifted with z-index 1 if `lift`
+ */
+function scrollMoves(
+  position: string,
+  value: (property: string) => string,
+  x: number,
+  y: number,
+  options: ScrollMoveOptions,
+): [string, string][] {
+  if (position === "static" || position === "relative") {
+    // Relative offsets as laid out (used, in px), or as an animation ends;
+    // none for a static box (its insets do not apply).
+    const offset = (side: string) => (position === "relative" ? value(side) : "0px");
+    const moves: [string, string][] = [
+      ["position", "relative"],
+      ["top", plus(offset("top"), -y)],
+      ["left", plus(offset("left"), -x)],
+      ["bottom", "auto"],
+      ["right", "auto"],
+    ];
+    if (position === "static" && !/flex|grid/.test(options.parentDisplay))
+      moves.push(["z-index", "auto"]);
+    return moves;
+  }
+  if (position === "absolute" || position === "fixed")
+    return options.scrolls ? insetMoves(value, position, -x, -y, options.byMargin) : [];
+  // The individual `translate` property composes with any `transform` it has.
+  return [
+    ...(options.lift ? [["z-index", "1"] as [string, string]] : []),
+    ["translate", movedTranslate(value("translate"), -x, -y)],
+    ...insetMoves(value, position, x, y, false),
+  ];
 }
 
 /**
@@ -322,19 +368,6 @@ function insetMoves(
       moves.push([margin, plus(value(margin), by)]);
   }
   return moves;
-}
-
-/** Moves a positioned element's copy by its insets (see insetMoves), from the values the copy has. */
-function moveInsets(
-  copy: HTMLElement | SVGElement,
-  style: CSSStyleDeclaration,
-  dx: number,
-  dy: number,
-  byMargin = true,
-): void {
-  const value = (property: string) => baseValue(copy, style, property);
-  for (const [property, moved] of insetMoves(value, style.position, dx, dy, byMargin))
-    copy.style.setProperty(property, moved, "important");
 }
 
 /** Whether a box is the containing block of the absolute elements in it. */
@@ -821,9 +854,7 @@ class Snapshotter {
   /**
    * Moves a container's ::before and ::after where its children are moved one
    * by one (its flow is not moved): as moveScrolled moves a child of the same
-   * position, with a rule (a static or relative one positioned relatively, an
-   * absolute or fixed one by its insets if it scrolls with the container, a
-   * sticky one translated with its insets moved the other way).
+   * position (see scrollMoves), with a rule.
    */
   private moveGeneratedApart(container: Element, x: number, y: number): void {
     const containerStyle = this.styles.get(container);
@@ -832,34 +863,15 @@ class Snapshotter {
     for (const pseudo of ["::before", "::after"] as const) {
       const style = this.window.getComputedStyle(container, pseudo);
       if (!isGenerated(style)) continue;
-      const value = (property: string) => style.getPropertyValue(property);
-      const declarations: string[] = [];
-      const set = (property: string, moved: string) =>
-        declarations.push(`${property}:${moved} !important`);
       const position = style.position;
-      if (position === "static" || position === "relative") {
-        const offset = (side: string) => (position === "relative" ? value(side) : "0px");
-        set("position", "relative");
-        set("top", plus(offset("top"), -y));
-        set("left", plus(offset("left"), -x));
-        set("bottom", "auto");
-        set("right", "auto");
-        if (position === "static" && !/flex|grid/.test(containerStyle.display))
-          set("z-index", "auto");
-      } else if (position === "absolute" || position === "fixed") {
-        const scrolls =
-          position === "fixed" ? containsFixed(containerStyle) : containsAbsolute(containerStyle);
-        if (scrolls)
-          for (const [property, moved] of insetMoves(value, position, -x, -y, true))
-            set(property, moved);
-      } else {
-        const [tx = "0px", ty = "0px", tz] = isSet(value("translate"))
-          ? splitValues(value("translate"))
-          : [];
-        set("translate", [plus(tx, -x), plus(ty, -y), ...(tz ? [tz] : [])].join(" "));
-        for (const [property, moved] of insetMoves(value, position, x, y, false))
-          set(property, moved);
-      }
+      const moves = scrollMoves(position, (property) => style.getPropertyValue(property), x, y, {
+        parentDisplay: containerStyle.display,
+        scrolls:
+          position === "fixed" ? containsFixed(containerStyle) : containsAbsolute(containerStyle),
+        byMargin: true,
+        lift: style.zIndex === "auto",
+      });
+      const declarations = moves.map(([property, moved]) => `${property}:${moved} !important`);
       if (declarations.length > 0) rules.push(`${pseudo}{${declarations.join(";")}}`);
     }
     this.addGeneratedRules(container, rules);
@@ -1063,44 +1075,30 @@ class Snapshotter {
     const position = style?.position ?? "static";
     // Moved with the flow (sticky ones too, sticking as on the page).
     if (flow && position !== "absolute" && position !== "fixed") return;
-    if (position === "static" || position === "relative") {
-      // Relative offsets as laid out (used, in px), or as an animation ends;
-      // none for a static box (its insets do not apply).
-      const offset = (side: string) =>
-        position === "relative" ? baseValue(copy, style!, side) : "0px";
-      copy.style.setProperty("position", "relative", "important");
-      copy.style.setProperty("top", plus(offset("top"), -y), "important");
-      copy.style.setProperty("left", plus(offset("left"), -x), "important");
-      copy.style.setProperty("bottom", "auto", "important");
-      copy.style.setProperty("right", "auto", "important");
-      // Only a flex or grid item's z-index applies without a position.
-      const parent = live?.parentElement ? this.styles.get(live.parentElement) : undefined;
-      if (position === "static" && !/flex|grid/.test(parent?.display ?? ""))
-        copy.style.setProperty("z-index", "auto", "important");
-      this.moved.set(copy, "relative");
-      return;
-    }
-    if (position === "absolute" || position === "fixed") {
-      const positioned = this.positioned.get(live!);
-      const scrolls = container
+    const positioned = live && this.positioned.get(live);
+    const parent = live?.parentElement && this.styles.get(live.parentElement);
+    const sticky = position === "sticky";
+    const options: ScrollMoveOptions = {
+      parentDisplay: parent ? parent.display : "",
+      scrolls: container
         ? positioned?.container === container
-        : position === "absolute" || positioned?.container != null;
-      // Its place in the flow (both insets auto) moves with the flow, if moved.
-      if (scrolls) moveInsets(copy, style!, -x, -y, !flow);
-      return;
-    }
-    // Its static siblings, positioned now, would paint over it in their order:
-    // it is lifted over them, as the page paints it over what is not positioned.
-    // Not with a z-index in it, which would then only count inside it.
-    if (position === "sticky" && container && style!.zIndex === "auto" && !this.zOrdered.has(live!))
-      copy.style.setProperty("z-index", "1", "important");
-    if (position === "sticky" && container && this.holdingFixed.has(live!)) {
+        : position === "absolute" || positioned?.container != null,
+      // Its place in the flow moves with the flow, if moved.
+      byMargin: !flow,
+      // Its static siblings, positioned now, would paint over it in their order,
+      // as the page does not. Not with a z-index in it, which would then only
+      // count inside it.
+      lift: sticky && !!container && style?.zIndex === "auto" && !this.zOrdered.has(live!),
+    };
+    if (sticky && container && this.holdingFixed.has(live!)) {
+      if (options.lift) copy.style.setProperty("z-index", "1", "important");
       if (this.holdSticky(live!, copy, container, x, y)) return;
     }
-    // The individual `translate` property composes with any `transform` it already has.
-    addTranslate(copy, style!, -x, -y);
-    this.moved.set(copy, "translated");
-    if (position === "sticky") moveInsets(copy, style!, x, y);
+    const value = (property: string) => (style ? baseValue(copy, style, property) : "");
+    for (const [property, moved] of scrollMoves(position, value, x, y, options))
+      copy.style.setProperty(property, moved, "important");
+    if (position === "static" || position === "relative") this.moved.set(copy, "relative");
+    else if (sticky) this.moved.set(copy, "translated");
   }
 
   /**

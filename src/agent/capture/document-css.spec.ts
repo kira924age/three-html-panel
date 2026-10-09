@@ -20,14 +20,31 @@ describe("DocumentCss", () => {
 });
 
 describe("@namespace rules", () => {
-  it("come first in the copied CSS, prefixed ones only", () => {
+  it("come first in the copied CSS, prefixed ones only, each sheet's prefixes its own", () => {
     vi.stubGlobal("matchMedia", () => ({ matches: true }));
     document.head.innerHTML =
-      "<style>p { color: red }</style>" +
-      '<style>@namespace svg url("http://www.w3.org/2000/svg"); @namespace url("http://www.w3.org/2000/svg"); svg|a { fill: blue }</style>';
+      '<style>@namespace x url("urn:a"); x|item { color: red }</style>' +
+      '<style>@namespace x url("urn:b"); @namespace url("urn:c"); x|item, [lang|=en] { color: blue }</style>' +
+      "<style>x|item { color: green }</style>";
     const css = new DocumentCss(document, () => null).get();
-    expect(css.startsWith('@namespace svg url("http://www.w3.org/2000/svg");')).toBe(true);
-    expect(css.match(/@namespace/g)).toHaveLength(1);
-    expect(css).toContain("svg|a");
+    expect(css.split("\n").slice(0, 2)).toEqual([
+      '@namespace thp1-x url("urn:a");',
+      '@namespace thp2-x url("urn:b");',
+    ]);
+    expect(css.match(/@namespace/g)).toHaveLength(2);
+    expect(css).toContain("\nthp1-x|item{color: red;}");
+    expect(css).toContain("\nthp2-x|item, [lang|=en]{color: blue;}");
+    // Not declared in its own sheet: dropped by the page, and by the copy.
+    expect(css).toContain("\nx|item{color: green;}");
+  });
+
+  it("keep a linked sheet's relative namespace as it is", () => {
+    vi.stubGlobal("matchMedia", () => ({ matches: true }));
+    document.head.innerHTML = '<style>@namespace app url("app"); app|widget { color: red }</style>';
+    Object.defineProperty(document.styleSheets[0]!, "href", {
+      value: "https://site.test/css/main.css",
+    });
+    const css = new DocumentCss(document, () => null).get();
+    expect(css.startsWith('@namespace thp1-app url("app");')).toBe(true);
   });
 });

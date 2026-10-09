@@ -878,6 +878,29 @@ describe("scrolled content", () => {
     expect(copy.style.getPropertyValue("translate")).toBe("");
   });
 
+  it("moves the generated boxes of a box moved child by child as such children: sticky lifted, absolute by its insets", () => {
+    document.body.innerHTML = `<div id="box" style="overflow: auto; position: relative">Text<p></p></div>`;
+    generate({
+      box: {
+        "::before": {
+          position: "sticky",
+          top: "0px",
+          bottom: "auto",
+          zIndex: "auto",
+          translate: "none",
+        },
+        "::after": { position: "absolute", top: "auto", bottom: "10px" },
+      },
+    });
+    scroll(new Map([[document.querySelector("#box")!, { top: 30 }]]));
+    const copy = snapshot();
+    const id = copy.getElementById("box")!.getAttribute("data-thp-scrolled");
+    expect(generatedRules(copy)).toBe(
+      `[data-thp-scrolled="${id}"]::before{z-index:1 !important;translate:0px -30px !important;top:30px !important}\n` +
+        `[data-thp-scrolled="${id}"]::after{bottom:40px !important}`,
+    );
+  });
+
   it("adds no rule for an absolute ::before placed from outside the container", () => {
     vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(20);
     document.body.innerHTML = `<div id="box" style="overflow: auto"><p></p></div>`;
